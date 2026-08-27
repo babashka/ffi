@@ -36,6 +36,6 @@ The library exports a clj-kondo hook for `defcfn`. Copy the config with:
 
 ## License
 
-Copyright © 2019-2026 Michiel Borkent
+Copyright © 2026 Michiel Borkent
 
 Distributed under the EPL License. See LICENSE.
