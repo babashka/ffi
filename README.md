@@ -38,4 +38,7 @@ The library exports a clj-kondo hook for `defcfn`. Copy the config with:
 
 Copyright © 2026 Michiel Borkent
 
-Distributed under the EPL License. See LICENSE.
+Distributed under the MIT License. See LICENSE.
+
+Babashka embeds this library and is itself EPL licensed. The two licenses
+apply to their own repositories.
