@@ -7,9 +7,13 @@ The API is experimental.
 It runs in two places, and the API is the same in both. In babashka the
 namespace is built in, so `(require '[babashka.ffi :as ffi])` is enough. On
 the JVM it comes from this library and needs JDK 22 or newer, because it uses
-the Java FFM API. Start that JVM with `--enable-native-access=ALL-UNNAMED`, or
-set the `Enable-Native-Access` manifest attribute in an uberjar. Without the
-flag, recent JDKs warn, and a future release will refuse the calls.
+the Java FFM API. Configure native access with one of these methods:
+
+- Start the JVM with `--enable-native-access=ALL-UNNAMED`.
+- Set the `Enable-Native-Access` manifest attribute in an uberjar.
+
+Without either setting, recent JDKs warn. A future release will refuse the
+calls.
 
 What differs between the two hosts is speed and the set of signatures that
 have a fast path. The section on performance and limits describes both.
@@ -109,20 +113,20 @@ Linux:
 - `/usr/local/lib`
 - `/usr/lib64`
 - `/usr/lib`
-- `/usr/lib/x86_64-linux-gnu` or `/usr/lib/aarch64-linux-gnu`, matching the
-  current architecture
+- `/usr/lib/x86_64-linux-gnu` for x86_64 systems
+- `/usr/lib/aarch64-linux-gnu` for AArch64 systems
 - `/lib64`
 - `/lib`
 - `/lib/x86_64-linux-gnu` or `/lib/aarch64-linux-gnu`, for systems where
   `/lib` is not merged into `/usr/lib`
 
-Windows doesn't have additional search directories.
+Windows has no additional search directories.
 
 On FreeBSD, babashka runs as a Linux binary through the
 [Linuxulator](https://docs.freebsd.org/en/books/handbook/linuxemu/). The
 Linuxulator translates `/usr/lib64` and `/lib64` to
-`/compat/linux/usr/lib64` and `/compat/linux/lib64`, so libraries installed
-there are found through the paths above.
+`/compat/linux/usr/lib64` and `/compat/linux/lib64`. As a result, the load
+functions find libraries in those translated directories.
 
 Both functions return a library map. The `:path` value contains the loaded
 candidate:
@@ -325,8 +329,8 @@ truthy.
 A `:string` argument uses temporary memory. C must not keep this pointer
 after the function returns.
 
-If C keeps the pointer, allocate the string with `string->ptr`. Free this
-pointer after C no longer uses it.
+If C keeps the pointer, allocate the string with `string->ptr`. After C
+stops using the pointer, free it.
 
 A `:string` return value reads the pointer as UTF-8. A NULL return value
 becomes `nil`.
@@ -336,9 +340,9 @@ becomes `nil`.
 A C function can take a struct as an argument, or return one, without a
 pointer in between. On that position in the signature, write a layout
 instead of a type keyword. A struct layout has the form `[:struct fields]`.
-Each field is a `[name type]` pair, in the order of the C declaration: the
-order decides the offsets in memory, the name only decides the key in the
-map. A type is a type keyword or another layout. A struct value is a map of
+Each field is a `[name type]` pair in C declaration order. The order sets
+the memory offsets. The name sets only the map key. A type is a type
+keyword or another layout. A struct value is a map of
 its fields, in any order:
 
 ```clojure
@@ -379,9 +383,9 @@ To map a struct to a value of your own, wrap the binding:
 
 A struct call goes through libffi, which places the arguments from a
 description of the call. When babashka binds the function, it compares its
-own struct layout with the one libffi computes; a difference is an error.
-A struct call takes approximately 1 microsecond, a call with only primitive
-types approximately 150 nanoseconds.
+own struct layout with the one libffi computes. A difference is an error.
+A struct call takes approximately 1 microsecond. A call with only primitive
+types takes approximately 150 nanoseconds.
 
 Every babashka binary includes libffi, except the musl static binary and a
 build made with `BABASHKA_LIBFFI=none`. `bb describe` shows the version under
@@ -423,7 +427,7 @@ For example, a `printf` format must match its values.
 ## Use native memory
 
 A pointer is a native `java.lang.foreign.MemorySegment` with a live scope
-that the current thread may access. A heap segment does not have a C
+that the current thread can access. A heap segment does not have a C
 address. A closed-arena pointer refers to released memory. A confined arena
 belongs to one thread. The API rejects all three before it passes an address
 to C.
@@ -496,8 +500,8 @@ byte count. It uses the natural alignment of the type or layout:
 `free` releases memory that a C function returned for the caller to release.
 If the library has a deallocator, use it. One example is `duckdb_free`.
 
-CAUTION: Do not use a pointer after `free`. This can corrupt memory or stop the
-process.
+CAUTION: After you call `free`, do not use the pointer. This can corrupt
+memory or stop the process.
 
 ### Arenas
 
@@ -522,12 +526,12 @@ C functions reject pointers from a closed arena.
 `free` refuses memory from a confined, shared, or automatic arena. The arena
 releases this memory.
 
-CAUTION: Do not close an arena while C uses its memory. C can access released
-memory.
+CAUTION: While C uses the arena memory, do not close the arena. C can access
+released memory.
 
 Arena memory uses the alignment of its allocation. A type uses its natural
-alignment. An integer byte count uses alignment 16. Specify another alignment
-when necessary:
+alignment. An integer byte count uses alignment 16. If the C API requires a
+different alignment, specify that alignment:
 
 ```clojure
 (ffi/alloc arena 4096 64)   ; 4096 bytes on a 64-byte boundary
@@ -537,12 +541,12 @@ Use `confined-arena` for memory that one thread uses. Other threads cannot
 access its pointers. Use `shared-arena` for memory that multiple threads use.
 Both arena types work with `with-open`.
 
-CAUTION: Do not close a shared arena while another thread is in a C call
-with its memory. The call continues on released memory. A pointer goes to C
+CAUTION: While another thread is in a C call that uses the shared arena
+memory, do not close the arena. The call continues on released memory. A pointer goes to C
 as an address, so the arena does not know that the call is in progress.
 
 The garbage collector releases an `auto-arena` after it becomes unreachable.
-Keep the arena reachable while C uses its pointers.
+While C uses its pointers, keep the arena reachable.
 
 A `global-arena` exists until the process stops. You cannot close an automatic
 or global arena.
@@ -582,8 +586,8 @@ memory:
 
 The buffer and native memory share the same bytes.
 
-CAUTION: Do not use the buffer after you release the native memory. An invalid
-memory access can stop the process.
+CAUTION: After you release the native memory, do not use the buffer. An
+invalid memory access can stop the process.
 
 Use `sizeof` to get the size of a type:
 
@@ -656,8 +660,8 @@ A `:pointer` callback argument comes from C and has size zero.
 
 Before you read the memory, specify its size with `reinterpret`.
 
-If C keeps the callback, keep its pointer. Unregister the callback before
-you call `free-callback`.
+If C keeps the callback, keep its pointer. Before you call `free-callback`,
+unregister the callback.
 
 C can call a callback from a native thread. A `:bool` callback argument
 becomes `true` or `false`.
@@ -681,9 +685,8 @@ Every signature works. The FFM linker builds a downcall handle for it, the
 JIT compiles that handle, and there are no limits to describe.
 
 A primitive call costs about 40 nanoseconds once the loop around it is
-compiled. Struct calls are the exception: they go through libffi, which the
-JVM loads from the system, so a struct binding fails on a machine without
-libffi installed.
+compiled. Struct calls are the exception. They use libffi, which the JVM
+loads from the system. If libffi is not installed, a struct binding fails.
 
 ### In a babashka native binary
 
@@ -703,15 +706,20 @@ Argument order does not change this set.
 Everything else calls through libffi: a fixed signature outside the set,
 every variadic call, and every struct call. A libffi call takes about 1
 microsecond. Every babashka binary includes libffi, except the musl static
-binary and a build made with `BABASHKA_LIBFFI=none`; `bb describe` shows the
-version under `:libffi/version`. In a build without libffi, a fixed signature
-outside the set throws, and variadic calls use the FFM fallback: at most five
-total arguments, three fixed arguments, none of them `:float`, and two
-`:double` arguments, with a `:void`, integer, or pointer return type.
+binary and a build made with `BABASHKA_LIBFFI=none`. `bb describe` shows the
+version under `:libffi/version`.
 
-These per-call figures are the cost of the call itself. In babashka the
-interpreter around the call usually costs more than the call: a `loop`
-with a `recur` adds roughly 30 nanoseconds per iteration before any C runs.
+In a build without libffi, a fixed signature outside the set throws.
+Variadic calls use the FFM fallback with these limits:
+
+- At most five total arguments.
+- At most three fixed arguments, none of them `:float`.
+- At most two `:double` arguments.
+- A `:void`, integer, or pointer return type.
+
+These figures include only the call itself. In babashka, the interpreter
+usually costs more. A `loop` with `recur` adds roughly 30 nanoseconds per
+iteration before C runs.
 
 ### Callbacks
 
@@ -727,7 +735,7 @@ Callbacks do not use libffi on either host and keep these limits:
 The [examples](../examples) directory contains complete programs for SQLite,
 CPython, libffi, and raylib, with a note on running each on either host.
 
-These libraries are built on this one and show it at a larger scale:
+These libraries use `babashka.ffi`:
 
 - [babashka/ffi-sqlite3](https://github.com/babashka/ffi-sqlite3), including
   callbacks and aggregates
