@@ -598,7 +598,19 @@ Use `string->ptr` to allocate a C string in an arena:
 ```
 
 `ptr->string` reads a string at the specified address. It returns `nil` for
-the NULL address.
+the NULL address. A pointer that C returned has no size, so the read runs to
+the first NUL byte, which is what a `:string` return type does:
+
+```clojure
+(ffi/ptr->string (duckdb-value-varchar res col row))
+```
+
+Give a limit to stop after that many bytes. A buffer with no NUL inside the
+limit is then an error rather than a read past its end:
+
+```clojure
+(ffi/ptr->string p 4096)
+```
 
 If memory contains a string pointer, use `read` with `:string`:
 

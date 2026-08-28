@@ -101,3 +101,27 @@
           (is (thrown-with-msg?
                Exception #"misses field :y"
                (ffi/write (ffi/alloc arena point) point {:x 1}))))))))
+
+(def unsized-string?
+  "Reading a string from a pointer with no size arrived after the first
+  release; an older built-in namespace refuses one."
+  (delay (and @default-lookup?
+              (try (ffi/ptr->string ((ffi/cfn "strdup" [:string] :pointer) "probe"))
+                   true
+                   (catch Exception _ false)))))
+
+(deftest ptr->string-test
+  (if-not @unsized-string?
+    (println "ptr->string skipped: no default lookup, or this babashka predates it")
+    (let [strdup (ffi/cfn "strdup" [:string] :pointer)]
+      (testing "a pointer C returned has no size, and reads to the NUL"
+        (is (= "hello" (ffi/ptr->string (strdup "hello")))))
+      (testing "a limit stops the read"
+        (is (= "hello" (ffi/ptr->string (strdup "hello") 64)))
+        (is (= "hello" (ffi/ptr->string (strdup "hello") 6))))
+      (testing "a limit with no NUL inside it is an error, not a walk"
+        (is (thrown-with-msg? Exception #"no NUL byte in the first 3 bytes"
+                              (ffi/ptr->string (strdup "hello") 3))))
+      (testing "NULL is nil, with and without a limit"
+        (is (nil? (ffi/ptr->string ffi/null)))
+        (is (nil? (ffi/ptr->string ffi/null 8)))))))
