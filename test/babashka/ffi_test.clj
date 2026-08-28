@@ -1,4 +1,10 @@
 (ns babashka.ffi-test
+  "The home for API tests: anything that must hold on both hosts belongs
+  here, written as plain clojure.test with no harness, so one file covers
+  both. `bb test:bb` runs it through babashka's built-in babashka.ffi, and
+  `bb test:jvm` runs it on the JVM. Babashka keeps its own suite for what
+  only babashka can observe, such as the libffi backend selection, the
+  trampoline set, and builds without libffi."
   (:require [babashka.ffi :as ffi :refer [defcfn]]
             [clojure.test :refer [deftest is testing]]))
 
