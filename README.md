@@ -32,7 +32,20 @@ The library exports a clj-kondo hook for `defcfn`. Copy the config with:
 
 ## Test
 
+On the JVM:
+
     clojure -M:test
+
+The same suite runs through babashka's native image, where the calls go
+through the compiled trampolines instead of FFM handles:
+
+    bb --classpath test -e "(require 'babashka.ffi-test 'clojure.test) (clojure.test/run-tests 'babashka.ffi-test)"
+
+This suite is the home for API tests: anything that must hold on both hosts
+belongs here, written as plain `clojure.test` with no harness, so one file
+covers both. Babashka keeps its own suite for what only babashka can observe,
+such as the libffi backend selection, the trampoline set, and builds without
+libffi.
 
 ## License
 
