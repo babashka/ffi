@@ -76,10 +76,16 @@
               (ffi/write arr point {:x i :y (* 2 i)} (* i 8)))
             (is (= [{:x 0 :y 0} {:x 1 :y 2} {:x 2 :y 4}]
                    (mapv #(ffi/read arr point (* % 8)) (range 3)))))))
-      (testing "writing a :string field needs an arena, so it is refused"
+      (testing "a :string field takes a pointer the caller owns"
+        (with-open [arena (ffi/confined-arena)]
+          (let [named [:struct [[:id :int] [:name :string]]]
+                p (ffi/alloc arena named)]
+            (ffi/write p named {:id 7 :name (ffi/string->ptr arena "seven")})
+            (is (= {:id 7 :name "seven"} (ffi/read p named))))))
+      (testing "a bare string has no owner, so it is refused with the remedy"
         (with-open [arena (ffi/confined-arena)]
           (is (thrown-with-msg?
-               Exception #"without an arena"
+               Exception #"string->ptr arena"
                (ffi/write (ffi/alloc arena 16) [:struct [[:s :string]]] {:s "x"})))))
       (testing "an invalid struct value reports the field"
         (with-open [arena (ffi/confined-arena)]

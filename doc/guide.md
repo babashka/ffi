@@ -614,8 +614,8 @@ stop the process.
 
 ### Read and write a struct
 
-Use a struct layout instead of a type keyword. `read` returns the struct as a
-map. `write` accepts a map:
+`read` and `write` support struct layouts in place of type keywords. `read`
+returns the struct as a map. `write` accepts a map:
 
 ```clojure
 (def point [:struct [[:x :int] [:y :int]]])
@@ -648,8 +648,23 @@ The byte offset selects one element of an array of structs:
 
 Layouts nest, and a nested struct is a nested map.
 
-`write` rejects a layout with a `:string` field because it does not take an
-arena. Allocate the string with `string->ptr`. Declare the field as `:pointer`.
+A `:string` field differs from the others. Every other field holds its value
+inside the struct, so writing it creates nothing. A `:string` field holds a
+pointer to bytes that live elsewhere and must outlive the write, so those
+bytes need an owner. Allocate them and write the pointer:
+
+```clojure
+(def named [:struct [[:id :int] [:name :string]]])
+
+(with-open [arena (ffi/confined-arena)]
+  (let [p (ffi/alloc arena named)]
+    (ffi/write p named {:id 7 :name (ffi/string->ptr arena "seven")})
+    (ffi/read p named)))
+;;=> {:id 7, :name "seven"}
+```
+
+`read` has no such restriction. It copies the bytes out, which raises no
+question of ownership.
 
 ### Out parameters
 

@@ -573,14 +573,6 @@
 (defn- layout-vector? [t]
   (and (vector? t) (contains? layout-kinds (first t))))
 
-(defn- has-string-field?
-  "True when lay or a nested layout holds a :string field. Writing one means
-  allocating a C string, which needs an arena that write does not take."
-  [lay]
-  (boolean (when (= :struct (:type lay))
-             (some (fn [f] (or (= :string (:type f)) (has-string-field? f)))
-                   (:fields lay)))))
-
 (defn- struct-layout? [t]
   (and (vector? t) (= :struct (first t))))
 
@@ -1121,10 +1113,6 @@
        :float (.set seg ValueLayout/JAVA_FLOAT_UNALIGNED off (float v))
        (if (layout-vector? t)
          (let [lay (layout-of t)]
-           (when (has-string-field? lay)
-             (throw (ex-info (str "babashka.ffi: cannot write a :string field without an arena: " (pr-str t)
-                                  ". Allocate the string with string->ptr and declare the field :pointer.")
-                             {:type t})))
            ((cached-codec :encode lay) nil (if (zero? off) seg (.asSlice seg off)) v))
          (throw (ex-info (str "babashka.ffi: cannot write type " t) {:type t}))))
      nil)))
@@ -1291,7 +1279,16 @@
               ((aget encs i) arena seg x)))))
       :string (fn [arena seg v]
                 (write seg :pointer
-                       (if (string? v) (.allocateFrom ^Arena arena ^String v) v)
+                       (if (string? v)
+                         (do (when-not arena
+                               ;; write takes no arena, so it cannot own the
+                               ;; C string this would allocate
+                               (throw (ex-info (str "babashka.ffi: a :string field holds a pointer to bytes"
+                                                    " that outlive this write, so their lifetime is yours"
+                                                    " to choose: (string->ptr arena " (pr-str v) ")")
+                                               {:value v})))
+                             (.allocateFrom ^Arena arena ^String v))
+                         v)
                        offset))
       ;; write :pointer takes a segment or nil itself
       (:pointer :bool) (fn [_ seg v] (write seg t v offset))
