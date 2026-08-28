@@ -745,6 +745,6 @@ CPython, libffi, and raylib, with a note on running each on either host.
 
 These libraries use `babashka.ffi`:
 
-- [babashka/ffi-sqlite3](https://github.com/babashka/ffi-sqlite3), including
+- [babashka.sqlite](https://github.com/babashka/babashka.sqlite), including
   callbacks and aggregates
-- [babashka/ffi-duckdb](https://github.com/babashka/ffi-duckdb)
+- [babashka.duckdb](https://github.com/babashka/babashka.duckdb)
