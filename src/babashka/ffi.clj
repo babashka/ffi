@@ -950,6 +950,26 @@
 
 (declare ^:private layout-of)
 
+;; The struct codecs live with the libffi call path, below.
+(declare ^:private decoder ^:private encoder)
+
+;; Building a codec walks the layout and allocates a tree of closures, which
+;; costs several times the access it performs. Both are built at offset zero
+;; and cached per layout; a nonzero offset reads through a slice, so striding
+;; over an array of structs does not fill the cache with one entry per index.
+(def ^:private codec-cache (atom {}))
+(def ^:private codec-cache-limit 256)
+
+(defn- cached-codec [kind lay]
+  (let [k [kind lay]]
+    (or (get @codec-cache k)
+        (let [v (case kind
+                  :decode (decoder lay 0)
+                  :encode (encoder lay 0))]
+          (swap! codec-cache
+                 (fn [m] (if (<= codec-cache-limit (count m)) m (assoc m k v))))
+          v))))
+
 (defn sizeof
   "Returns the size of a type keyword or struct layout, in bytes. The size
   of a struct includes padding."
@@ -1067,7 +1087,10 @@
        :double (.get seg ValueLayout/JAVA_DOUBLE_UNALIGNED off)
        :float (.get seg ValueLayout/JAVA_FLOAT_UNALIGNED off)
        :string (string-at (.get seg ValueLayout/JAVA_LONG_UNALIGNED off))
-       (throw (ex-info (str "babashka.ffi: cannot read type " t) {:type t}))))))
+       (if (layout-vector? t)
+         (let [dec (cached-codec :decode (layout-of t))]
+           (dec (if (zero? off) seg (.asSlice seg off))))
+         (throw (ex-info (str "babashka.ffi: cannot read type " t) {:type t})))))))
 
 (defn write
   "Writes v as type t to p. The default byte offset is zero. Returns nil.
@@ -1088,7 +1111,10 @@
        (:int8 :uint8 :byte :char) (.set seg ValueLayout/JAVA_BYTE off (unchecked-byte (long v)))
        :double (.set seg ValueLayout/JAVA_DOUBLE_UNALIGNED off (double v))
        :float (.set seg ValueLayout/JAVA_FLOAT_UNALIGNED off (float v))
-       (throw (ex-info (str "babashka.ffi: cannot write type " t) {:type t})))
+       (if (layout-vector? t)
+         (let [lay (layout-of t)]
+           ((cached-codec :encode lay) nil (if (zero? off) seg (.asSlice seg off)) v))
+         (throw (ex-info (str "babashka.ffi: cannot write type " t) {:type t}))))
      nil)))
 
 (defn read-bytes
@@ -1253,7 +1279,16 @@
               ((aget encs i) arena seg x)))))
       :string (fn [arena seg v]
                 (write seg :pointer
-                       (if (string? v) (.allocateFrom ^Arena arena ^String v) v)
+                       (if (string? v)
+                         (do (when-not arena
+                               ;; write takes no arena, so it cannot own the
+                               ;; C string this would allocate
+                               (throw (ex-info (str "babashka.ffi: a :string field holds a pointer to bytes"
+                                                    " that outlive this write, so their lifetime is yours"
+                                                    " to choose: (string->ptr arena " (pr-str v) ")")
+                                               {:value v})))
+                             (.allocateFrom ^Arena arena ^String v))
+                         v)
                        offset))
       ;; write :pointer takes a segment or nil itself
       (:pointer :bool) (fn [_ seg v] (write seg t v offset))

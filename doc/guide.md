@@ -26,6 +26,7 @@ calls without these settings.
 - [Call a variadic function](#call-a-variadic-function)
 - [Use native memory](#use-native-memory)
   - [Arenas](#arenas)
+  - [Read and write a struct](#read-and-write-a-struct)
   - [Out parameters](#out-parameters)
 - [Create a callback](#create-a-callback)
 - [Performance and limits](#performance-and-limits)
@@ -610,6 +611,60 @@ the string at that pointer.
 
 CAUTION: Use only valid addresses and offsets. An invalid memory access can
 stop the process.
+
+### Read and write a struct
+
+`read` and `write` support struct layouts in place of type keywords. `read`
+returns the struct as a map. `write` accepts a map:
+
+```clojure
+(def point [:struct [[:x :int] [:y :int]]])
+
+(with-open [arena (ffi/confined-arena)]
+  (let [p (ffi/alloc arena point)]
+    (ffi/write p point {:x 3 :y 4})
+    (ffi/read p point)))
+;;=> {:x 3, :y 4}
+```
+
+A C function can fill a struct through an out parameter. The next example shows
+the required calls:
+
+```clojure
+(defcfn fill-point "fill_point" [:pointer :int :int] :void)
+
+(with-open [arena (ffi/confined-arena)]
+  (let [out (ffi/alloc arena point)]
+    (fill-point out 7 11)
+    (ffi/read out point)))
+;;=> {:x 7, :y 11}
+```
+
+The byte offset selects one element of an array of structs:
+
+```clojure
+(ffi/read arr point (* i (ffi/sizeof point)))
+```
+
+Layouts nest, and a nested struct is a nested map.
+
+A `:string` field differs from the others. Every other field holds its value
+inside the struct, so writing it creates nothing. A `:string` field holds a
+pointer to bytes that live elsewhere and must outlive the write, so those
+bytes need an owner. Allocate them and write the pointer:
+
+```clojure
+(def named [:struct [[:id :int] [:name :string]]])
+
+(with-open [arena (ffi/confined-arena)]
+  (let [p (ffi/alloc arena named)]
+    (ffi/write p named {:id 7 :name (ffi/string->ptr arena "seven")})
+    (ffi/read p named)))
+;;=> {:id 7, :name "seven"}
+```
+
+`read` has no such restriction. It copies the bytes out, which raises no
+question of ownership.
 
 ### Out parameters
 
