@@ -35,7 +35,7 @@
       (ffi/defcfn c-div \"div\" [:int :int] [:struct [[:quot :int] [:rem :int]]])
       (c-div 7 2)   ;=> {:quot 3 :rem 1}
 
-  Struct calls use libffi. See doc/ffi.md.
+  Struct calls use libffi. See doc/guide.md.
 
   Native images compile a fixed set of fast call shapes: up to six
   arguments, at most three mixed floating-point arguments or four of the
@@ -51,7 +51,7 @@
   type, or a pointer type. Callbacks
   support up to four arguments and two :double arguments. Callbacks do not
   support :float. The callback return type must be :void, an integer type, or
-  :double. Argument order does not affect these limits. See doc/ffi.md for
+  :double. Argument order does not affect these limits. See doc/guide.md for
   details and workarounds.
 
   Add a trailing :& to declare a variadic C function. The types before :& are
@@ -757,7 +757,7 @@
         ;; at call time
         _ (when (and native-image? (not tramp-id) (not (libffi-available?)))
             (throw (unsupported-ex sym argtypes rettype
-                                   "this build has no libffi; see the signature limits in doc/ffi.md")))
+                                   "this build has no libffi; see the signature limits in doc/guide.md")))
         raw (if tramp-id
               (delay (trampoline-invoker tramp-id (.address (require-symbol lib sym))))
               (delay

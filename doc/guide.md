@@ -17,6 +17,26 @@ have a fast path. The section on performance and limits describes both.
 CAUTION: Use only correct signatures and valid pointers. An incorrect value
 can stop the process.
 
+## Contents
+
+- [Quick start](#quick-start)
+- [Load a library](#load-a-library)
+- [Bind a function](#bind-a-function)
+  - [Bind an address](#bind-an-address)
+  - [Wrap the binding in one form](#wrap-the-binding-in-one-form)
+  - [Types](#types)
+  - [Pass a struct by value](#pass-a-struct-by-value)
+- [Call a variadic function](#call-a-variadic-function)
+- [Use native memory](#use-native-memory)
+  - [Arenas](#arenas)
+  - [Out parameters](#out-parameters)
+- [Create a callback](#create-a-callback)
+- [Performance and limits](#performance-and-limits)
+  - [On the JVM](#on-the-jvm)
+  - [In a babashka native binary](#in-a-babashka-native-binary)
+  - [Callbacks](#callbacks)
+- [Examples](#examples)
+
 ## Quick start
 
 Load a library and bind a function:
