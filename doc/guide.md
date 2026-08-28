@@ -26,6 +26,7 @@ calls without these settings.
 - [Call a variadic function](#call-a-variadic-function)
 - [Use native memory](#use-native-memory)
   - [Arenas](#arenas)
+  - [Read and write a struct](#read-and-write-a-struct)
   - [Out parameters](#out-parameters)
 - [Create a callback](#create-a-callback)
 - [Performance and limits](#performance-and-limits)
@@ -610,6 +611,46 @@ the string at that pointer.
 
 CAUTION: Use only valid addresses and offsets. An invalid memory access can
 stop the process.
+
+### Read and write a struct
+
+`read` and `write` take a layout wherever they take a type keyword. A struct
+reads back as a map and writes from one:
+
+```clojure
+(def point [:struct [[:x :int] [:y :int]]])
+
+(with-open [arena (ffi/confined-arena)]
+  (let [p (ffi/alloc arena point)]
+    (ffi/write p point {:x 3 :y 4})
+    (ffi/read p point)))
+;;=> {:x 3, :y 4}
+```
+
+This is how a C function fills a struct through an out parameter. Allocate
+the struct, pass its pointer, then read the result:
+
+```clojure
+(defcfn fill-point "fill_point" [:pointer :int :int] :void)
+
+(with-open [arena (ffi/confined-arena)]
+  (let [out (ffi/alloc arena point)]
+    (fill-point out 7 11)
+    (ffi/read out point)))
+;;=> {:x 7, :y 11}
+```
+
+The byte offset selects one element of an array of structs:
+
+```clojure
+(ffi/read arr point (* i (ffi/sizeof point)))
+```
+
+Layouts nest, and a nested struct is a nested map.
+
+`write` refuses a layout with a `:string` field, because writing one
+allocates a C string and `write` takes no arena. Allocate the string with
+`string->ptr` and declare the field `:pointer`.
 
 ### Out parameters
 

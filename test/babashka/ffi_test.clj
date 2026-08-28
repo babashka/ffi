@@ -45,3 +45,44 @@
   (testing "a string allocated in an arena reads back"
     (with-open [arena (ffi/confined-arena)]
       (is (= "hello" (ffi/ptr->string (ffi/string->ptr arena "hello")))))))
+
+(def struct-access?
+  "Reading a struct through a layout arrived after the first release, so the
+  built-in namespace of an older babashka does not have it. The suite runs on
+  whatever babashka is installed, so it asks rather than assumes."
+  (delay (with-open [arena (ffi/confined-arena)]
+           (try (ffi/read (ffi/alloc arena point) point) true
+                (catch Exception _ false)))))
+
+(deftest struct-access-test
+  (if-not @struct-access?
+    (println "struct read and write skipped: this babashka predates them")
+    (let [rect [:struct [[:lo point] [:hi point]]]]
+      (testing "a struct reads back as a map and writes from one"
+        (with-open [arena (ffi/confined-arena)]
+          (let [p (ffi/alloc arena point)]
+            (ffi/write p point {:x 3 :y 4})
+            (is (= {:x 3 :y 4} (ffi/read p point))))))
+      (testing "nested layouts round trip"
+        (with-open [arena (ffi/confined-arena)]
+          (let [r (ffi/alloc arena rect)
+                v {:lo {:x 1 :y 2} :hi {:x 3 :y 4}}]
+            (ffi/write r rect v)
+            (is (= v (ffi/read r rect))))))
+      (testing "an offset addresses one element of an array of structs"
+        (with-open [arena (ffi/confined-arena)]
+          (let [arr (ffi/alloc arena 24)]
+            (dotimes [i 3]
+              (ffi/write arr point {:x i :y (* 2 i)} (* i 8)))
+            (is (= [{:x 0 :y 0} {:x 1 :y 2} {:x 2 :y 4}]
+                   (mapv #(ffi/read arr point (* % 8)) (range 3)))))))
+      (testing "writing a :string field needs an arena, so it is refused"
+        (with-open [arena (ffi/confined-arena)]
+          (is (thrown-with-msg?
+               Exception #"without an arena"
+               (ffi/write (ffi/alloc arena 16) [:struct [[:s :string]]] {:s "x"})))))
+      (testing "an invalid struct value reports the field"
+        (with-open [arena (ffi/confined-arena)]
+          (is (thrown-with-msg?
+               Exception #"misses field :y"
+               (ffi/write (ffi/alloc arena point) point {:x 1}))))))))
