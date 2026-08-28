@@ -4,26 +4,19 @@
 
 The API is experimental.
 
-It runs in two places, and the API is the same in both. In babashka the
-namespace is built in, so `(require '[babashka.ffi :as ffi])` is enough. On
-the JVM it comes from this library and needs JDK 22 or newer, because it uses
-the Java FFM API. Configure native access with one of these methods:
+This library is built-in to babashka but it also runs on the JVM.
+
+On the JVM, you need to:
 
 - Start the JVM with `--enable-native-access=ALL-UNNAMED`.
 - Set the `Enable-Native-Access` manifest attribute in an uberjar.
 
-Without either setting, recent JDKs warn. A future release will refuse the
-calls.
-
-What differs between the two hosts is speed and the set of signatures that
-have a fast path. The section on performance and limits describes both.
-
-CAUTION: Use only correct signatures and valid pointers. An incorrect value
-can stop the process.
+Without either setting, you'll get a warning from the JDK. A future release will refuse the
+calls without these settings.
 
 ## Contents
 
-- [Quick start](#quick-start)
+- [Quickstart](#quickstart)
 - [Load a library](#load-a-library)
 - [Bind a function](#bind-a-function)
   - [Bind an address](#bind-an-address)
@@ -41,7 +34,7 @@ can stop the process.
   - [Callbacks](#callbacks)
 - [Examples](#examples)
 
-## Quick start
+## Quickstart
 
 Load a library and bind a function:
 
@@ -56,7 +49,7 @@ Load a library and bind a function:
 ```
 
 `load-system-library` adds the platform file name. For example, `"z"`
-becomes `libz.dylib`, `libz.so`, or `z.dll`.
+becomes `libz.dylib`, `libz.so`, or `z.dll`, depending on the operating system.
 
 ## Load a library
 
@@ -97,8 +90,8 @@ Pass a map to select candidates for each operating system:
 The supported keys are `:mac`, `:linux`, and `:windows`. You can use
 `:darwin` instead of `:mac`.
 
-Both load functions first use the system library search. For a bare name,
-they then search these directories.
+Both functions first ask the operating system to load the library. If this
+fails for a bare name, they search these directories:
 
 macOS:
 
@@ -120,7 +113,10 @@ Linux:
 - `/lib/x86_64-linux-gnu` or `/lib/aarch64-linux-gnu`, for systems where
   `/lib` is not merged into `/usr/lib`
 
-Windows has no additional search directories.
+On Windows, add the directory that contains the DLL to `PATH` before you start
+babashka. Alternatively, pass the full DLL path to `load-library`. Windows uses
+its [DLL search path](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-search-order)
+to find other DLL files that the loaded DLL needs.
 
 On FreeBSD, babashka runs as a Linux binary through the
 [Linuxulator](https://docs.freebsd.org/en/books/handbook/linuxemu/). The
@@ -150,15 +146,15 @@ system lookup. `find-symbol` follows the same rules.
 A shared library exports functions and global variables by name. An exported
 name is a symbol.
 
-Use `find-symbol` to get a pointer to a symbol without a function binding:
+Use `find-symbol` to access a symbol without a function binding:
 
 ```clojure
 (ffi/find-symbol "zlibVersion")
 ;;=> a pointer
 ```
 
-The result is a pointer. You can pass it to a C function that accepts a
-function or data pointer, or to `cfn` to bind it.
+Pass the result to a C function that accepts a function or data pointer. You
+can also pass it to `cfn` to bind it.
 
 If `find-symbol` cannot find the symbol, it returns `nil`.
 
@@ -171,8 +167,8 @@ Pass a library map to limit the search to that library and its dependencies:
 Without a library map, `find-symbol` searches all loaded libraries and then
 the default system lookup.
 
-A symbol from the selected library takes priority over symbols from its
-dependencies. Thus, a bundled library supplies its own function.
+If the selected library and a dependency export the same symbol, the search
+returns the symbol from the selected library.
 
 The search can also find symbols from the dependencies. For example,
 `(ffi/find-symbol zlib "strlen")` returns the address of the C library's
@@ -201,16 +197,13 @@ The symbol lookup occurs on the first call.
 ;;=> 42
 ```
 
-Use this form for a function that has no exported name.
+Use this form for a function without an exported name.
 
-Function addresses can come from loaders, C functions, struct fields, or
-`callback`.
+Function addresses can come from `find-symbol`, C return values, struct fields,
+or `callback`.
 
-Read a pointer field with `read` and `:pointer`. Then pass the result to
-`cfn`.
-
-`cfn` rejects address zero. A loader returns zero when it does not have the
-requested function.
+`cfn` rejects address zero. A function lookup usually returns zero when it
+cannot find the requested function.
 
 CAUTION: Make sure that the address points to a function with the declared
 signature. An incorrect address or signature can stop the process.
@@ -261,7 +254,7 @@ binding keeps the function address.
 A function or `delay` can refer to a library that loads later. Changes to the
 library value after the first call do not change the binding.
 
-### Wrap the binding in one form
+### Define a wrapper with `defcfn`
 
 Use the wrapper form of `defcfn` to define a raw binding and a wrapper
 together:
@@ -280,18 +273,17 @@ together:
 ```
 
 The symbol after the return type names the raw binding. Only the wrapper body
-can use this name. The raw name does not enter the namespace.
+can use this name. The raw name does not become a var in the namespace.
 
 The forms after the raw name are a normal `fn` tail. The wrapper can have
-multiple arities. Its argument lists can differ from the C function. coffi
-uses the same form.
+multiple arities. Its argument lists can differ from the C function.
 
-The wrapper form needs a literal argtypes vector. Only the plain form
-accepts an argtypes expression.
+The wrapper form requires a static argument type vector. The plain form also
+accepts a dynamic expression.
 
 ### Types
 
-Use these type keywords in function signatures:
+The keywords, denoting C types can be used in function signatures.
 
 | Type | Meaning |
 |---|---|
@@ -316,7 +308,7 @@ Use these type keywords in function signatures:
 Windows. Use the type that matches the C declaration.
 
 A `:bool` argument uses Clojure truthiness. A `:bool` return value is
-`true` or `false`.
+`true` or `false`:
 
 ```clojure
 (defcfn window-should-close? "WindowShouldClose" [] :bool)
@@ -326,11 +318,12 @@ A `:bool` argument uses Clojure truthiness. A `:bool` return value is
 A `:uint8` return value is a number. In Clojure, both `0` and `1` are
 truthy.
 
-A `:string` argument uses temporary memory. C must not keep this pointer
-after the function returns.
+A `:string` argument points to temporary memory. The pointer is valid only
+until the C function returns.
 
-If C keeps the pointer, allocate the string with `string->ptr`. After C
-stops using the pointer, free it.
+If the C function stores the pointer, allocate the string with `string->ptr`
+in an arena (see [Arenas](#arenas)). Keep the arena open while C uses the
+pointer.
 
 A `:string` return value reads the pointer as UTF-8. A NULL return value
 becomes `nil`.
@@ -364,7 +357,9 @@ Layouts nest, and so do their values:
 A struct value must contain each layout field and no other field. A missing or
 unknown field causes an error.
 
-`sizeof` and `alignof` accept a layout. Babashka includes the required padding:
+`sizeof` and `alignof` accept a layout. `sizeof` accounts for the alignment of
+each struct field. In this example, the struct has seven padding bytes between
+`:c` and `:d`:
 
 ```clojure
 (ffi/sizeof [:struct [[:c :char] [:d :double]]])
@@ -381,21 +376,22 @@ To map a struct to a value of your own, wrap the binding:
     (vec3 x y z)))
 ```
 
-A struct call goes through libffi, which places the arguments from a
-description of the call. When babashka binds the function, it compares its
-own struct layout with the one libffi computes. A difference is an error.
+A struct call goes through [libffi](https://github.com/libffi/libffi), which
+places the arguments from a description of the call. When `babashka.ffi`
+binds the function, it compares its own struct layout with the one libffi
+computes. A difference is an error.
 A struct call takes approximately 1 microsecond. A call with only primitive
 types takes approximately 150 nanoseconds.
 
-Every babashka binary includes libffi, except the musl static binary and a
+Every babashka binary includes `libffi`, except the musl static binary and a
 build made with `BABASHKA_LIBFFI=none`. `bb describe` shows the version under
 `:libffi/version`. On the JVM, babashka loads the system libffi. Without
 libffi, a struct binding causes an error.
 
 This implementation does not support structs in variadic signatures.
 
-If a `:string` field contains a Clojure string, babashka allocates a temporary
-C string for the call. C must not keep its pointer after the call returns.
+A `:string` struct field follows the same [pointer-lifetime rules](#types) as a
+`:string` argument.
 
 ## Call a variadic function
 
@@ -426,16 +422,17 @@ For example, a `printf` format must match its values.
 
 ## Use native memory
 
-A pointer is a native `java.lang.foreign.MemorySegment` with a live scope
-that the current thread can access. A heap segment does not have a C
-address. A closed-arena pointer refers to released memory. A confined arena
-belongs to one thread. The API rejects all three before it passes an address
-to C.
+Pointers refer to native memory. The API rejects these values before a call to
+C:
 
-Babashka does not expose the `MemorySegment` class to scripts because the class
-increases the binary size.
+- a heap segment without a C address
+- memory from a closed arena
+- memory from a confined arena created by another thread
 
-Use `size`, `address`, `slice`, `reinterpret`, and `pointer?`.
+On the JVM, a pointer is a `java.lang.foreign.MemorySegment`. Babashka does not
+expose this class to scripts because it significantly increases the binary
+size. Use `size`, `address`, `slice`, `reinterpret`, and `pointer?` to work with
+a `MemorySegment` instead.
 
 CAUTION: Do not pass a confined segment from another thread. C can bypass the
 thread-access restriction.
