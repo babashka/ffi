@@ -724,8 +724,8 @@ Callbacks do not use libffi on either host and keep these limits:
 
 ## Examples
 
-Babashka's [`examples/ffi`](https://github.com/babashka/babashka/tree/master/examples/ffi)
-directory contains complete examples for SQLite, CPython, libffi, and raylib.
+The [examples](../examples) directory contains complete programs for SQLite,
+CPython, libffi, and raylib, with a note on running each on either host.
 
 These libraries are built on this one and show it at a larger scale:
 
