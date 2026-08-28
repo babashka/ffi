@@ -21,18 +21,15 @@ In babashka the namespace is built in: `(require '[babashka.ffi :as ffi])`.
 
 ## Documentation
 
-The [babashka FFI documentation](https://github.com/babashka/babashka/blob/master/doc/ffi.md)
-applies to this library unchanged.
+[doc/guide.md](doc/guide.md) documents the API: library loading, function
+binding, memory, arenas, structs, callbacks, and performance limits for each
+host.
 
 ## clj-kondo
 
 The library exports a clj-kondo hook for `defcfn`. Copy the config with:
 
     clj-kondo --lint "$(clojure -Spath)" --copy-configs --skip-lint
-
-## Test
-
-    clojure -M:test
 
 ## License
 
