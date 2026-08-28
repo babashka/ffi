@@ -495,7 +495,7 @@ byte count. It uses the natural alignment of the type or layout:
 ```
 
 `free` releases memory that a C function returned for the caller to release.
-If the library has a deallocator, use it. One example is `duckdb_free`.
+If the library has a deallocator, prefer to use that instead. E.g. DuckDB provides `duckdb_free`.
 
 CAUTION: After you call `free`, do not use the pointer. This can corrupt
 memory or stop the process.
@@ -505,7 +505,7 @@ memory or stop the process.
 An arena owns its allocated memory. When the arena closes, it releases this
 memory.
 
-Create an arena in `with-open`:
+Create an arena in `with-open` to close it automatically:
 
 ```clojure
 (with-open [arena (ffi/confined-arena)]
@@ -523,33 +523,28 @@ C functions reject pointers from a closed arena.
 `free` refuses memory from a confined, shared, or automatic arena. The arena
 releases this memory.
 
-CAUTION: While C uses the arena memory, do not close the arena. C can access
-released memory.
+CAUTION: While C uses the arena memory, do not close the arena, since C can continue to use the memory after the arena closes.
 
-Arena memory uses the alignment of its allocation. A type uses its natural
-alignment. An integer byte count uses alignment 16. If the C API requires a
-different alignment, specify that alignment:
+`alloc` chooses the correct alignment for a type or layout. For a byte count, it
+uses 16-byte alignment. Specify another alignment only when the C API requires
+it:
 
 ```clojure
 (ffi/alloc arena 4096 64)   ; 4096 bytes on a 64-byte boundary
 ```
 
-Use `confined-arena` for memory that one thread uses. Other threads cannot
-access its pointers. Use `shared-arena` for memory that multiple threads use.
+Use `confined-arena` for memory that should only be accessible from one thread.
+Use `shared-arena` for memory that should be accessible from multiple threads.
 Both arena types work with `with-open`.
 
 CAUTION: While another thread is in a C call that uses the shared arena
-memory, do not close the arena. The call continues on released memory. A pointer goes to C
-as an address, so the arena does not know that the call is in progress.
+memory, do not close the arena. The call could continue to use the released memory and the arena does not protect you from that
 
 The garbage collector releases an `auto-arena` after it becomes unreachable.
 While C uses its pointers, keep the arena reachable.
 
 A `global-arena` exists until the process stops. You cannot close an automatic
 or global arena.
-
-The functions return a `java.lang.foreign.Arena`, so the same code runs in
-babashka and on the JVM.
 
 `read` and `write` accept an optional byte offset, and it is always the last
 argument:
@@ -624,14 +619,21 @@ function:
 ```clojure
 (defcfn sqlite3-open "sqlite3_open" [:string :pointer] :int)
 
-(with-open [arena (ffi/confined-arena)]
-  (let [database-pointer (ffi/alloc arena :pointer)]
-    (sqlite3-open "example.db" database-pointer)
-    (ffi/read database-pointer :pointer)))
+(def database
+  (with-open [arena (ffi/confined-arena)]
+    (let [database-pointer (ffi/alloc arena :pointer)]
+      (sqlite3-open "example.db" database-pointer)
+      (ffi/read database-pointer :pointer))))
 ```
 
-The returned database pointer belongs to SQLite. Close it with the related
-SQLite function.
+The returned database pointer is managed by SQLite. Define the related close
+function and call it when you finish with the database:
+
+```clojure
+(defcfn sqlite3-close "sqlite3_close" [:pointer] :int)
+(sqlite3-close database)
+;;=> 0
+```
 
 ## Create a callback
 
@@ -668,8 +670,8 @@ the callback, or the process can stop.
 
 ## Performance and limits
 
-The route a call takes depends on the host, and so does its cost. The
-metadata on a binding names the route it chose:
+The host determines how `babashka.ffi` calls C and how much each call costs.
+Binding metadata shows which backend it uses:
 
 ```clojure
 (meta (ffi/cfn "abs" [:int] :int))
@@ -678,8 +680,9 @@ metadata on a binding names the route it chose:
 
 ### On the JVM
 
-Every signature works. The FFM linker builds a downcall handle for it, the
-JIT compiles that handle, and there are no limits to describe.
+On the JVM, the FFM linker supports every signature. It creates a downcall
+handle for each signature, and the JIT compiles the handle. This path has no
+fixed signature limits.
 
 A primitive call costs about 40 nanoseconds once the loop around it is
 compiled. Struct calls are the exception. They use libffi, which the JVM
@@ -699,6 +702,11 @@ JVM manages. The set covers:
 - A function that returns `:float`, up to 4 arguments.
 
 Argument order does not change this set.
+
+The set is a chosen balance between image size and call speed: every shape
+in it adds compiled code to the babashka binary. If a shape you need is
+missing, or a call you make often falls back to libffi, open an issue. The
+set can grow.
 
 Everything else calls through libffi: a fixed signature outside the set,
 every variadic call, and every struct call. A libffi call takes about 1
@@ -726,6 +734,9 @@ Callbacks do not use libffi on either host and keep these limits:
 - A callback can have up to 2 `:double` arguments.
 - A callback cannot use `:float`.
 - A return type can be `:void`, an integer type, or `:double`.
+
+These limits are the same balance between image size and coverage. If a C
+API needs a callback shape outside this set, open an issue.
 
 ## Examples
 
