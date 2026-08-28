@@ -614,8 +614,8 @@ stop the process.
 
 ### Read and write a struct
 
-`read` and `write` take a layout wherever they take a type keyword. A struct
-reads back as a map and writes from one:
+Use a struct layout instead of a type keyword. `read` returns the struct as a
+map. `write` accepts a map:
 
 ```clojure
 (def point [:struct [[:x :int] [:y :int]]])
@@ -627,8 +627,8 @@ reads back as a map and writes from one:
 ;;=> {:x 3, :y 4}
 ```
 
-This is how a C function fills a struct through an out parameter. Allocate
-the struct, pass its pointer, then read the result:
+A C function can fill a struct through an out parameter. The next example shows
+the required calls:
 
 ```clojure
 (defcfn fill-point "fill_point" [:pointer :int :int] :void)
@@ -648,9 +648,8 @@ The byte offset selects one element of an array of structs:
 
 Layouts nest, and a nested struct is a nested map.
 
-`write` refuses a layout with a `:string` field, because writing one
-allocates a C string and `write` takes no arena. Allocate the string with
-`string->ptr` and declare the field `:pointer`.
+`write` rejects a layout with a `:string` field because it does not take an
+arena. Allocate the string with `string->ptr`. Declare the field as `:pointer`.
 
 ### Out parameters
 
