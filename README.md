@@ -25,6 +25,9 @@ In babashka the namespace is built in: `(require '[babashka.ffi :as ffi])`.
 binding, memory, arenas, structs, callbacks, and performance limits for each
 host.
 
+[API.md](API.md) lists every public var with its arities and docstring.
+Regenerate it with `bb quickdoc`.
+
 ## clj-kondo
 
 The library exports a clj-kondo hook for `defcfn`. Copy the config with:

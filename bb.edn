@@ -1,4 +1,7 @@
 {:paths ["src"]
+ :deps {io.github.borkdude/quickdoc
+        #_{:local/root "/Users/borkdude/dev/quickdoc"}
+        {:git/sha "5097746c91fbd6605792e7dc817a81d20b8d691a"}}
  :tasks
  {test:bb {:doc "Run the tests through babashka's built-in babashka.ffi."
            :extra-paths ["test"]
@@ -9,4 +12,12 @@
            :exec-args {:dirs ["test"]}
            :org.babashka/cli {:coerce {:nses [:symbol] :vars [:symbol]}}}
   test:jvm {:doc "Run the tests on the JVM."
-            :task (shell "clojure -M:test")}}}
+            :task (shell "clojure -M:test")}
+  quickdoc
+  {:doc "Invoke quickdoc"
+   :requires ([quickdoc.api :as api])
+   :task (api/quickdoc {:git/branch "main"
+                        :github/repo "https://github.com/babashka/ffi"
+                        :toc true
+                        :var-links true
+                        :var-pattern :wikilinks})}}}
