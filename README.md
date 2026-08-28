@@ -21,8 +21,8 @@ In babashka the namespace is built in: `(require '[babashka.ffi :as ffi])`.
 
 ## Documentation
 
-The [babashka FFI documentation](https://github.com/babashka/babashka/blob/master/doc/ffi.md)
-applies to this library unchanged.
+[doc/ffi.md](doc/ffi.md) documents the whole API: loading libraries, binding
+functions, memory and arenas, structs, callbacks, and what each host costs.
 
 ## clj-kondo
 
