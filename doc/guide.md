@@ -28,6 +28,7 @@ calls without these settings.
   - [Memory that C allocated](#memory-that-c-allocated)
   - [Arenas](#arenas)
   - [Read and write a struct](#read-and-write-a-struct)
+  - [Fixed arrays](#fixed-arrays)
   - [Out parameters](#out-parameters)
 - [Create a callback](#create-a-callback)
 - [Performance and limits](#performance-and-limits)
@@ -709,6 +710,50 @@ bytes need an owner. Allocate them and write the pointer:
 
 `read` has no such restriction. It copies the bytes out, which raises no
 question of ownership.
+
+### Fixed arrays
+
+A C struct often holds a fixed array: `char name[32]`, `int32_t v[4]`,
+`double m[2][2]`. The layout for one is `[:array elem n]`. `elem` is a type
+keyword or a layout, so an array can hold structs or other arrays:
+
+```clojure
+(def bone [:struct [[:name [:array :char 32]] [:parent :int]]])   ; raylib BoneInfo
+(def quad [:struct [[:v [:array :int 4]]]])
+(def mat2 [:struct [[:m [:array [:array :double 2] 2]]]])
+```
+
+`read` returns an array as a vector. `write` accepts a vector, a list, or a
+Java array with exactly `n` elements. A value with another length is an
+error, in the same way that a struct value with a missing field is one:
+
+```clojure
+(with-open [arena (ffi/confined-arena)]
+  (let [p (ffi/alloc arena quad)]
+    (ffi/write p quad {:v [1 2 3 4]})
+    (ffi/read p quad)))
+;;=> {:v [1 2 3 4]}
+```
+
+A `char` array reads as a vector of bytes, because C uses one both for a
+string and for raw bytes. To read the string in a fixed-width field, read
+that field with a limit:
+
+```clojure
+(with-open [arena (ffi/confined-arena)]
+  (let [p (ffi/alloc arena bone)]
+    (fill-bone p)
+    (ffi/ptr->string (ffi/slice p 0 32) 32)))
+;;=> "spine"
+```
+
+The limit stops the read at the end of the field when the name fills it
+without a NUL byte.
+
+C never passes an array by value. A parameter declared as an array is a
+pointer to its first element, so declare `:pointer` for it. A struct that
+holds an array is passed by value in the normal way, and `cfn` rejects a bare
+array layout in a signature.
 
 ### Out parameters
 

@@ -43,3 +43,21 @@ EXPORT Rect rect_swap(Rect r) {
 
 /* a struct argument with a :void return */
 EXPORT void p2_store(P2 p, int32_t *out) { *out = p.x * 100 + p.y; }
+
+/* -- fixed arrays inside structs ------------------------------------------ */
+
+typedef struct { int32_t v[4]; } Quad;               /* 16 bytes: two integer registers */
+typedef struct { char name[32]; int32_t parent; } Bone;  /* raylib BoneInfo: 36 bytes, passed in memory */
+typedef struct { double m[2][2]; } Mat2;             /* a two-dimensional array */
+typedef struct { P2 pts[2]; } Pair;                  /* an array of structs */
+
+EXPORT int32_t quad_sum(Quad q) { return q.v[0] + q.v[1] + q.v[2] + q.v[3]; }
+EXPORT Quad quad_make(int32_t a) { Quad q = { { a, a + 1, a + 2, a + 3 } }; return q; }
+EXPORT int32_t bone_len(Bone b) {
+  int32_t i = 0;
+  while (b.name[i]) i++;
+  return i + b.parent;
+}
+EXPORT Bone bone_make(int32_t parent) { Bone b = { "spine", parent }; return b; }
+EXPORT double mat2_trace(Mat2 m) { return m.m[0][0] + m.m[1][1]; }
+EXPORT int32_t pair_sum(Pair p) { return p.pts[0].x + p.pts[0].y + p.pts[1].x + p.pts[1].y; }
