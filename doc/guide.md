@@ -377,17 +377,24 @@ To map a struct to a value of your own, wrap the binding:
     (vec3 x y z)))
 ```
 
-A struct call goes through [libffi](https://github.com/libffi/libffi), which
-places the arguments from a description of the call. When `babashka.ffi`
-binds the function, it compares its own struct layout with the one libffi
-computes. A difference is an error.
-A struct call takes approximately 1 microsecond. A call with only primitive
-types takes approximately 150 nanoseconds.
+On the JVM, a struct call uses the FFM linker. The linker builds a downcall
+handle from the struct layout. This requires only the JDK.
+
+A native image cannot build this handle at run time. It can call only
+signatures that were registered when the image was built. A struct descriptor
+carries the whole layout, so a fixed set of registrations cannot cover every
+struct. Native images use [libffi](https://github.com/libffi/libffi) for these
+calls. Libffi places the arguments from a description that it builds at run
+time. When `babashka.ffi` binds the function, it compares its struct layout
+with the layout that libffi computes. A difference is an error.
+
+A struct call takes approximately 1 microsecond in a native image. A call
+with only primitive types takes approximately 150 nanoseconds.
 
 Every babashka binary includes `libffi`, except the musl static binary and a
 build made with `BABASHKA_LIBFFI=none`. `bb describe` shows the version under
-`:libffi/version`. On the JVM, babashka loads the system libffi. Without
-libffi, a struct binding causes an error.
+`:libffi/version`. In a binary without libffi, a struct binding causes an
+error.
 
 This implementation does not support structs in variadic signatures.
 
@@ -751,13 +758,14 @@ Binding metadata shows which backend it uses:
 
 ### On the JVM
 
-On the JVM, the FFM linker supports every signature. It creates a downcall
-handle for each signature, and the JIT compiles the handle. This path has no
-fixed signature limits.
+On the JVM, the FFM linker supports every signature, structs by value
+included. It creates a downcall handle for each signature, and the JIT
+compiles the handle. This path has no fixed signature limits, and it needs
+nothing on the system beyond the JDK.
 
 A primitive call costs about 40 nanoseconds once the loop around it is
-compiled. Struct calls are the exception. They use libffi, which the JVM
-loads from the system. If libffi is not installed, a struct binding fails.
+compiled. A struct call uses a confined arena for its arguments and return
+value. This lets threads share a binding and lets a call re-enter it.
 
 ### In a babashka native binary
 

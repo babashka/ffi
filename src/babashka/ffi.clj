@@ -35,7 +35,8 @@
       (ffi/defcfn c-div \"div\" [:int :int] [:struct [[:quot :int] [:rem :int]]])
       (c-div 7 2)   ;=> {:quot 3 :rem 1}
 
-  Struct calls use libffi. See doc/guide.md.
+  On the JVM, struct calls use the FFM linker and need only the JDK. Native
+  images use libffi for struct calls. See doc/guide.md.
 
   Native images compile a fixed set of fast call shapes: up to six
   arguments, at most three mixed floating-point arguments or four of the
@@ -611,7 +612,7 @@
   (and (vector? t) (= :struct (first t))))
 
 (declare ^:private fixed-cfn ^:private fixed-ffm-cfn ^:private variadic-ffm-cfn
-         ^:private libffi-cfn ^:private libffi-available?)
+         ^:private libffi-cfn ^:private libffi-available? ^:private struct-ffm-cfn)
 
 (defn- variadic-libffi-cfn
   "A variadic binding through libffi: one cif per distinct tail shape,
@@ -717,7 +718,8 @@
   name or a function pointer. argtypes is a vector of type keywords. rettype
   is a type keyword. A struct that the function takes as an argument, or
   returns, without a pointer in between, is a layout on that position, and
-  its value is a map of its fields. Struct calls use libffi.
+  its value is a map of its fields. On the JVM, struct calls use the FFM linker
+  and need only the JDK. Native images use libffi for struct calls.
 
   Use a function pointer for a function that has no exported name. The pointer
   can come from a loader, C function, struct field, find-symbol, or callback.
@@ -760,7 +762,11 @@
        (and structs? fixed)
        (throw (ex-info (str "babashka.ffi: a variadic signature cannot pass a struct by value: " sym)
                        {:argtypes argtypes :rettype rettype}))
-       structs? (libffi-cfn lib sym argtypes rettype)
+       ;; the FFM linker builds a struct handle at run time, so the JVM needs
+       ;; no libffi for this. An image cannot, and calls libffi instead.
+       structs? (if native-image?
+                  (libffi-cfn lib sym argtypes rettype)
+                  (struct-ffm-cfn lib sym argtypes rettype))
        fixed (variadic-cfn lib sym fixed argtypes rettype)
        :else (fixed-cfn lib sym argtypes rettype)))))
 
@@ -1478,6 +1484,123 @@
   native image, the system libffi on the JVM."
   []
   (try @libffi true (catch Exception _ false)))
+
+;; -- struct calls on the JVM --------------------------------------------------
+
+;; The FFM linker builds a downcall handle for any signature at run time,
+;; struct layouts included, so a struct call on the JVM needs no libffi at
+;; all. A native image cannot do this: it can only call a signature that was
+;; registered when the image was built, and a struct descriptor carries the
+;; whole layout, which no finite set of registrations covers. There the call
+;; goes through libffi.
+
+(def ^:private exact-layout
+  "The FFM layout of each primitive type, at the width C gives it. A scalar
+  ARGUMENT still travels as its carrier, the same widening every other FFM
+  call uses, but a struct member keeps its own width."
+  {:int ValueLayout/JAVA_INT :uint ValueLayout/JAVA_INT
+   :int32 ValueLayout/JAVA_INT :uint32 ValueLayout/JAVA_INT
+   :long ValueLayout/JAVA_LONG :ulong ValueLayout/JAVA_LONG
+   :int64 ValueLayout/JAVA_LONG :uint64 ValueLayout/JAVA_LONG
+   :size_t ValueLayout/JAVA_LONG :ssize_t ValueLayout/JAVA_LONG
+   :int16 ValueLayout/JAVA_SHORT :uint16 ValueLayout/JAVA_SHORT
+   :int8 ValueLayout/JAVA_BYTE :uint8 ValueLayout/JAVA_BYTE
+   :byte ValueLayout/JAVA_BYTE :char ValueLayout/JAVA_BYTE
+   :bool ValueLayout/JAVA_BYTE
+   :float ValueLayout/JAVA_FLOAT :double ValueLayout/JAVA_DOUBLE
+   :pointer ValueLayout/ADDRESS :string ValueLayout/ADDRESS})
+
+(defn- ffm-layout
+  "The FFM MemoryLayout of a resolved layout map. A struct becomes a
+  structLayout whose padding puts every member on the offset that layout-of
+  computed, so babashka.ffi and the linker describe the same struct."
+  ^MemoryLayout [lay]
+  (if (= :struct (:type lay))
+    (let [members (loop [acc [] off 0 fs (seq (:fields lay))]
+                    (if-let [f (first fs)]
+                      (let [at (long (:offset f))
+                            acc (cond-> acc
+                                  (> at off) (conj (MemoryLayout/paddingLayout (- at off))))]
+                        (recur (conj acc (ffm-layout f))
+                               (+ at (long (:size f)))
+                               (next fs)))
+                      (let [size (long (:size lay))]
+                        (cond-> acc
+                          (> size off) (conj (MemoryLayout/paddingLayout (- size off)))))))]
+      (MemoryLayout/structLayout (into-array MemoryLayout members)))
+    (or (exact-layout (:type lay))
+        (throw (ex-info (str "babashka.ffi: unknown type " (:type lay))
+                        {:type (:type lay)})))))
+
+(defn- struct-descriptor
+  "The FunctionDescriptor of a signature that passes a struct by value. A
+  struct position gets its own layout, a scalar position its carrier. rlay is
+  nil for a :void return."
+  ^FunctionDescriptor [alays rlay]
+  (let [lay-of (fn [lay]
+                 (if (= :struct (:type lay))
+                   (ffm-layout lay)
+                   (carrier-layout (carrier (:type lay)))))
+        args (into-array MemoryLayout (map lay-of alays))]
+    (if rlay
+      (FunctionDescriptor/of (lay-of rlay) args)
+      (FunctionDescriptor/ofVoid args))))
+
+(defn- struct-ffm-cfn
+  "Returns an FFM binding for a signature that passes a struct by value. Each
+  call takes a confined arena, which holds the struct arguments, the
+  temporary C strings, and the returned struct. The return is decoded before
+  the arena closes."
+  [lib sym argtypes rettype]
+  (let [n (count argtypes)
+        void? (= :void rettype)
+        alays (mapv layout-of argtypes)
+        rlay (when-not void? (layout-of rettype))
+        struct-ret? (boolean (and rlay (= :struct (:type rlay))))
+        struct-arg? (fn [lay] (= :struct (:type lay)))
+        ^objects encs (object-array
+                       (map #(when (struct-arg? %) (cached-codec :encode %)) alays))
+        ^objects coercers (object-array
+                           (map (fn [t lay] (when-not (struct-arg? lay) (arg-coercer t)))
+                                argtypes alays))
+        ^longs byte-sizes (long-array (map #(long (:size %)) alays))
+        ^longs aligns (long-array (map #(long (:align %)) alays))
+        ^booleans string-arg? (boolean-array (map #(= :string %) argtypes))
+        decode (when struct-ret? (cached-codec :decode rlay))
+        handle (delay (.downcallHandle ^Linker @linker*
+                                       (require-symbol lib sym)
+                                       (struct-descriptor alays rlay)
+                                       (make-array java.lang.foreign.Linker$Option 0)))
+        ;; a struct return needs somewhere to land, which the handle takes as
+        ;; its first argument
+        base (if struct-ret? 1 0)
+        arity-error (fn [got]
+                      (throw (ex-info (str "babashka.ffi: " sym " expects " n
+                                           " args, got " got)
+                                      {:symbol sym})))]
+    (with-meta
+      (fn [& args]
+        (let [args (vec args)]
+          (when-not (= n (count args)) (arity-error (count args)))
+          (with-open [a (Arena/ofConfined)]
+            (let [^objects arr (object-array (+ base n))]
+              (when struct-ret? (aset arr 0 a))
+              (dotimes [i n]
+                (let [v (nth args i)
+                      enc (aget encs i)]
+                  (aset arr (+ base i)
+                        (cond
+                          enc (let [seg (.allocate ^Arena a (aget byte-sizes i) (aget aligns i))]
+                                (enc a seg v)
+                                seg)
+                          (and (aget string-arg? i) (string? v))
+                          (.address (.allocateFrom ^Arena a ^String v))
+                          :else ((aget coercers i) v)))))
+              (let [raw (.invokeWithArguments ^MethodHandle @handle arr)]
+                (cond struct-ret? (decode raw)
+                      void? nil
+                      :else (narrow-ret rettype raw)))))))
+      {:babashka.ffi/backend :ffm})))
 
 (defn- libffi-cfn
   "Returns a libffi binding: a struct signature on any platform, and in a
