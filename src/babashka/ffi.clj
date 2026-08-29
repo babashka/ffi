@@ -34,6 +34,9 @@
   array. A field of a struct can be either, so `char name[32]` is
   [:name [:array :char 32]].
 
+  read-array and write-array copy elements of one scalar type between
+  native memory and a Java array of that width, as a memcpy.
+
   A function that takes a struct as an argument, or returns one, without a
   pointer in between, gets a layout on that position in the signature. A
   struct value is a map of its fields:
@@ -1178,25 +1181,76 @@
          (throw (ex-info (str "babashka.ffi: cannot write type " t) {:type t}))))
      nil)))
 
-(defn read-bytes
-  "Copies n bytes from pointer p at byte offset (default 0) into a new byte
-  array."
-  (^bytes [p n] (read-bytes p n 0))
-  (^bytes [p n offset]
-   (let [n (int n)
-         arr (byte-array n)
+;; -- bulk access ---------------------------------------------------------------
+
+(def ^:private array-carriers
+  "For each bulk-capable type: the unaligned value layout that
+  MemorySegment/copy uses, the constructor of the Java array it fills, and
+  the class of that array. The width comes from the type and nothing else:
+  a copy is a memcpy, so :uint lands in an int[] with its bits unchanged and
+  :pointer in a long[] of addresses."
+  (let [entry (fn [layout ctor cls] {:layout layout :ctor ctor :class cls})
+        i8 (entry ValueLayout/JAVA_BYTE byte-array (Class/forName "[B"))
+        i16 (entry ValueLayout/JAVA_SHORT_UNALIGNED short-array (Class/forName "[S"))
+        i32 (entry ValueLayout/JAVA_INT_UNALIGNED int-array (Class/forName "[I"))
+        i64 (entry ValueLayout/JAVA_LONG_UNALIGNED long-array (Class/forName "[J"))
+        f32 (entry ValueLayout/JAVA_FLOAT_UNALIGNED float-array (Class/forName "[F"))
+        f64 (entry ValueLayout/JAVA_DOUBLE_UNALIGNED double-array (Class/forName "[D"))]
+    {:int8 i8 :uint8 i8 :byte i8 :char i8 :bool i8
+     :int16 i16 :uint16 i16
+     :int i32 :uint i32 :int32 i32 :uint32 i32
+     :long i64 :ulong i64 :int64 i64 :uint64 i64 :size_t i64 :ssize_t i64 :pointer i64
+     :float f32 :double f64}))
+
+(defn- array-carrier [t]
+  (or (array-carriers t)
+      (throw (ex-info (cond
+                        (layout-vector? t)
+                        (str "babashka.ffi: read-array and write-array copy scalars into a Java array;"
+                             " for a layout use read and write with " (pr-str [:array t 'n]))
+                        (= :string t)
+                        "babashka.ffi: :string elements are pointers to bytes elsewhere, which a copy cannot follow; copy :pointer and read each"
+                        :else
+                        (str "babashka.ffi: cannot copy type " (pr-str t)))
+                      {:type t}))))
+
+(defn read-array
+  "Copies n elements of type t from pointer p, at byte offset (default 0),
+  into a new Java array. Returns the array.
+
+  The copy uses memcpy. The type gives the element width and nothing else:
+  :int, :uint and :int32 fill an int[] with the bits as they are, so a
+  :uint above Integer/MAX_VALUE reads as a negative int. :long and the other
+  eight-byte types fill a long[], and :pointer fills a long[] of addresses.
+  :byte, :char, :int8, :uint8 and :bool fill a byte[].
+
+  For an array of structs, or for elements decoded the way read decodes
+  them, use read with an [:array t n] layout."
+  ([p t n] (read-array p t n 0))
+  ([p t n offset]
+   (let [{:keys [^ValueLayout layout ctor]} (array-carrier t)
+         n (int n)
+         arr (ctor n)
          ^MemorySegment seg (accessible p)]
-     (MemorySegment/copy seg ValueLayout/JAVA_BYTE (long offset) arr 0 n)
+     (MemorySegment/copy seg layout (long offset) arr 0 n)
      arr)))
 
-(defn write-bytes
-  "Copies byte array arr into memory at pointer p at byte offset (default
-  0)."
-  ([p arr] (write-bytes p arr 0))
-  ([p ^bytes arr offset]
-   (let [n (alength arr)
+(defn write-array
+  "Copies Java array arr into memory at pointer p, at byte offset (default
+  0), as elements of type t. Returns nil.
+
+  The copy is a memcpy, as in read-array, and the array must be the Java
+  array for the type: an int[] for :int, a long[] for :long or :pointer, a
+  byte[] for :char."
+  ([p t arr] (write-array p t arr 0))
+  ([p t arr offset]
+   (let [{:keys [^ValueLayout layout ^Class class]} (array-carrier t)
          ^MemorySegment seg (accessible p)]
-     (MemorySegment/copy arr 0 seg ValueLayout/JAVA_BYTE (long offset) n)
+     (when-not (instance? class arr)
+       (throw (ex-info (str "babashka.ffi: " t " needs " (.getSimpleName class)
+                            ", got " (if (nil? arr) "nil" (.getSimpleName (.getClass ^Object arr))))
+                       {:type t :array arr})))
+     (MemorySegment/copy arr 0 seg layout (long offset) (java.lang.reflect.Array/getLength arr))
      nil)))
 
 (defn byte-buffer

@@ -160,7 +160,7 @@
         (let [p (ffi/alloc arena 8)]
           ;; every byte non-NUL: a scan that respects the size must throw,
           ;; and must report the size rather than the larger limit
-          (ffi/write-bytes p (byte-array (repeat 8 (byte 65))))
+          (dotimes [i 8] (ffi/write p :int8 65 i))
           (is (thrown-with-msg? Exception #"no NUL byte in the first 8 bytes"
                                 (ffi/ptr->string p 64)))))
       (testing "NULL is nil, with and without a limit"
@@ -385,3 +385,46 @@
         (is (= 5.0 ((ffi/cfn "mat2_trace" [mat2] :double) {:m [[1.0 2.0] [3.0 4.0]]}))))
       (testing "an array of structs"
         (is (= 10 ((ffi/cfn "pair_sum" [pair] :int) {:pts [{:x 1 :y 2} {:x 3 :y 4}]})))))))
+
+;; -- bulk copy ----------------------------------------------------------------
+;; read-array arrived after the first release. A test that names the var
+;; does not load on an older built-in namespace, because the symbol resolves
+;; at analysis time, so the two vars are looked up at run time instead.
+
+(def bulk-array?
+  (delay (boolean (resolve 'babashka.ffi/read-array))))
+
+(deftest bulk-array-test
+  (if-not @bulk-array?
+    (println "bulk copy skipped: this babashka predates read-array")
+    (let [read-array (resolve 'babashka.ffi/read-array)
+          write-array (resolve 'babashka.ffi/write-array)]
+      (with-open [arena (ffi/confined-arena)]
+        (let [p (ffi/alloc arena 64)]
+          (testing "a copy in and out of a Java array, at an offset"
+            (write-array p :int (int-array [1 2 3 4]))
+            (is (= [1 2 3 4] (vec (read-array p :int 4))))
+            (is (instance? (Class/forName "[I") (read-array p :int 4)))
+            (is (= [3 4] (vec (read-array p :int 2 8))))
+            (write-array p :double (double-array [1.5 2.5]) 16)
+            (is (= [1.5 2.5] (vec (read-array p :double 2 16)))))
+          (testing "the copy agrees with the layout read"
+            (is (= (ffi/read p [:array :int 4]) (vec (read-array p :int 4)))))
+          (testing "a copy is a memcpy: the type gives the width, not the sign"
+            (ffi/write p :uint 0xFFFFFFFF)
+            (is (= -1 (first (read-array p :uint 1))))
+            (is (= 0xFFFFFFFF (ffi/read p :uint))))
+          (testing ":pointer copies addresses"
+            (let [s (ffi/string->ptr arena "x")]
+              (ffi/write p [:array :pointer 1] [s])
+              (is (= [(ffi/address s)] (vec (read-array p :pointer 1))))))
+          (testing "what a copy cannot do says where to go instead"
+            (is (thrown-with-msg? Exception #"use read and write with \[:array"
+                                  (read-array p [:struct [[:x :int]]] 2)))
+            (is (thrown-with-msg? Exception #"pointers to bytes elsewhere"
+                                  (read-array p :string 2)))
+            (is (thrown-with-msg? Exception #":int needs int\[\], got long\[\]"
+                                  (write-array p :int (long-array 2)))))
+          (testing "a copy past the end throws instead of reading on"
+            (is (thrown? Exception (read-array p :int 17)))
+            (is (thrown? Exception (write-array p :long (long-array 9))))))))))

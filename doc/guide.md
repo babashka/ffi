@@ -590,14 +590,26 @@ argument:
 `read` supports each listed type except `:void`. `write` also excludes
 `:string`. Write a string address as `:pointer`.
 
-Use `read-bytes` and `write-bytes` to copy complete byte arrays between
-native memory and the JVM. Both functions accept an optional byte offset:
+Use `read-array` and `write-array` to copy elements of one scalar type between
+native memory and a Java primitive array. The copy uses `memcpy` and does not
+decode each element. Both functions accept an optional byte offset:
 
 ```clojure
-(ffi/write-bytes p (byte-array [1 2 3 4]))
-(ffi/read-bytes p 4)
+(ffi/write-array p :byte (byte-array [1 2 3 4]))
+(ffi/read-array p :byte 4)
 ;;=> byte array [1 2 3 4]
+(ffi/write-array p :int (int-array [1 2 3 4]))
+(ffi/read-array p :int 4)
+;;=> int array [1 2 3 4]
+(ffi/read-array p :double 512 4096)   ; 512 doubles from byte offset 4096
 ```
+
+The type gives the element width and nothing else. `:int`, `:uint` and
+`:int32` fill an `int[]` with the bits as they are, so a `:uint` above
+`Integer/MAX_VALUE` reads as a negative int. The eight-byte types fill a
+`long[]`, and `:pointer` fills a `long[]` of addresses. For elements decoded
+the way `read` decodes them, or for an array of structs, use `read` with an
+`[:array t n]` layout.
 
 Use `byte-buffer` to create a zero-copy `java.nio.ByteBuffer` view of native
 memory:
