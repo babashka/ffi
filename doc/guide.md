@@ -377,16 +377,16 @@ To map a struct to a value of your own, wrap the binding:
     (vec3 x y z)))
 ```
 
-On the JVM, a struct call goes through the FFM linker, which builds a
-downcall handle from the struct layout. This needs nothing beyond the JDK.
+On the JVM, a struct call uses the FFM linker. The linker builds a downcall
+handle from the struct layout. This requires only the JDK.
 
-A native image cannot build such a handle: it can only call a signature that
-was registered when the image was built, and a struct descriptor carries the
-whole layout, which no fixed set of registrations covers. There the call goes
-through [libffi](https://github.com/libffi/libffi), which places the
-arguments from a description that it builds at run time. When `babashka.ffi`
-binds the function, it compares its own struct layout with the one libffi
-computes. A difference is an error.
+A native image cannot build this handle at run time. It can call only
+signatures that were registered when the image was built. A struct descriptor
+carries the whole layout, so a fixed set of registrations cannot cover every
+struct. Native images use [libffi](https://github.com/libffi/libffi) for these
+calls. Libffi places the arguments from a description that it builds at run
+time. When `babashka.ffi` binds the function, it compares its struct layout
+with the layout that libffi computes. A difference is an error.
 
 A struct call takes approximately 1 microsecond in a native image. A call
 with only primitive types takes approximately 150 nanoseconds.
@@ -764,9 +764,8 @@ compiles the handle. This path has no fixed signature limits, and it needs
 nothing on the system beyond the JDK.
 
 A primitive call costs about 40 nanoseconds once the loop around it is
-compiled. A struct call costs more: it takes a confined arena for the struct
-arguments and the returned struct, so that threads can share a binding and a
-call can re-enter it.
+compiled. A struct call uses a confined arena for its arguments and return
+value. This lets threads share a binding and lets a call re-enter it.
 
 ### In a babashka native binary
 

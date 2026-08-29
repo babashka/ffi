@@ -35,8 +35,8 @@
       (ffi/defcfn c-div \"div\" [:int :int] [:struct [[:quot :int] [:rem :int]]])
       (c-div 7 2)   ;=> {:quot 3 :rem 1}
 
-  On the JVM, a struct call needs nothing beyond the JDK. A native image
-  makes it through libffi. See doc/guide.md.
+  On the JVM, struct calls use the FFM linker and need only the JDK. Native
+  images use libffi for struct calls. See doc/guide.md.
 
   Native images compile a fixed set of fast call shapes: up to six
   arguments, at most three mixed floating-point arguments or four of the
@@ -718,8 +718,8 @@
   name or a function pointer. argtypes is a vector of type keywords. rettype
   is a type keyword. A struct that the function takes as an argument, or
   returns, without a pointer in between, is a layout on that position, and
-  its value is a map of its fields. On the JVM a struct call needs nothing
-  beyond the JDK. A native image makes it through libffi.
+  its value is a map of its fields. On the JVM, struct calls use the FFM linker
+  and need only the JDK. Native images use libffi for struct calls.
 
   Use a function pointer for a function that has no exported name. The pointer
   can come from a loader, C function, struct field, find-symbol, or callback.
