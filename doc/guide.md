@@ -728,7 +728,10 @@ A path that names nothing is an error when the function is made. A layout is
 closed, so a missing member is a mistake in the program.
 
 The empty path `[]` is the whole layout. `(ffi/field-reader point [])` is
-`read` of the layout with its lookup done once, which matters in a loop:
+`read` of the layout with its lookup done once. On the JVM that lookup is
+most of the cost of reading a small struct, so a struct read in a loop is
+worth hoisting there; in babashka the decode dominates and the gain is
+small. `read` stays the form for a one-off:
 
 ```clojure
 (def read-point (ffi/field-reader point []))
