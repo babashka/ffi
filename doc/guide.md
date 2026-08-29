@@ -422,6 +422,19 @@ For example, a `printf` format must match its values.
 (c-printf "%s: %.0f\n" "count" 42.0)
 ```
 
+Types after `:&` declare the tail once, so the binding resolves its call
+shape when it is made instead of inferring it from the values on every
+call. The arity is then exact, and the call is about twice as fast:
+
+```clojure
+(defcfn log-line "printf" [:string :& :int :string] :int)
+(log-line "%d: %s\n" 42 "started")
+```
+
+Declare the types C receives after promotion. Use `:double`, never `:float`,
+and `:int` or wider, never a narrower integer. If a type would be promoted,
+the binding reports the type to declare.
+
 ## Use native memory
 
 Pointers refer to native memory. The API rejects these values before a call to
