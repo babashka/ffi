@@ -295,13 +295,14 @@
   "Returns the NUL-terminated UTF-8 string at p. Returns nil for a NULL
   pointer.
 
-  A pointer that C returned has no size, so the read runs to the first NUL
-  byte. This is what a :string return type does. Give a limit to stop after
-  that many bytes and throw when no NUL appears within them, which turns a
-  missing terminator into an error instead of a walk through memory.
+  A pointer returned by C has no size, so the read runs to the first NUL
+  byte. This is what a :string return type does.
 
-  CAUTION: Without a limit, a buffer that holds no NUL byte reads past its
-  end. This can stop the process."
+  Give a limit in bytes. If no NUL appears within the limit, this function
+  throws. A limit only narrows: a pointer that knows its own size keeps it.
+
+  CAUTION: Without a limit, ptr->string can read past a buffer that has no
+  NUL byte. This can stop the process."
   ([p]
    (let [seg (as-pointer p)]
      (when-not (zero? (.address seg))
@@ -313,7 +314,10 @@
                    0))))
   ([p limit]
    (let [seg (as-pointer p)
-         limit (long limit)]
+         size (.byteSize seg)
+         ;; a limit narrows, it never widens: a pointer that already knows its
+         ;; size keeps it, so the scan cannot leave the allocation
+         limit (if (zero? size) (long limit) (min (long limit) size))]
      (when-not (zero? (.address seg))
        (let [bounded (.reinterpret seg limit)
              n (loop [i 0]

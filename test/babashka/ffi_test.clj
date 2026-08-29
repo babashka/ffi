@@ -106,13 +106,16 @@
   "Reading a string from a pointer with no size arrived after the first
   release; an older built-in namespace refuses one."
   (delay (and @default-lookup?
-              (try (ffi/ptr->string ((ffi/cfn "strdup" [:string] :pointer) "probe"))
-                   true
-                   (catch Exception _ false)))))
+              (let [p ((ffi/cfn "strdup" [:string] :pointer) "probe")]
+                (try (ffi/ptr->string p) true
+                     (catch Exception _ false)
+                     (finally (ffi/free p)))))))
 
 (deftest ptr->string-test
   (if-not @unsized-string?
-    (println "ptr->string skipped: no default lookup, or this babashka predates it")
+    (println (if @default-lookup?
+               "ptr->string skipped: this babashka predates reading a sizeless pointer"
+               "ptr->string skipped: this build has no default lookup"))
     (let [strdup (ffi/cfn "strdup" [:string] :pointer)]
       (testing "a pointer C returned has no size, and reads to the NUL"
         (is (= "hello" (ffi/ptr->string (strdup "hello")))))
@@ -120,8 +123,18 @@
         (is (= "hello" (ffi/ptr->string (strdup "hello") 64)))
         (is (= "hello" (ffi/ptr->string (strdup "hello") 6))))
       (testing "a limit with no NUL inside it is an error, not a walk"
-        (is (thrown-with-msg? Exception #"no NUL byte in the first 3 bytes"
-                              (ffi/ptr->string (strdup "hello") 3))))
+        (let [p (strdup "hello")]
+          (try (is (thrown-with-msg? Exception #"no NUL byte in the first 3 bytes"
+                                     (ffi/ptr->string p 3)))
+               (finally (ffi/free p)))))
+      (testing "a limit narrows but never widens an existing bound"
+        (with-open [arena (ffi/confined-arena)]
+          (let [p (ffi/alloc arena 8)]
+            ;; every byte non-NUL: a scan that respects the size must throw,
+            ;; and must report the size rather than the larger limit
+            (ffi/write-bytes p (byte-array (repeat 8 (byte 65))))
+            (is (thrown-with-msg? Exception #"no NUL byte in the first 8 bytes"
+                                  (ffi/ptr->string p 64))))))
       (testing "NULL is nil, with and without a limit"
         (is (nil? (ffi/ptr->string ffi/null)))
         (is (nil? (ffi/ptr->string ffi/null 8)))))))
