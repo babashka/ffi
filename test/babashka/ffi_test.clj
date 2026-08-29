@@ -596,3 +596,60 @@
           ;; the top level has no place to name
           (is (thrown-with-msg? Exception #"^babashka.ffi: union value"
                                 (ffi/write p data [:foo 1]))))))))
+
+;; -- one member by name or path ----------------------------------------------
+;; The vars are looked up at run time so the namespace loads on an older
+;; babashka and skips.
+
+(def field-access?
+  (delay (boolean (resolve 'babashka.ffi/read-field))))
+
+(deftest field-access-test
+  (if-not @field-access?
+    (println "field access skipped: this babashka predates read-field")
+    (let [read-field (resolve 'babashka.ffi/read-field)
+          write-field (resolve 'babashka.ffi/write-field)
+          data [:union [[:whatever :pointer] [:result :int]]]
+          curl-msg [:struct [[:msg :int] [:easy :pointer] [:data data]]]
+          outer [:struct [[:id :int] [:msgs [:array curl-msg 2]]]]]
+      (with-open [arena (ffi/confined-arena)]
+        (let [p (ffi/alloc arena bone)
+              q (ffi/alloc arena outer)]
+          (ffi/write p bone {:name spine :parent 7})
+          (testing "a member by name, the offset and type from the layout"
+            (is (= 7 (read-field p bone :parent)))
+            (is (= (ffi/read p :int 32) (read-field p bone :parent)))
+            (write-field p bone :parent 3)
+            (is (= 3 (ffi/read p :int 32)))
+            (is (= spine (read-field p bone :name))))
+          (testing "a path through an array, a struct and a union"
+            (ffi/write q outer {:id 1 :msgs [{:msg 1 :easy nil :data [:result 5]}
+                                             {:msg 2 :easy nil :data [:result 6]}]})
+            (is (= 6 (read-field q outer [:msgs 1 :data :result])))
+            (write-field q outer [:msgs 1 :data :result] 9)
+            (is (= 9 (read-field q outer [:msgs 1 :data :result])))
+            ;; the path names the union member, so it is the tag: same bytes as the pair route
+            (ffi/write q outer {:id 1 :msgs [{:msg 1 :easy nil :data [:result 5]}
+                                             {:msg 2 :easy nil :data [:result 9]}]})
+            (is (= 9 (read-field q outer [:msgs 1 :data :result])))
+            (is (= 8 (ffi/size (read-field q outer [:msgs 0 :data]))))
+            (write-field q outer [:msgs 0] {:msg 7 :easy nil :data [:result 1]})
+            (is (= 7 (read-field q outer [:msgs 0 :msg])))
+            (write-field p bone [:name 0] 65)
+            (is (= 65 (read-field p bone [:name 0]))))
+          (testing "a path that names nothing is an error, not nil"
+            (is (thrown-with-msg? Exception #"no member :z; the members are \[:name :parent\]"
+                                  (read-field p bone :z)))
+            (is (thrown-with-msg? Exception #"no member :z at \[:msgs 1\]"
+                                  (read-field q outer [:msgs 1 :z])))
+            (is (thrown-with-msg? Exception #"2 is not an index into 2 elements at \[:msgs\]"
+                                  (read-field q outer [:msgs 2 :msg])))
+            (is (thrown-with-msg? Exception #"continues past :int at \[:id\]"
+                                  (read-field q outer [:id :x])))
+            (is (thrown-with-msg? Exception #"path is empty"
+                                  (read-field q outer []))))
+          (testing "a wrong value at the place says where"
+            (is (thrown-with-msg? Exception #"at \[:msgs 1 :data\], union value is a pair"
+                                  (write-field q outer [:msgs 1 :data] {:result 1})))
+            (is (thrown-with-msg? Exception #"at \[:msgs 1 :msg\], a :int field cannot take"
+                                  (write-field q outer [:msgs 1 :msg] "x")))))))))
