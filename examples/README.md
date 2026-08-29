@@ -26,3 +26,6 @@ The guide in [doc/guide.md](../doc/guide.md) explains the API these use.
 - `helitorus.clj` draws a helix around a torus with raylib
   (`brew install raylib`, or the raylib package of your distribution).
 - `doom.clj` is a raycaster with textures and sprites, also through raylib.
+- `gtk4.clj` opens a native window that renders from an atom. A button counts
+  clicks and a background thread updates a clock (`brew install gtk4`, or the
+  GTK 4 package of your distribution).
