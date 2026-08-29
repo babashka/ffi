@@ -593,9 +593,9 @@ argument:
 (ffi/read p :double 8)
 ```
 
-These byte offsets are for a buffer with no shape. For memory that has one,
-a struct or an array, describe it with a layout and let `place` compute the
-offsets: see [Read and write a struct](#read-and-write-a-struct).
+These byte offsets are for a buffer with no shape. For a struct or an array,
+describe the memory with a layout and use `place` to resolve its members: see
+[Read and write a struct](#read-and-write-a-struct).
 
 `read` supports each listed type except `:void`. `write` also excludes
 `:string`. Write a string address as `:pointer`.
@@ -727,9 +727,8 @@ place: the member resolved once. `read` and `write` take a place where they
 take a type, so the offset and the type come from the layout and there is
 nothing to compute. Make a place once and keep it, as with `cfn`.
 
-The rule: a member goes through a place, a stride over an array of structs
-goes through the byte offset with `sizeof`, and an offset is never computed
-by hand for either.
+Use a place for a member. Use the layout size for the stride over an array of
+structs.
 
 ```clojure
 (def bone [:struct [[:name [:array :char 32]] [:parent :int]]])
