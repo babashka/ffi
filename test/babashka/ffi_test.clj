@@ -226,23 +226,37 @@
 ;; compiler is on PATH, and the tests skip when it is not.
 
 (def struct-lib
+  "Compiles and loads the struct fixture. The value is true when the library
+  is loaded, and a string saying why when it is not, so a skip names its own
+  cause instead of guessing one."
   (delay
     (let [ext (cond (str/starts-with? (System/getProperty "os.name") "Windows") ".dll"
                     (str/starts-with? (System/getProperty "os.name") "Mac") ".dylib"
                     :else ".so")
           out (fs/path "target" (str "libffistructs" ext))
           src (fs/path "test-resources" "struct_lib.c")]
-      (fs/create-dirs (fs/parent out))
-      (when (or (and (fs/exists? out)
-                     (not (neg? (compare (fs/last-modified-time out)
-                                         (fs/last-modified-time src)))))
-                (try (zero? (:exit (if (= ".dll" ext)
-                                     (p/sh "cl" "/nologo" "/LD" (str src)
-                                           (str "/Fe:" out) (str "/Fo:" out ".obj"))
-                                     (p/sh "cc" "-shared" "-fPIC" "-o" (str out) (str src)))))
-                     (catch Exception _ false)))
-        (ffi/load-library (str (fs/absolutize out)))
-        true))))
+      (cond
+        ;; the suite also runs from babashka's root, where this repo's
+        ;; test-resources is not the working directory
+        (not (fs/exists? src))
+        (str "the fixture source is not under " (fs/absolutize src))
+
+        (and (fs/exists? out)
+             (not (neg? (compare (fs/last-modified-time out)
+                                 (fs/last-modified-time src)))))
+        (do (ffi/load-library (str (fs/absolutize out))) true)
+
+        :else
+        (do (fs/create-dirs (fs/parent out))
+            (let [{:keys [exit err]}
+                  (try (if (= ".dll" ext)
+                         (p/sh "cl" "/nologo" "/LD" (str src)
+                               (str "/Fe:" out) (str "/Fo:" out ".obj"))
+                         (p/sh "cc" "-shared" "-fPIC" "-o" (str out) (str src)))
+                       (catch Exception e {:exit -1 :err (ex-message e)}))]
+              (if (zero? exit)
+                (do (ffi/load-library (str (fs/absolutize out))) true)
+                (str "the fixture did not compile: " (str/trim (str err))))))))))
 
 (def p2 [:struct [[:x :int] [:y :int]]])
 (def v3 [:struct [[:x :double] [:y :double] [:z :double]]])
@@ -252,8 +266,11 @@
 (def named [:struct [[:id :int] [:name :string]]])
 
 (deftest struct-argument-test
-  (if-not (and @struct-access? @struct-lib)
-    (println "struct arguments skipped: no C compiler on PATH, or this babashka predates struct access")
+  (if-not (and @struct-access? (true? @struct-lib))
+    (println "struct arguments skipped:"
+             (cond (not @struct-access?) "this babashka predates struct access"
+                   (string? @struct-lib) @struct-lib
+                   :else "unknown reason"))
     (do
       (testing "each ABI class of struct argument"
         (is (= 7 ((ffi/cfn "p2_sum" [p2] :int) {:x 3 :y 4})))
