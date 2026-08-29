@@ -972,16 +972,6 @@
              (fn ~name ~@fn-tail)))
         `(def ~name ~binding-form)))))
 
-;; -- manual memory ------------------------------------------------------------
-
-(def ^:private crt-lib
-  ;; Windows' default lookup does not expose the C runtime
-  (delay (when (= :windows (os-key))
-           (or (try (load-library "msvcrt.dll") (catch Exception _ nil))
-               (try (load-library "ucrtbase.dll") (catch Exception _ nil))))))
-
-(def ^:private c-free (delay (cfn @crt-lib "free" [:pointer] :void)))
-
 (def ^:private sizes
   {:int 4 :uint 4 :int32 4 :uint32 4 :float 4
    :long 8 :ulong 8 :int64 8 :uint64 8 :size_t 8 :ssize_t 8
@@ -1081,26 +1071,6 @@
                      {:alignment alignment})))
    ;; Arena.allocate(byteSize) guarantees only alignment 1.
    (.allocate arena (long (first (size-and-alignment n))) (long alignment))))
-
-(defn free
-  "Releases memory that a C function returned and expects the caller to free.
-  A C library that allocates usually ships its own deallocator, such as
-  duckdb_free. If the library has a deallocator, use it.
-
-  Refuses memory of a confined, shared, or automatic arena. The arena releases
-  that memory. Memory of the global arena has the same scope as memory from the
-  C allocator. The function cannot distinguish them. Do not pass global arena
-  memory to free.
-
-  CAUTION: Do not use p after free. This can corrupt memory or stop the process."
-  [p]
-  (let [seg (as-pointer p)]
-    ;; memory that C handed out has the global scope; an arena gives its own
-    (when-not (identical? (.scope seg) (.scope (Arena/global)))
-      (throw (ex-info (str "babashka.ffi: the pointer at address " (.address seg)
-                           " belongs to an arena, which releases it")
-                      {:pointer seg})))
-    (@c-free seg)))
 
 (defn read
   "Reads a value of type t from p. The default byte offset is zero.

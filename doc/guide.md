@@ -25,6 +25,7 @@ calls without these settings.
   - [Pass a struct by value](#pass-a-struct-by-value)
 - [Call a variadic function](#call-a-variadic-function)
 - [Use native memory](#use-native-memory)
+  - [Memory that C allocated](#memory-that-c-allocated)
   - [Arenas](#arenas)
   - [Read and write a struct](#read-and-write-a-struct)
   - [Out parameters](#out-parameters)
@@ -502,10 +503,33 @@ byte count. It uses the natural alignment of the type or layout:
 (ffi/alloc arena [:struct [[:x :int] [:y :int]]])   ; 8 bytes, aligned for the struct
 ```
 
-`free` releases memory that a C function returned for the caller to release.
-If the library has a deallocator, prefer to use that instead. E.g. DuckDB provides `duckdb_free`.
+### Memory that C allocated
 
-CAUTION: After you call `free`, do not use the pointer. This can corrupt
+A C function can return memory that the caller has to release. Give that
+pointer to an arena, with the library's own deallocator as the cleanup
+function. The arena calls the deallocator when it closes:
+
+```clojure
+(defcfn duckdb-free "duckdb_free" [:pointer] :void)
+
+(with-open [arena (ffi/confined-arena)]
+  (let [p (ffi/reinterpret (c-value-varchar res 0 0) 64 arena duckdb-free)]
+    (ffi/ptr->string p)))
+```
+
+Use the deallocator that the library documents, such as `duckdb_free` or
+`sqlite3_free`. A library allocates from its own heap. On Windows a library
+built against another C runtime has a different heap, and the wrong
+deallocator corrupts it.
+
+For memory that the C allocator returned, and a library that documents no
+deallocator of its own, bind `free`:
+
+```clojure
+(defcfn c-free "free" [:pointer] :void)
+```
+
+CAUTION: After the deallocator runs, do not use the pointer. This can corrupt
 memory or stop the process.
 
 ### Arenas
@@ -527,9 +551,6 @@ Create an arena in `with-open` to close it automatically:
 The arena releases `p` and `q` when the body ends. It also releases them if the
 body throws. After release, memory access throws an `IllegalStateException`.
 C functions reject pointers from a closed arena.
-
-`free` refuses memory from a confined, shared, or automatic arena. The arena
-releases this memory.
 
 CAUTION: While C uses the arena memory, do not close the arena, since C can continue to use the memory after the arena closes.
 

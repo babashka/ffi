@@ -440,5 +440,7 @@
       (recur))))
 
 (close-window)
-(ffi/free atlas-buf)
+;; atlas-buf lives in the global arena, which never releases. Nothing to free:
+;; passing it to the C allocator's free would corrupt the heap, because the
+;; arena allocated it, not malloc.
 (println "doom done")
