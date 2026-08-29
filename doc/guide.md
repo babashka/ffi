@@ -599,10 +599,9 @@ native memory and the JVM. Both functions accept an optional byte offset:
 ;;=> byte array [1 2 3 4]
 ```
 
-Use `read-array` and `write-array` to copy elements of one type between
-native memory and a Java array of that width. The copy is a memcpy, so it
-costs the same for eight elements as a single `read` and a small fraction of
-a layout read for a thousand:
+Use `read-array` and `write-array` to copy elements of one scalar type between
+native memory and a Java primitive array. The copy uses `memcpy` and does not
+decode each element:
 
 ```clojure
 (ffi/write-array p :int (int-array [1 2 3 4]))

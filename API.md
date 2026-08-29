@@ -429,7 +429,7 @@ Function.
 Copies n elements of type t from pointer p, at byte offset (default 0),
 into a new Java array. Returns the array.
 
-The copy is a memcpy. The type gives the element width and nothing else:
+The copy uses memcpy. The type gives the element width and nothing else:
 :int, :uint and :int32 fill an int[] with the bits as they are, so a
 :uint above Integer/MAX_VALUE reads as a negative int. :long and the other
 eight-byte types fill a long[], and :pointer fills a long[] of addresses.
