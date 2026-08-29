@@ -603,6 +603,20 @@ The type gives the element width and nothing else. `:int`, `:uint` and
 the way `read` decodes them, or for an array of structs, use `read` with an
 `[:array t n]` layout.
 
+Use `copy` to copy bytes between two pointers, and `clone` to allocate a copy
+in an arena. Without a count, `copy` copies the byte size of the source, and
+the destination must be at least that large. To copy into the middle of a
+pointer, slice it first. The source comes first, as in `fs/copy`:
+
+```clojure
+(ffi/copy src dst)                      ; all of src
+(ffi/copy src (ffi/slice dst 16) 8)     ; 8 bytes, at byte offset 16 in dst
+(ffi/clone arena src)                   ; a new pointer with the same bytes
+```
+
+Both need pointers with a size. A pointer from C has none; give it one with
+`reinterpret`.
+
 Use `byte-buffer` to create a zero-copy `java.nio.ByteBuffer` view of native
 memory:
 

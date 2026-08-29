@@ -428,3 +428,42 @@
           (testing "a copy past the end throws instead of reading on"
             (is (thrown? Exception (read-array p :int 17)))
             (is (thrown? Exception (write-array p :long (long-array 9))))))))))
+
+;; -- segment copy -------------------------------------------------------------
+;; copy and clone arrived after the first release; the vars are looked up at
+;; run time so the namespace loads on an older babashka and skips.
+
+(def segment-copy?
+  (delay (boolean (resolve 'babashka.ffi/copy))))
+
+(deftest segment-copy-test
+  (if-not @segment-copy?
+    (println "segment copy skipped: this babashka predates copy")
+    (let [copy (resolve 'babashka.ffi/copy)
+          clone (resolve 'babashka.ffi/clone)
+          read-array (resolve 'babashka.ffi/read-array)
+          write-array (resolve 'babashka.ffi/write-array)]
+      (with-open [arena (ffi/confined-arena)]
+        (let [src (ffi/alloc arena 16)
+              dst (ffi/alloc arena 32)]
+          (write-array src :int (int-array [1 2 3 4]))
+          (testing "a copy of the whole source, and of n bytes into a slice"
+            (copy src dst)
+            (is (= [1 2 3 4] (vec (read-array dst :int 4))))
+            (copy src (ffi/slice dst 16) 8)
+            (is (= [1 2 3 4 1 2 0 0] (vec (read-array dst :int 8)))))
+          (testing "clone allocates a copy of the same size in the arena"
+            (let [c (clone arena src)]
+              (is (= 16 (ffi/size c)))
+              (is (= [1 2 3 4] (vec (read-array c :int 4))))
+              (is (not= (ffi/address c) (ffi/address src)))))
+          (testing "a copy that does not fit throws instead of writing past the end"
+            (is (thrown? Exception (copy dst src)))
+            (is (thrown? Exception (copy src dst 17))))
+          (testing "a pointer without a size says to reinterpret it"
+            (is (thrown-with-msg? Exception #"reinterpret"
+                                  (copy (ffi/segment (ffi/address src)) dst))))
+          (testing "overlapping regions copy as memmove"
+            (write-array dst :int (int-array [1 2 3 4 5 6 7 8]))
+            (copy dst (ffi/slice dst 4) 16)
+            (is (= [1 1 2 3 4 6 7 8] (vec (read-array dst :int 8))))))))))
