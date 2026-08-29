@@ -34,6 +34,11 @@
   array. A field of a struct can be either, so `char name[32]` is
   [:name [:array :char 32]].
 
+  [:union [[name type] ...]] describes a C union. read returns a union as a
+  pointer to its bytes, since a union carries no tag of its own; read the
+  member you know applies from that pointer. write takes a map with one key,
+  the member to write. A union is not passed by value in a signature.
+
   read-array and write-array copy elements of one scalar type between
   native memory and a Java array of that width, as a memcpy.
 
@@ -612,7 +617,7 @@
 
 (def ^:private layout-kinds
   ;; Keep in sync with .clj-kondo/hooks/babashka/ffi.clj.
-  #{:struct :array})
+  #{:struct :array :union})
 
 (defn- layout-vector? [t]
   (and (vector? t) (contains? layout-kinds (first t))))
@@ -622,6 +627,20 @@
 
 (defn- array-layout? [t]
   (and (vector? t) (= :array (first t))))
+
+(defn- union-layout? [t]
+  (and (vector? t) (= :union (first t))))
+
+(declare ^:private layout-of)
+
+(defn- holds-union?
+  "True when a resolved layout is a union or contains one at any depth."
+  [lay]
+  (case (:type lay)
+    :union true
+    :struct (boolean (some holds-union? (:fields lay)))
+    :array (holds-union? (:elem lay))
+    false))
 
 (declare ^:private fixed-cfn ^:private fixed-ffm-cfn ^:private variadic-ffm-cfn
          ^:private libffi-cfn ^:private libffi-available? ^:private struct-ffm-cfn)
@@ -773,6 +792,14 @@
        (throw (ex-info (str "babashka.ffi: an array is not a C argument or return type: " (pr-str t)
                             ". C passes an array as a pointer, so declare :pointer."
                             " A struct that holds an array is passed by value as usual.")
+                       {:argtypes argtypes :rettype rettype})))
+     ;; libffi has no union type, and a largest-member stand-in gets the
+     ;; register class wrong when the members differ in class, so a union
+     ;; is not passed by value on either host. See ADR 0005.
+     (when (and (vector? t) (holds-union? (layout-of t)))
+       (throw (ex-info (str "babashka.ffi: a union is not passed by value: " (pr-str t)
+                            ". Declare :pointer and read the union from memory."
+                            " A struct that holds a union is not passed by value either.")
                        {:argtypes argtypes :rettype rettype}))))
    (let [fixed (check-variadic-marker argtypes)
          ;; any vector on a type position is a layout; layout-of says which
@@ -997,8 +1024,6 @@
    :long 8 :ulong 8 :int64 8 :uint64 8 :size_t 8 :ssize_t 8
    :pointer 8 :string 8 :double 8
    :int16 2 :uint16 2 :int8 1 :uint8 1 :byte 1 :char 1 :bool 1})
-
-(declare ^:private layout-of)
 
 ;; The struct codecs live with the libffi call path, below.
 (declare ^:private decoder ^:private encoder)
@@ -1342,6 +1367,28 @@
                                  [[] 0] fields)]
         {:type :struct :fields fields :align align :size (align-up end align)}))
 
+    (union-layout? t)
+    (let [members (second t)]
+      (when-not (= 2 (count t))
+        (throw (ex-info (str "babashka.ffi: a union layout is [:union members], got " (pr-str t))
+                        {:layout t})))
+      (when-not (and (vector? members)
+                     (seq members)
+                     (every? #(and (vector? %) (= 2 (count %)) (keyword? (first %)))
+                             members))
+        (throw (ex-info (str "babashka.ffi: :union needs a non-empty vector of [name type] pairs, with keyword names: "
+                             (pr-str t))
+                        {:layout t})))
+      (when-not (apply distinct? (map first members))
+        (throw (ex-info (str "babashka.ffi: a union layout names a member twice: " (pr-str t))
+                        {:layout t})))
+      ;; every member starts at offset 0; the union is as large as its
+      ;; largest member, rounded up to its strictest alignment
+      (let [fields (mapv (fn [[nm ty]] (assoc (layout-of ty) :name nm :offset 0)) members)
+            align (long (reduce max 1 (map :align fields)))
+            size (long (reduce max 0 (map :size fields)))]
+        {:type :union :fields fields :align align :size (align-up size align)}))
+
     (array-layout? t)
     (let [[_ elem n] t]
       (when-not (= 3 (count t))
@@ -1464,6 +1511,26 @@
                              (.allocateFrom ^Arena arena ^String v))
                          v)
                        offset))
+      :union
+      (let [fields (:fields lay)
+            names (mapv :name fields)
+            encs (into {} (map (fn [f] [(:name f) (encoder f offset)]) fields))
+            member-error
+            (fn [v]
+              (throw (ex-info (str "babashka.ffi: union value "
+                                   (cond (not (map? v)) (str "needs a map with one of " (pr-str names))
+                                         (empty? v) (str "names no member; give one of " (pr-str names))
+                                         (> (count v) 1) (str "names " (count v) " members, which is ambiguous; give one of " (pr-str names))
+                                         :else (str "has unknown member " (pr-str (ffirst v)) "; give one of " (pr-str names)))
+                                   ", got " (pr-str v))
+                              {:value v :members names})))]
+        (fn [arena seg v]
+          (when-not (and (map? v) (= 1 (count v)))
+            (member-error v))
+          (let [[k x] (first v)
+                enc (get encs k)]
+            (when-not enc (member-error v))
+            (enc arena seg x))))
       :array
       (let [el (:elem lay)
             n (long (:count lay))
@@ -1503,6 +1570,12 @@
   vector."
   [lay ^long offset]
   (case (:type lay)
+    ;; a union has no tag of its own, so it decodes to its bytes and the
+    ;; caller reads the member it knows applies; see ADR 0005
+    :union
+    (let [size (long (:size lay))]
+      (fn [^MemorySegment seg] (.asSlice seg offset size)))
+
     :array
     (let [el (:elem lay)
           n (long (:count lay))
@@ -1563,6 +1636,8 @@
   serves every slot, since the elements are pointers to a shared type."
   ^MemorySegment [^Arena arena t]
   (let [p (.allocate arena (long ffi-type-bytes) 8)]
+    (when (union-layout? t)
+      (throw (ex-info "babashka.ffi: a union is not passed by value" {:layout t})))
     (if (or (struct-layout? t) (array-layout? t))
       (let [elems (if (struct-layout? t)
                     (mapv (fn [[_ ty]] (ffi-type! arena ty)) (second t))
@@ -1687,6 +1762,7 @@
   computed, so babashka.ffi and the linker describe the same struct."
   ^MemoryLayout [lay]
   (case (:type lay)
+    :union (throw (ex-info "babashka.ffi: a union is not passed by value" {:layout lay}))
     ;; A nested array flattens to one sequence of the innermost element: the
     ;; bytes are the same, and the JDK misclassifies a nested sequence layout
     ;; on macOS AArch64, where struct{ seq(2, seq(2, double)) } arrives as

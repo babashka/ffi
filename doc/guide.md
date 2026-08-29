@@ -29,6 +29,7 @@ calls without these settings.
   - [Arenas](#arenas)
   - [Read and write a struct](#read-and-write-a-struct)
   - [Fixed arrays](#fixed-arrays)
+  - [Unions](#unions)
   - [Out parameters](#out-parameters)
 - [Create a callback](#create-a-callback)
 - [Performance and limits](#performance-and-limits)
@@ -766,6 +767,42 @@ C never passes an array by value. A parameter declared as an array is a
 pointer to its first element, so declare `:pointer` for it. A struct that
 holds an array is passed by value in the normal way, and `cfn` rejects a bare
 array layout in a signature.
+
+### Unions
+
+A C union is `[:union [[name type] ...]]`. It is as large as its largest
+member and aligned to its strictest one, so a struct that holds a union
+gets the offsets the compiler gives it:
+
+```clojure
+(def curl-msg
+  [:struct [[:msg :int]
+            [:easy :pointer]
+            [:data [:union [[:whatever :pointer] [:result :int]]]]]])
+```
+
+A union carries no tag of its own. In C the program knows which member is
+live: from a sibling field, as in `CURLMsg`, or from what it stored, as in
+`epoll_data_t`. So `read` returns a union as a pointer to its bytes, sized
+to the union, and you read the member you know applies:
+
+```clojure
+(def CURLMSG_DONE 1)   ; curl/multi.h
+
+(let [{:keys [msg data]} (ffi/read p curl-msg)]
+  (when (= msg CURLMSG_DONE)
+    (ffi/read data :int)))       ; the :result member
+```
+
+`write` takes a map with exactly one key, the member to write:
+
+```clojure
+(ffi/write p curl-msg {:msg 1 :easy nil :data {:result 0}})
+```
+
+A union is not passed by value in a signature, alone or inside a struct;
+declare `:pointer` and read it from memory. Every union in the libraries
+surveyed for this design arrives through a pointer.
 
 ### Out parameters
 

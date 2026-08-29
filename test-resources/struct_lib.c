@@ -61,3 +61,24 @@ EXPORT int32_t bone_len(Bone b) {
 EXPORT Bone bone_make(int32_t parent) { Bone b = { "spine", parent }; return b; }
 EXPORT double mat2_trace(Mat2 m) { return m.m[0][0] + m.m[1][1]; }
 EXPORT int32_t pair_sum(Pair p) { return p.pts[0].x + p.pts[0].y + p.pts[1].x + p.pts[1].y; }
+
+/* -- a union inside a struct, reached through a pointer ---------------------- */
+
+typedef struct {
+  int32_t tag;                       /* 0: i, 1: d, 2: s */
+  union { int32_t i; double d; const char *s; } u;   /* 8 bytes at offset 8 */
+} Tagged;
+
+EXPORT void tagged_fill(Tagged *t, int32_t tag) {
+  t->tag = tag;
+  if (tag == 0) t->u.i = 42;
+  else if (tag == 1) t->u.d = 2.5;
+  else t->u.s = "union";
+}
+
+/* reads the member the tag names, so a wrong offset on the caller's side shows */
+EXPORT double tagged_value(const Tagged *t) {
+  if (t->tag == 0) return (double) t->u.i;
+  if (t->tag == 1) return t->u.d;
+  return (double) (int) t->u.s[0];   /* 'u' */
+}

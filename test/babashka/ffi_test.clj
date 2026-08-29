@@ -428,3 +428,75 @@
           (testing "a copy past the end throws instead of reading on"
             (is (thrown? Exception (read-array p :int 17)))
             (is (thrown? Exception (write-array p :long (long-array 9))))))))))
+
+;; -- unions -------------------------------------------------------------------
+
+(def union-layout?
+  "[:union members] arrived after the first release; an older built-in
+  namespace does not know the kind."
+  (delay (try (= 8 (ffi/sizeof [:union [[:a :int] [:b :double]]])) (catch Exception _ false))))
+
+(def tagged [:struct [[:tag :int] [:u [:union [[:i :int] [:d :double] [:s :pointer]]]]]])
+
+(deftest union-layout-test
+  (if-not @union-layout?
+    (println "union layouts skipped: this babashka predates them")
+    (let [data [:union [[:whatever :pointer] [:result :int]]]
+          curl-msg [:struct [[:msg :int] [:easy :pointer] [:data data]]]]
+      (testing "a union is as large as its largest member, at its strictest alignment"
+        (is (= 24 (ffi/sizeof curl-msg)))
+        (is (= [8 8] [(ffi/sizeof [:union [[:c :char] [:d :double]]])
+                      (ffi/alignof [:union [[:c :char] [:d :double]]])]))
+        (is (= [4 2] [(ffi/sizeof [:union [[:a [:array :char 3]] [:b :int16]]])
+                      (ffi/alignof [:union [[:a [:array :char 3]] [:b :int16]]])])))
+      (testing "read gives the union's bytes as a pointer; the caller reads the member"
+        (with-open [arena (ffi/confined-arena)]
+          (let [p (ffi/alloc arena curl-msg)]
+            (ffi/write p curl-msg {:msg 1 :easy nil :data {:result 7}})
+            (let [{:keys [msg data]} (ffi/read p curl-msg)]
+              (is (= 1 msg))
+              (is (ffi/pointer? data))
+              (is (= 8 (ffi/size data)))
+              (is (= 7 (ffi/read data :int)))
+              (is (= (+ (ffi/address p) 16) (ffi/address data))))
+            (ffi/write p curl-msg {:msg 1 :easy nil :data {:whatever (ffi/string->ptr arena "x")}})
+            (is (= "x" (ffi/ptr->string (ffi/read (:data (ffi/read p curl-msg)) :pointer)))))))
+      (testing "write takes a map with exactly one member"
+        (with-open [arena (ffi/confined-arena)]
+          (let [p (ffi/alloc arena data)]
+            (is (thrown-with-msg? Exception #"ambiguous" (ffi/write p data {:result 1 :whatever nil})))
+            (is (thrown-with-msg? Exception #"names no member" (ffi/write p data {})))
+            (is (thrown-with-msg? Exception #"unknown member :nope" (ffi/write p data {:nope 1})))
+            (is (thrown-with-msg? Exception #"needs a map" (ffi/write p data 5))))))
+      (testing "a union is not passed by value, bare or inside a struct"
+        (is (thrown-with-msg? Exception #"not passed by value" (ffi/cfn "abs" [data] :int)))
+        (is (thrown-with-msg? Exception #"not passed by value" (ffi/cfn "abs" [:int] data)))
+        (is (thrown-with-msg? Exception #"not passed by value" (ffi/cfn "abs" [curl-msg] :int)))
+        (is (fn? (ffi/cfn "abs" [:pointer] :int))))
+      (testing "a malformed union layout is an error at resolve time"
+        (is (thrown-with-msg? Exception #"is \[:union members\]" (ffi/sizeof [:union [[:a :int]] :x])))
+        (is (thrown-with-msg? Exception #"names a member twice" (ffi/sizeof [:union [[:a :int] [:a :int]]])))))))
+
+(deftest union-in-struct-c-test
+  (if-not (and @union-layout? (true? @struct-lib))
+    (println "union C test skipped:"
+             (cond (not @union-layout?) "this babashka predates union layouts"
+                   (string? @struct-lib) @struct-lib
+                   :else "unknown reason"))
+    (let [fill (ffi/cfn "tagged_fill" [:pointer :int] :void)
+          value (ffi/cfn "tagged_value" [:pointer] :double)]
+      (testing "the compiler and the layout agree on where the union sits"
+        (with-open [arena (ffi/confined-arena)]
+          (let [p (ffi/alloc arena tagged)]
+            (is (= 16 (ffi/sizeof tagged)))
+            (fill p 0)
+            (is (= 42 (ffi/read (:u (ffi/read p tagged)) :int)))
+            (fill p 1)
+            (is (= 2.5 (ffi/read (:u (ffi/read p tagged)) :double)))
+            (fill p 2)
+            (is (= "union" (ffi/ptr->string (ffi/read (:u (ffi/read p tagged)) :pointer))))
+            ;; and the other way: C reads what the layout wrote
+            (ffi/write p tagged {:tag 1 :u {:d 6.5}})
+            (is (= 6.5 (value p)))
+            (ffi/write p tagged {:tag 0 :u {:i 9}})
+            (is (= 9.0 (value p)))))))))
