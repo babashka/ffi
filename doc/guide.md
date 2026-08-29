@@ -797,11 +797,16 @@ to the union, and you read the member you know applies:
     (ffi/read data :int)))       ; the :result member
 ```
 
-`write` takes a map with exactly one key, the member to write:
+`write` takes a union as a pair, the member and its value. One member is
+the shape, and it is the form `spec`'s `s/or` conforms to:
 
 ```clojure
-(ffi/write p curl-msg {:msg 1 :easy nil :data {:result 0}})
+(ffi/write p curl-msg {:msg 1 :easy nil :data [:result 0]})
+(ffi/write u data [:whatever some-ptr])
 ```
+
+To write one member directly, `(ffi/write u :int 0)` works too: every member
+of a union starts at offset 0.
 
 A union is not passed by value in a signature, alone or inside a struct.
 Declare `:pointer` and read it from memory.

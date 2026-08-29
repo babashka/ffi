@@ -491,22 +491,24 @@
       (testing "read gives the union's bytes as a pointer; the caller reads the member"
         (with-open [arena (ffi/confined-arena)]
           (let [p (ffi/alloc arena curl-msg)]
-            (ffi/write p curl-msg {:msg 1 :easy nil :data {:result 7}})
+            (ffi/write p curl-msg {:msg 1 :easy nil :data [:result 7]})
             (let [{:keys [msg data]} (ffi/read p curl-msg)]
               (is (= 1 msg))
               (is (ffi/pointer? data))
               (is (= 8 (ffi/size data)))
               (is (= 7 (ffi/read data :int)))
               (is (= (+ (ffi/address p) 16) (ffi/address data))))
-            (ffi/write p curl-msg {:msg 1 :easy nil :data {:whatever (ffi/string->ptr arena "x")}})
+            (ffi/write p curl-msg {:msg 1 :easy nil :data [:whatever (ffi/string->ptr arena "x")]})
             (is (= "x" (ffi/ptr->string (ffi/read (:data (ffi/read p curl-msg)) :pointer)))))))
-      (testing "write takes a map with exactly one member"
+      (testing "write takes a pair, [member value]"
         (with-open [arena (ffi/confined-arena)]
           (let [p (ffi/alloc arena data)]
-            (is (thrown-with-msg? Exception #"ambiguous" (ffi/write p data {:result 1 :whatever nil})))
-            (is (thrown-with-msg? Exception #"names no member" (ffi/write p data {})))
-            (is (thrown-with-msg? Exception #"unknown member :nope" (ffi/write p data {:nope 1})))
-            (is (thrown-with-msg? Exception #"needs a map" (ffi/write p data 5))))))
+            (ffi/write p data [:result 9])
+            (is (= 9 (ffi/read p :int)))
+            (is (thrown-with-msg? Exception #"is a pair \[member value\]" (ffi/write p data {:result 1})))
+            (is (thrown-with-msg? Exception #"is a pair \[member value\]" (ffi/write p data [:result 1 :whatever nil])))
+            (is (thrown-with-msg? Exception #"unknown member :nope" (ffi/write p data [:nope 1])))
+            (is (thrown-with-msg? Exception #"is a pair" (ffi/write p data 5))))))
       (testing "a union is not passed by value, bare or inside a struct"
         (is (thrown-with-msg? Exception #"not passed by value" (ffi/cfn "abs" [data] :int)))
         (is (thrown-with-msg? Exception #"not passed by value" (ffi/cfn "abs" [:int] data)))
@@ -535,7 +537,7 @@
             (fill p 2)
             (is (= "union" (ffi/ptr->string (ffi/read (:u (ffi/read p tagged)) :pointer))))
             ;; and the other way: C reads what the layout wrote
-            (ffi/write p tagged {:tag 1 :u {:d 6.5}})
+            (ffi/write p tagged {:tag 1 :u [:d 6.5]})
             (is (= 6.5 (value p)))
-            (ffi/write p tagged {:tag 0 :u {:i 9}})
+            (ffi/write p tagged {:tag 0 :u [:i 9]})
             (is (= 9.0 (value p)))))))))

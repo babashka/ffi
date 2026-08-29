@@ -72,8 +72,8 @@ array. A field of a struct can be either, so `char name[32]` is
 
 [:union [[name type] ...]] describes a C union. read returns a union as a
 pointer to its bytes, since a union carries no tag of its own; read the
-member you know applies from that pointer. write takes a map with one key,
-the member to write. A union is not passed by value in a signature.
+member you know applies from that pointer. write takes a pair, [member
+value]. A union is not passed by value in a signature.
 
 read-array and write-array copy elements of one scalar type between
 native memory and a Java array of that width, as a memcpy.
@@ -213,7 +213,7 @@ automatic arena only when your reference outlives every call that C can make.
 
 CAUTION: C can call the pointer until its arena releases it, and not one
 instruction longer. Unregister the callback first.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1970-L2054">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1971-L2055">Source</a></sub></p>
 
 ## <a name="babashka.ffi/cfn">`cfn`</a>
 ``` clojure

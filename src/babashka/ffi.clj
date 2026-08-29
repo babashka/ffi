@@ -36,8 +36,8 @@
 
   [:union [[name type] ...]] describes a C union. read returns a union as a
   pointer to its bytes, since a union carries no tag of its own; read the
-  member you know applies from that pointer. write takes a map with one key,
-  the member to write. A union is not passed by value in a signature.
+  member you know applies from that pointer. write takes a pair, [member
+  value]. A union is not passed by value in a signature.
 
   read-array and write-array copy elements of one scalar type between
   native memory and a Java array of that width, as a memcpy.
@@ -1542,25 +1542,26 @@
                          v)
                        offset))
       :union
+      ;; a union value is a tagged pair, [member value]: one member is the
+      ;; shape, and it is the form spec's s/or conforms to. See ADR 0005.
       (let [fields (:fields lay)
             names (mapv :name fields)
             encs (into {} (map (fn [f] [(:name f) (encoder f offset)]) fields))
             member-error
             (fn [v]
               (throw (ex-info (str "babashka.ffi: union value "
-                                   (cond (not (map? v)) (str "needs a map with one of " (pr-str names))
-                                         (empty? v) (str "names no member; give one of " (pr-str names))
-                                         (> (count v) 1) (str "names " (count v) " members, which is ambiguous; give one of " (pr-str names))
-                                         :else (str "has unknown member " (pr-str (ffirst v)) "; give one of " (pr-str names)))
+                                   (cond (not (and (vector? v) (= 2 (count v))))
+                                         (str "is a pair [member value], with member one of " (pr-str names))
+                                         :else
+                                         (str "names unknown member " (pr-str (nth v 0)) "; give one of " (pr-str names)))
                                    ", got " (pr-str v))
                               {:value v :members names})))]
         (fn [arena seg v]
-          (when-not (and (map? v) (= 1 (count v)))
+          (when-not (and (vector? v) (= 2 (count v)))
             (member-error v))
-          (let [[k x] (first v)
-                enc (get encs k)]
+          (let [enc (get encs (nth v 0))]
             (when-not enc (member-error v))
-            (enc arena seg x))))
+            (enc arena seg (nth v 1)))))
       :array
       (let [el (:elem lay)
             n (long (:count lay))
