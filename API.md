@@ -7,7 +7,9 @@
     -  [`byte-buffer`](#babashka.ffi/byte-buffer) - Returns a java.nio.ByteBuffer view of n bytes of native memory at pointer p.
     -  [`callback`](#babashka.ffi/callback) - Creates a C function pointer that invokes f.
     -  [`cfn`](#babashka.ffi/cfn) - Creates a Clojure function that calls the C function sym.
+    -  [`clone`](#babashka.ffi/clone) - Allocates a copy of pointer src in arena, with the same size, and returns the new pointer.
     -  [`confined-arena`](#babashka.ffi/confined-arena) - Returns an arena for one thread.
+    -  [`copy`](#babashka.ffi/copy) - Copies bytes from pointer src to pointer dst.
     -  [`defcfn`](#babashka.ffi/defcfn) - Defines name as a C function binding created by cfn: (defcfn sqlite3-open "sqlite3_open" [:string :pointer] :int) (defcfn sqlite3-open "Opens the database at path, storing the handle in out-param pp." "sqlite3_open" [:string :pointer] :int) An optional docstring and attribute map can precede the C symbol.
     -  [`find-symbol`](#babashka.ffi/find-symbol) - Finds sym and returns a pointer to it.
     -  [`global-arena`](#babashka.ffi/global-arena) - Returns the global arena.
@@ -181,7 +183,7 @@ invalid memory access can stop the process.
 
 The byte order is big-endian, as it is for each new ByteBuffer. If you need a
 different byte order, set it with .order.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1281-L1292">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1311-L1322">Source</a></sub></p>
 
 ## <a name="babashka.ffi/callback">`callback`</a>
 ``` clojure
@@ -211,7 +213,7 @@ automatic arena only when your reference outlives every call that C can make.
 
 CAUTION: C can call the pointer until its arena releases it, and not one
 instruction longer. Unregister the callback first.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1940-L2024">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1970-L2054">Source</a></sub></p>
 
 ## <a name="babashka.ffi/cfn">`cfn`</a>
 ``` clojure
@@ -239,6 +241,17 @@ A trailing :& declares a variadic C function. The types before :& are the
 fixed parameters. Each call infers the tail types from its values.
 <p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L747-L818">Source</a></sub></p>
 
+## <a name="babashka.ffi/clone">`clone`</a>
+``` clojure
+(clone arena src)
+```
+Function.
+
+Allocates a copy of pointer src in arena, with the same size, and returns
+the new pointer. src needs a size; give a pointer from C one with
+reinterpret.
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1301-L1309">Source</a></sub></p>
+
 ## <a name="babashka.ffi/confined-arena">`confined-arena`</a>
 ``` clojure
 (confined-arena)
@@ -248,6 +261,25 @@ Function.
 Returns an arena for one thread.
 Create this arena in with-open to release its memory.
 <p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1059-L1063">Source</a></sub></p>
+
+## <a name="babashka.ffi/copy">`copy`</a>
+``` clojure
+(copy src dst)
+(copy src dst n)
+```
+Function.
+
+Copies bytes from pointer src to pointer dst. Without n, copies the byte
+size of src; dst must be at least that large. With n, copies n bytes.
+Returns nil.
+
+Both pointers need a size. A pointer from C has none: give it one with
+reinterpret. To copy into the middle of dst, slice it first:
+
+    (ffi/copy src (ffi/slice dst 16) n)
+
+The regions may overlap; the copy behaves as memmove.
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1281-L1299">Source</a></sub></p>
 
 ## <a name="babashka.ffi/defcfn">`defcfn`</a>
 ``` clojure
@@ -369,7 +401,7 @@ names such as libz.so.1. Returns the same library map as load-library.
 
 
 The NULL pointer.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1300-L1302">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1330-L1332">Source</a></sub></p>
 
 ## <a name="babashka.ffi/null?">`null?`</a>
 ``` clojure
@@ -378,7 +410,7 @@ The NULL pointer.
 Function.
 
 Returns true for a NULL pointer. Returns false for all other pointers.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1304-L1307">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1334-L1337">Source</a></sub></p>
 
 ## <a name="babashka.ffi/pointer?">`pointer?`</a>
 ``` clojure
@@ -535,7 +567,7 @@ Function.
 
 Copies s into arena as a NUL-terminated UTF-8 string and returns its
 pointer. The arena controls the lifetime of the string.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1294-L1298">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1324-L1328">Source</a></sub></p>
 
 ## <a name="babashka.ffi/write">`write`</a>
 ``` clojure
