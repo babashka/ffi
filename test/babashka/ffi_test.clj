@@ -6,8 +6,8 @@
   only babashka can observe, such as the libffi backend selection, the
   trampoline set, and builds without libffi."
   (:require [babashka.ffi :as ffi :refer [defcfn]]
-            [clojure.java.io :as io]
-            [clojure.java.shell :as sh]
+            [babashka.fs :as fs]
+            [babashka.process :as p]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
 
@@ -230,16 +230,18 @@
     (let [ext (cond (str/starts-with? (System/getProperty "os.name") "Windows") ".dll"
                     (str/starts-with? (System/getProperty "os.name") "Mac") ".dylib"
                     :else ".so")
-          out (io/file "target" (str "libffistructs" ext))
-          src (io/file "test-resources" "struct_lib.c")]
-      (io/make-parents out)
-      (when (or (and (.exists out) (>= (.lastModified out) (.lastModified src)))
+          out (fs/path "target" (str "libffistructs" ext))
+          src (fs/path "test-resources" "struct_lib.c")]
+      (fs/create-dirs (fs/parent out))
+      (when (or (and (fs/exists? out)
+                     (not (neg? (compare (fs/last-modified-time out)
+                                         (fs/last-modified-time src)))))
                 (try (zero? (:exit (if (= ".dll" ext)
-                                     (sh/sh "cl" "/nologo" "/LD" (str src)
-                                            (str "/Fe:" out) (str "/Fo:" out ".obj"))
-                                     (sh/sh "cc" "-shared" "-fPIC" "-o" (str out) (str src)))))
+                                     (p/sh "cl" "/nologo" "/LD" (str src)
+                                           (str "/Fe:" out) (str "/Fo:" out ".obj"))
+                                     (p/sh "cc" "-shared" "-fPIC" "-o" (str out) (str src)))))
                      (catch Exception _ false)))
-        (ffi/load-library (.getAbsolutePath out))
+        (ffi/load-library (str (fs/absolutize out)))
         true))))
 
 (def p2 [:struct [[:x :int] [:y :int]]])
