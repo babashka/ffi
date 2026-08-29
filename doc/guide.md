@@ -1002,8 +1002,10 @@ iteration before C runs.
 
 Callbacks do not use libffi on either host and keep these limits:
 
-- A callback can have up to 4 arguments.
-- A callback can have up to 2 `:double` arguments.
+- A callback can have up to 4 arguments, with up to 2 `:double` arguments
+  among them.
+- A callback with only integer and pointer arguments can have up to 6.
+  FSEvents calls back with 6 and GLFW's key callback with 5.
 - A callback cannot use `:float`.
 - A return type can be `:void`, an integer type, or `:double`.
 
