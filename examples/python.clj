@@ -62,8 +62,11 @@
 
 ;; -- a bb function callable FROM Python ---------------------------------------
 ;; PyCFunction: PyObject* f(PyObject* self, PyObject* args)
+;; Python keeps the method for as long as the module lives, so the global
+;; arena owns the callback pointer and the method definition below.
 (def bb-fib
   (ffi/callback
+   (ffi/global-arena)
    (fn [_self args]
      (let [n (py-long-as-long (py-tuple-get-item args 0))
            fib (fn fib [n] (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))]
@@ -73,8 +76,8 @@
 ;; PyMethodDef {const char* ml_name; PyCFunction ml_meth; int ml_flags;
 ;;              const char* ml_doc} - 32 bytes on 64-bit
 (def METH-VARARGS 1)
-(def mdef (ffi/alloc 32))
-(ffi/write mdef :pointer (ffi/string->ptr "bb_fib") 0)
+(def mdef (ffi/alloc (ffi/global-arena) 32))
+(ffi/write mdef :pointer (ffi/string->ptr (ffi/global-arena) "bb_fib") 0)
 (ffi/write mdef :pointer bb-fib 8)
 (ffi/write mdef :int METH-VARARGS 16)
 (ffi/write mdef :pointer ffi/null 24)

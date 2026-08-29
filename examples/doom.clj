@@ -139,7 +139,8 @@
           (< body 420) [112 52 40 255]
           :else [0 0 0 0]))))
 
-(def atlas-buf (ffi/alloc (* TILE TILE TILES 4)))
+;; the texture atlas lives as long as the window does
+(def atlas-buf (ffi/alloc (ffi/global-arena) (* TILE TILE TILES 4)))
 (dotimes [t TILES]
   (dotimes [y TILE]
     (dotimes [x TILE]

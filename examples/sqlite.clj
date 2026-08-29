@@ -29,8 +29,11 @@
 
 (def rows (atom []))
 ;; int callback(void* _, int argc, char** argv, char** cols)
+;; The arena owns the callback pointer. This one is a top-level binding that
+;; lives as long as the script, so it goes in the global arena.
 (def row-cb
-  (ffi/callback (fn [_ argc argv _cols]
+  (ffi/callback (ffi/global-arena)
+                (fn [_ argc argv _cols]
                   ;; argv comes from C with size zero and contains argc pointers.
                   (let [argv (ffi/reinterpret argv (* argc (ffi/sizeof :pointer)))]
                     (swap! rows conj

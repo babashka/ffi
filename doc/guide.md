@@ -718,30 +718,43 @@ function and call it when you finish with the database:
 Use `callback` to pass a Clojure function to C:
 
 ```clojure
-(def comparator
-  (ffi/callback
-   (fn [left-pointer right-pointer]
-     (compare (ffi/read (ffi/reinterpret left-pointer 4) :int)
-              (ffi/read (ffi/reinterpret right-pointer 4) :int)))
-   [:pointer :pointer]
-   :int))
-
-(qsort values 5 4 comparator)
-(ffi/free-callback comparator)
+(with-open [arena (ffi/confined-arena)]
+  (let [comparator
+        (ffi/callback
+         arena
+         (fn [left-pointer right-pointer]
+           (compare (ffi/read (ffi/reinterpret left-pointer 4) :int)
+                    (ffi/read (ffi/reinterpret right-pointer 4) :int)))
+         [:pointer :pointer]
+         :int)]
+    (qsort values 5 4 comparator)))
 ```
 
-`callback` returns a function pointer. The pointer stays valid until you
-call `free-callback`.
+`callback` returns a function pointer. The arena owns the pointer, exactly
+as it owns the memory that `alloc` returns. The pointer is valid until the
+arena releases it.
+
+Choose the arena for the thread that calls back:
+
+- A confined arena accepts a call from its own thread only. Use one when C
+  calls back during a call that you make, such as the comparison function
+  above. This arena is the cheapest one.
+- A shared arena accepts a call from any thread. Use one when C calls back
+  from a thread of its own, such as an event loop.
+- A global arena never releases the pointer. Use one for a callback that
+  lives as long as the process, such as a signal handler.
+- An automatic arena releases the pointer when the pointer itself becomes
+  unreachable. The garbage collector cannot see the copy that C holds, so
+  use one only when a reference of yours outlives every call that C makes.
 
 A `:pointer` callback argument comes from C and has size zero.
 
 Before you read the memory, specify its size with `reinterpret`.
 
-If C keeps the callback, keep its pointer. Before you call `free-callback`,
-unregister the callback.
+If C keeps the callback, keep its pointer. Unregister the callback before
+the arena releases it.
 
-C can call a callback from a native thread. A `:bool` callback argument
-becomes `true` or `false`.
+A `:bool` callback argument becomes `true` or `false`.
 
 CAUTION: Do not let a callback throw an exception. Catch exceptions inside
 the callback, or the process can stop.

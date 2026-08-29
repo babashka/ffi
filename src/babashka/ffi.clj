@@ -1678,16 +1678,29 @@
 
 ;; -- callbacks ----------------------------------------------------------------
 
-(def ^:private callback-arenas (atom {}))
-
 (defn callback
-  "Creates a C function pointer that invokes f. argtypes and rettype use the
-  cfn type keywords. f receives :pointer arguments as zero-size pointers.
-  It receives :bool arguments as booleans and other arguments as longs or doubles.
+  "Creates a C function pointer that invokes f. arena owns the pointer, which
+  is valid until the arena releases it. argtypes and rettype use the cfn type
+  keywords. f receives :pointer arguments as zero-size pointers. It receives
+  :bool arguments as booleans and other arguments as longs or doubles.
 
-  Returns the function pointer. The callback remains valid until
-  free-callback releases it."
-  [f argtypes rettype]
+  Choose the arena for the thread that calls back:
+
+      (ffi/callback (ffi/shared-arena) f [:pointer] :void)
+
+  A shared arena accepts a call from any thread, which is what C usually
+  does. A confined arena accepts a call from its own thread only, so use one
+  when C calls back during a call that you make, such as a comparison
+  function. A global arena never releases the pointer.
+
+  An automatic arena releases the pointer once the pointer itself becomes
+  unreachable. The garbage collector cannot see the copy that C holds, so use
+  an automatic arena only when a reference of yours outlives every call that
+  C can make.
+
+  CAUTION: C can call the pointer until its arena releases it, and not one
+  instruction longer. Unregister the callback first."
+  [arena f argtypes rettype]
   (doseq [t argtypes] (carrier t))
   (carrier rettype)
   (when (some #(= :void %) argtypes)
@@ -1745,22 +1758,7 @@
                (.findVirtual clojure.lang.IFn "invoke" obj-type)
                (.bindTo f)
                (.asType target-type))
-        arena (Arena/ofShared)
         stub (.upcallStub ^Linker @linker* mh (descriptor argtypes rettype)
-                          arena
+                          ^Arena arena
                           (make-array java.lang.foreign.Linker$Option 0))]
-    (swap! callback-arenas assoc (.address stub) arena)
     stub))
-
-(defn free-callback
-  "Releases callback pointer p. C must not call p after this function returns.
-  Ignores unknown and previously freed pointers."
-  [p]
-  (let [addr (if (instance? MemorySegment p)
-               ;; A freed stub has a closed arena but keeps its address.
-               (.address ^MemorySegment p)
-               (pointer-address p))]
-    (when-let [^Arena a (get @callback-arenas addr)]
-      (swap! callback-arenas dissoc addr)
-      (.close a)))
-  nil)

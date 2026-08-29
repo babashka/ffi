@@ -11,7 +11,6 @@
     -  [`defcfn`](#babashka.ffi/defcfn) - Defines name as a C function binding created by cfn: (defcfn sqlite3-open "sqlite3_open" [:string :pointer] :int) (defcfn sqlite3-open "Opens the database at path, storing the handle in out-param pp." "sqlite3_open" [:string :pointer] :int) An optional docstring and attribute map can precede the C symbol.
     -  [`find-symbol`](#babashka.ffi/find-symbol) - Finds sym and returns a pointer to it.
     -  [`free`](#babashka.ffi/free) - Releases memory that a C function returned and expects the caller to free.
-    -  [`free-callback`](#babashka.ffi/free-callback) - Releases callback pointer p.
     -  [`global-arena`](#babashka.ffi/global-arena) - Returns the global arena.
     -  [`load-library`](#babashka.ffi/load-library) - Loads a shared library and adds it to the symbol search.
     -  [`load-system-library`](#babashka.ffi/load-system-library) - Loads a shared library by its short name.
@@ -173,17 +172,32 @@ different byte order, set it with .order.
 
 ## <a name="babashka.ffi/callback">`callback`</a>
 ``` clojure
-(callback f argtypes rettype)
+(callback arena f argtypes rettype)
 ```
 Function.
 
-Creates a C function pointer that invokes f. argtypes and rettype use the
-cfn type keywords. f receives :pointer arguments as zero-size pointers.
-It receives :bool arguments as booleans and other arguments as longs or doubles.
+Creates a C function pointer that invokes f. arena owns the pointer, which
+is valid until the arena releases it. argtypes and rettype use the cfn type
+keywords. f receives :pointer arguments as zero-size pointers. It receives
+:bool arguments as booleans and other arguments as longs or doubles.
 
-Returns the function pointer. The callback remains valid until
-free-callback releases it.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1683-L1753">Source</a></sub></p>
+Choose the arena for the thread that calls back:
+
+    (ffi/callback (ffi/shared-arena) f [:pointer] :void)
+
+A shared arena accepts a call from any thread, which is what C usually
+does. A confined arena accepts a call from its own thread only, so use one
+when C calls back during a call that you make, such as a comparison
+function. A global arena never releases the pointer.
+
+An automatic arena releases the pointer once the pointer itself becomes
+unreachable. The garbage collector cannot see the copy that C holds, so use
+an automatic arena only when a reference of yours outlives every call that
+C can make.
+
+CAUTION: C can call the pointer until its arena releases it, and not one
+instruction longer. Unregister the callback first.
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1681-L1764">Source</a></sub></p>
 
 ## <a name="babashka.ffi/cfn">`cfn`</a>
 ``` clojure
@@ -306,16 +320,6 @@ memory to free.
 
 CAUTION: Do not use p after free. This can corrupt memory or stop the process.
 <p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1085-L1103">Source</a></sub></p>
-
-## <a name="babashka.ffi/free-callback">`free-callback`</a>
-``` clojure
-(free-callback p)
-```
-Function.
-
-Releases callback pointer p. C must not call p after this function returns.
-Ignores unknown and previously freed pointers.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1755-L1766">Source</a></sub></p>
 
 ## <a name="babashka.ffi/global-arena">`global-arena`</a>
 ``` clojure
