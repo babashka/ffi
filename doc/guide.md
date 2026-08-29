@@ -803,9 +803,8 @@ to the union, and you read the member you know applies:
 (ffi/write p curl-msg {:msg 1 :easy nil :data {:result 0}})
 ```
 
-A union is not passed by value in a signature, alone or inside a struct;
-declare `:pointer` and read it from memory. Every union in the libraries
-surveyed for this design arrives through a pointer.
+A union is not passed by value in a signature, alone or inside a struct.
+Declare `:pointer` and read it from memory.
 
 ### Out parameters
 
