@@ -704,22 +704,29 @@ the required calls:
 ;;=> {:x 7, :y 11}
 ```
 
-Use `read-field` and `write-field` for one member. The place is a member
-name, or a path of member names and array indices into nested layouts. The
-offset and the type come from the layout, so there is nothing to compute:
+Use `field-reader` and `field-writer` for one member. Each takes the
+layout and a place, and returns a function of a pointer. The place is a
+member name, or a path of member names and array indices into nested
+layouts. The offset and the type come from the layout, so there is nothing
+to compute. The path is resolved when the function is made, so make it
+once and keep it, as with `cfn`:
 
 ```clojure
 (def bone [:struct [[:name [:array :char 32]] [:parent :int]]])
 
-(ffi/read-field p bone :parent)                      ;=> 7
-(ffi/write-field p bone :parent 3)
-(ffi/read-field p outer [:msgs 1 :data :result])     ; through an array and a union
-(ffi/write-field p outer [:msgs 1] {:msg 1 :easy nil :data [:result 0]})   ; a whole nested struct
+(def bone-parent (ffi/field-reader bone :parent))
+(def set-bone-parent! (ffi/field-writer bone :parent))
+
+(bone-parent p)                                       ;=> 7
+(set-bone-parent! p 3)
+
+((ffi/field-reader outer [:msgs 1 :data :result]) p)  ; through an array and a union
+((ffi/field-writer outer [:msgs 1]) p {:msg 1 :easy nil :data [:result 0]})   ; a whole nested struct
 ```
 
-A path that names nothing is an error, not `nil`: a layout is closed, so a
-member that is not there is a mistake in the program, and `nil` could not
-be told from a `0` that was read.
+A path that names nothing is an error when the function is made, not
+`nil`: a layout is closed, so a member that is not there is a mistake in
+the program, and `nil` could not be told from a `0` that was read.
 
 The byte offset selects one element of an array of structs:
 
@@ -809,8 +816,11 @@ to the union, and you read the member you know applies:
 ```clojure
 (def CURLMSG_DONE 1)   ; curl/multi.h
 
-(when (= (ffi/read-field p curl-msg :msg) CURLMSG_DONE)
-  (ffi/read-field p curl-msg [:data :result]))   ; the path names the member, so the type is known
+(def msg-kind (ffi/field-reader curl-msg :msg))
+(def msg-result (ffi/field-reader curl-msg [:data :result]))   ; the path names the member, so the type is known
+
+(when (= (msg-kind p) CURLMSG_DONE)
+  (msg-result p))
 ```
 
 `read` of the union itself gives a pointer to its bytes, for a member you

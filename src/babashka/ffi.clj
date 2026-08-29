@@ -39,9 +39,10 @@
   member you know applies from that pointer. write takes a pair, [member
   value]. A union is not passed by value in a signature.
 
-  read-field and write-field access one member of a layout by name, or by a
-  path of names and array indices into nested layouts. The offset and the
-  type come from the layout.
+  field-reader and field-writer return functions that access one member of
+  a layout by name, or by a path of names and array indices into nested
+  layouts. The path is resolved once; the offset and the type come from
+  the layout.
 
   read-array and write-array copy elements of one scalar type between
   native memory and a Java array of that width, as a memcpy.
@@ -1317,8 +1318,9 @@
 ;; A place in a layout is a member name or a path of names and array
 ;; indices. Resolving one walks the resolved layout to an offset and the
 ;; layout at the end; the codecs for that place are built once, at that
-;; offset, and cached per [layout path], so a call is a lookup and the
-;; access. See ADR 0006.
+;; offset, and cached per [layout path]. field-reader and field-writer
+;; resolve when they are made, so the functions they return only access.
+;; See ADR 0006.
 
 (defn- resolve-path
   "Walks resolved layout lay along path. Returns the offset of the place and
@@ -1369,31 +1371,41 @@
           (swap! field-cache (fn [m] (if (<= codec-cache-limit (count m)) m (assoc m k v))))
           v))))
 
-(defn read-field
-  "Reads one member of layout t from pointer p. path is a member name, or a
-  vector of member names and array indices that reaches into nested
-  layouts. The value is decoded as the member's type, the way read decodes
-  it: a struct as a map, an array as a vector, a union as a pointer.
+(defn field-reader
+  "Returns a function of a pointer that reads one member of layout t. path
+  is a member name, or a vector of member names and array indices that
+  reaches into nested layouts. The member is decoded as its type, the way
+  read decodes it: a struct as a map, an array as a vector, a union as a
+  pointer. Through a union the path names the member, so the type is known.
 
-      (ffi/read-field p bone :parent)
-      (ffi/read-field p outer [:msgs 1 :data :result])
+      (def bone-parent (field-reader bone :parent))
+      (bone-parent p)                                   ;=> 7
+      ((field-reader outer [:msgs 1 :data :result]) p)
 
-  Through a union the path names the member, so the type is known."
-  [p t path]
-  ((:decode (field-codecs t path)) (accessible p)))
+  The path is resolved here, once; the function it returns only reads. A
+  path that names nothing is an error here, not nil: a layout is closed,
+  so a member that is not there is a mistake in the program.
 
-(defn write-field
-  "Writes v as one member of layout t at pointer p. path is as in read-field.
-  v is encoded as the member's type, the way write encodes it, so a struct
-  takes a map, an array a sequence, and a union a pair. Returns nil.
+  Make the function once and keep it, as with cfn."
+  [t path]
+  (let [dec (:decode (field-codecs t path))]
+    (fn [p] (dec (accessible p)))))
 
-      (ffi/write-field p bone :parent 3)
-      (ffi/write-field p outer [:msgs 1 :data :result] 0)
+(defn field-writer
+  "Returns a function of a pointer and a value that writes one member of
+  layout t. path is as in field-reader. The value is encoded as the
+  member's type, the way write encodes it: a struct from a map, an array
+  from a sequence, a union from a pair. Through a union the path names the
+  member, so no pair is needed. The function returns nil.
 
-  Through a union the path names the member, so no pair is needed."
-  [p t path v]
-  ((:encode (field-codecs t path)) nil (accessible p) v)
-  nil)
+      (def set-bone-parent! (field-writer bone :parent))
+      (set-bone-parent! p 3)
+
+  The path is resolved here, once; a path that names nothing is an error
+  here. Make the function once and keep it, as with cfn."
+  [t path]
+  (let [enc (:encode (field-codecs t path))]
+    (fn [p v] (enc nil (accessible p) v) nil)))
 
 (defn byte-buffer
   "Returns a java.nio.ByteBuffer view of n bytes of native memory at pointer p.
