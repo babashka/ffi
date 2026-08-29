@@ -6,6 +6,9 @@
   only babashka can observe, such as the libffi backend selection, the
   trampoline set, and builds without libffi."
   (:require [babashka.ffi :as ffi :refer [defcfn]]
+            [clojure.java.io :as io]
+            [clojure.java.shell :as sh]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
 
 ;; strlen lives in the C runtime, which the default lookup finds on every OS
@@ -216,3 +219,58 @@
         (with-open [a (ffi/shared-arena)]
           (let [cb (ffi/callback a compare-ints [:pointer :pointer] :int)]
             (is (= sorted @(future (sort-ints (constantly cb) xs))))))))))
+
+;; -- struct arguments ---------------------------------------------------------
+;; Nothing portable in libc takes a struct by value, so this half of the ABI
+;; needs a fixture. test-resources/struct_lib.c is compiled here when a C
+;; compiler is on PATH, and the tests skip when it is not.
+
+(def struct-lib
+  (delay
+    (let [ext (cond (str/starts-with? (System/getProperty "os.name") "Windows") ".dll"
+                    (str/starts-with? (System/getProperty "os.name") "Mac") ".dylib"
+                    :else ".so")
+          out (io/file "target" (str "libffistructs" ext))
+          src (io/file "test-resources" "struct_lib.c")]
+      (io/make-parents out)
+      (when (or (and (.exists out) (>= (.lastModified out) (.lastModified src)))
+                (try (zero? (:exit (if (= ".dll" ext)
+                                     (sh/sh "cl" "/nologo" "/LD" (str src)
+                                            (str "/Fe:" out) (str "/Fo:" out ".obj"))
+                                     (sh/sh "cc" "-shared" "-fPIC" "-o" (str out) (str src)))))
+                     (catch Exception _ false)))
+        (ffi/load-library (.getAbsolutePath out))
+        true))))
+
+(def p2 [:struct [[:x :int] [:y :int]]])
+(def v3 [:struct [[:x :double] [:y :double] [:z :double]]])
+(def big [:struct [[:a :long] [:b :long] [:c :long] [:d :long]]])
+(def pad [:struct [[:c :char] [:d :double]]])
+(def rect [:struct [[:lo p2] [:hi p2]]])
+(def named [:struct [[:id :int] [:name :string]]])
+
+(deftest struct-argument-test
+  (if-not (and @struct-access? @struct-lib)
+    (println "struct arguments skipped: no C compiler on PATH, or this babashka predates struct access")
+    (do
+      (testing "each ABI class of struct argument"
+        (is (= 7 ((ffi/cfn "p2_sum" [p2] :int) {:x 3 :y 4})))
+        (is (= 6.0 ((ffi/cfn "v3_sum" [v3] :double) {:x 1.0 :y 2.0 :z 3.0})))
+        (is (= 10 ((ffi/cfn "big_sum" [big] :long) {:a 1 :b 2 :c 3 :d 4})))
+        (is (= 9.5 ((ffi/cfn "pad_sum" [pad] :double) {:c 7 :d 2.5})))
+        (is (= 10 ((ffi/cfn "rect_sum" [rect] :int) {:lo {:x 1 :y 2} :hi {:x 3 :y 4}}))))
+      (testing "structs mixed with scalar arguments"
+        (is (= 26.0 ((ffi/cfn "mixed_sum" [:int p2 :double v3] :double)
+                     1 {:x 3 :y 4} 5.0 {:x 6.0 :y 7.0 :z 0.0}))))
+      (testing "a :string field is a pointer the caller owns"
+        (with-open [arena (ffi/confined-arena)]
+          (is (= 10 ((ffi/cfn "named_len" [named] :int)
+                     {:id 5 :name (ffi/string->ptr arena "hello")})))))
+      (testing "a struct goes in and another comes back"
+        (is (= {:lo {:x 3 :y 4} :hi {:x 1 :y 2}}
+               ((ffi/cfn "rect_swap" [rect] rect) {:lo {:x 1 :y 2} :hi {:x 3 :y 4}}))))
+      (testing "a struct argument with a :void return"
+        (with-open [arena (ffi/confined-arena)]
+          (let [out (ffi/alloc arena :int)]
+            ((ffi/cfn "p2_store" [p2 :pointer] :void) {:x 3 :y 4} out)
+            (is (= 304 (ffi/read out :int)))))))))
