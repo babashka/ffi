@@ -74,8 +74,9 @@
   :double. Argument order does not affect these limits. See doc/guide.md for
   details and workarounds.
 
-  Add a trailing :& to declare a variadic C function. The types before :& are
-  the fixed parameters. Each call infers the tail types from the values.
+  Add :& to argtypes to declare a variadic C function. The types before :& are
+  the fixed parameters. Types after :& declare the tail once. With no types
+  after :&, each call infers the tail types from its values.
   Integers and pointers use 64-bit integers. C promotion converts floats to
   doubles. Strings use C strings:
 

@@ -431,9 +431,9 @@ call. The arity is then exact, and the call is about twice as fast:
 (log-line "%d: %s\n" 42 "started")
 ```
 
-Declare the types C receives after promotion: `:double`, never `:float`;
-`:int` or wider, never a narrower integer. A type C would promote is
-refused with the type to declare instead.
+Declare the types C receives after promotion. Use `:double`, never `:float`,
+and `:int` or wider, never a narrower integer. If a type would be promoted,
+the binding reports the type to declare.
 
 ## Use native memory
 
