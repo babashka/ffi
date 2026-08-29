@@ -578,6 +578,21 @@
                                 (ffi/write p outer {:id 1 :msgs [ok (dissoc ok :easy)]})))
           (is (thrown-with-msg? Exception #"at \[:msgs\], array value needs 2 elements"
                                 (ffi/write p outer {:id 1 :msgs [ok]})))
+          ;; a :string field with a bare string, and a scalar the type cannot take
+          (let [item [:struct [[:id :int] [:name :string] [:q :pointer]]]
+                bag [:struct [[:items [:array item 2]]]]
+                fine {:id 1 :name (ffi/string->ptr arena "x") :q nil}
+                b (ffi/alloc arena bag)]
+            (is (thrown-with-msg? Exception #"at \[:items 0 :name\], a :string field holds a pointer"
+                                  (ffi/write b bag {:items [(assoc fine :name "bare") fine]})))
+            (is (thrown-with-msg? Exception #"at \[:items 1 :id\], a :int field cannot take \"two\""
+                                  (ffi/write b bag {:items [fine (assoc fine :id "two")]})))
+            (is (thrown-with-msg? Exception #"at \[:items 1 :q\], a :pointer field cannot take 42"
+                                  (ffi/write b bag {:items [fine (assoc fine :q 42)]})))
+            ;; the original exception stays as the cause
+            (is (instance? ClassCastException
+                           (ex-cause (try (ffi/write b bag {:items [fine (assoc fine :id "two")]})
+                                          (catch Exception e e))))))
           ;; the top level has no place to name
           (is (thrown-with-msg? Exception #"^babashka.ffi: union value"
                                 (ffi/write p data [:foo 1]))))))))

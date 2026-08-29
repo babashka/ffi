@@ -1501,6 +1501,17 @@
   [path]
   (if (seq path) (str "at " (pr-str path) ", ") ""))
 
+(defn- scalar-value-error
+  "Returns a function that throws for a value scalar type t cannot take, at
+  path, keeping the original exception as the cause."
+  [t path]
+  (fn [v ^Exception e]
+    (throw (ex-info (str "babashka.ffi: " (at-path path) "a " t " field cannot take " (pr-str v)
+                         (when-not (instance? clojure.lang.ExceptionInfo e)
+                           (str " (" (.getSimpleName (class e)) ")")))
+                    {:value v :type t :path path}
+                    e))))
+
 (defn- encoder
   "Returns a function that writes a value to a segment. The function writes
   the value at offset, with layout lay. A struct value must contain each
@@ -1542,10 +1553,10 @@
                          (do (when-not arena
                                ;; write takes no arena, so it cannot own the
                                ;; C string this would allocate
-                               (throw (ex-info (str "babashka.ffi: a :string field holds a pointer to bytes"
+                               (throw (ex-info (str "babashka.ffi: " (at-path path) "a :string field holds a pointer to bytes"
                                                     " that outlive this write, so their lifetime is yours"
                                                     " to choose: (string->ptr arena " (pr-str v) ")")
-                                               {:value v})))
+                                               {:value v :path path})))
                              (.allocateFrom ^Arena arena ^String v))
                          v)
                        offset))
@@ -1596,12 +1607,22 @@
                 ((aget encs i) arena seg (first s))
                 (recur (inc i) (next s)))))))
       ;; write :pointer takes a segment or nil itself
-      (:pointer :bool) (let [w (scalar-writer t offset)] (fn [_ seg v] (w seg v)))
+      ;; a value the scalar cannot take surfaces as a ClassCastException from
+      ;; the coercion, or as the pointer error; both get the place and the
+      ;; type. The try costs nothing on the path that does not throw.
+      (:pointer :bool) (let [w (scalar-writer t offset)
+                             wrong (scalar-value-error t path)]
+                         (fn [_ seg v]
+                           (try (w seg v)
+                                (catch Exception e (wrong v e)))))
       ;; the same coercion as the FFM path: nil and a pointer become a
       ;; long, so a variadic tail value encodes like it always did
       (let [coerce (arg-coercer t)
-            w (scalar-writer t offset)]
-        (fn [_ seg v] (w seg (coerce v))))))))
+            w (scalar-writer t offset)
+            wrong (scalar-value-error t path)]
+        (fn [_ seg v]
+          (try (w seg (coerce v))
+               (catch Exception e (wrong v e)))))))))
 
 (defn- decoder
   "Returns a function that reads a value from a segment. The function uses
