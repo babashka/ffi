@@ -558,3 +558,26 @@
         "public vars missing from API.md: run bb quickdoc, and check they are meant to be public")
     (is (empty? (sort (remove public documented)))
         "API.md documents vars that are no longer public: run bb quickdoc"))))
+
+(deftest nested-value-error-path-test
+  ;; a wrong value deep in a layout names its place, so the reader of the
+  ;; message does not have to search the structure for it
+  (if-not @union-layout?
+    (println "nested error path skipped: this babashka predates union layouts")
+    (let [data [:union [[:whatever :pointer] [:result :int]]]
+          curl-msg [:struct [[:msg :int] [:easy :pointer] [:data data]]]
+          outer [:struct [[:id :int] [:msgs [:array curl-msg 2]]]]
+          ok {:msg 1 :easy nil :data [:result 0]}]
+      (with-open [arena (ffi/confined-arena)]
+        (let [p (ffi/alloc arena outer)]
+          (is (thrown-with-msg? Exception #"at \[:msgs 0 :data\], union value is a pair"
+                                (ffi/write p outer {:id 1 :msgs [(assoc ok :data [:foo 1 :baz 2]) ok]})))
+          (is (thrown-with-msg? Exception #"at \[:msgs 1 :data\], union value names unknown member :foo"
+                                (ffi/write p outer {:id 1 :msgs [ok (assoc ok :data [:foo 1])]})))
+          (is (thrown-with-msg? Exception #"at \[:msgs 1\], struct value misses field :easy"
+                                (ffi/write p outer {:id 1 :msgs [ok (dissoc ok :easy)]})))
+          (is (thrown-with-msg? Exception #"at \[:msgs\], array value needs 2 elements"
+                                (ffi/write p outer {:id 1 :msgs [ok]})))
+          ;; the top level has no place to name
+          (is (thrown-with-msg? Exception #"^babashka.ffi: union value"
+                                (ffi/write p data [:foo 1]))))))))

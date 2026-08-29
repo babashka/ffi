@@ -1495,11 +1495,19 @@
       :float (fn [^MemorySegment seg v] (set-f32 seg off v))
       (throw (ex-info (str "babashka.ffi: cannot write type " t) {:type t})))))
 
+(defn- at-path
+  "The place of a nested value in an error message: nothing at the top
+  level, otherwise the path of field names and array indices to it."
+  [path]
+  (if (seq path) (str "at " (pr-str path) ", ") ""))
+
 (defn- encoder
   "Returns a function that writes a value to a segment. The function writes
   the value at offset, with layout lay. A struct value must contain each
-  field and no other field. The arena contains temporary :string fields."
-  [lay ^long offset]
+  field and no other field. The arena contains temporary :string fields.
+  path names the value's place in an enclosing layout, for error messages."
+  ([lay offset] (encoder lay offset []))
+  ([lay ^long offset path]
   (let [t (:type lay)]
     (case t
       :struct
@@ -1507,19 +1515,19 @@
             c (count fields)
             names (mapv :name fields)
             ^objects encs (object-array
-                           (map (fn [f] (encoder f (+ offset (long (:offset f)))))
+                           (map (fn [f] (encoder f (+ offset (long (:offset f))) (conj path (:name f))))
                                 fields))
             field-error
             (fn [v]
               (let [missing (when (map? v) (remove #(contains? v %) names))
                     unknown (when (map? v) (remove (set names) (keys v)))]
-                (throw (ex-info (str "babashka.ffi: struct value "
+                (throw (ex-info (str "babashka.ffi: " (at-path path) "struct value "
                                      (cond (not (map? v)) (str "needs a map of " (pr-str names))
                                            (seq missing) (str "misses field " (pr-str (first missing)))
                                            (seq unknown) (str "has unknown field " (pr-str (first unknown)))
                                            :else (str "needs a map of " (pr-str names)))
                                      ", got " (pr-str v))
-                                {:value v :fields names}))))]
+                                {:value v :fields names :path path}))))]
         (fn [arena seg v]
           (when-not (and (map? v) (= (count v) c))
             (field-error v))
@@ -1546,16 +1554,16 @@
       ;; shape, and it is the form spec's s/or conforms to. See ADR 0005.
       (let [fields (:fields lay)
             names (mapv :name fields)
-            encs (into {} (map (fn [f] [(:name f) (encoder f offset)]) fields))
+            encs (into {} (map (fn [f] [(:name f) (encoder f offset (conj path (:name f)))]) fields))
             member-error
             (fn [v]
-              (throw (ex-info (str "babashka.ffi: union value "
+              (throw (ex-info (str "babashka.ffi: " (at-path path) "union value "
                                    (cond (not (and (vector? v) (= 2 (count v))))
                                          (str "is a pair [member value], with member one of " (pr-str names))
                                          :else
                                          (str "names unknown member " (pr-str (nth v 0)) "; give one of " (pr-str names)))
                                    ", got " (pr-str v))
-                              {:value v :members names})))]
+                              {:value v :members names :path path})))]
         (fn [arena seg v]
           (when-not (and (vector? v) (= 2 (count v)))
             (member-error v))
@@ -1567,16 +1575,16 @@
             n (long (:count lay))
             sz (long (:size el))
             ^objects encs (object-array
-                           (map (fn [i] (encoder el (+ offset (* (long i) sz)))) (range n)))
+                           (map (fn [i] (encoder el (+ offset (* (long i) sz)) (conj path i))) (range n)))
             ;; the element count is part of the layout, so a value of another
             ;; length is an error, as a struct value with another field set is
             length-error
             (fn [v]
-              (throw (ex-info (str "babashka.ffi: array value needs " n " elements, got "
+              (throw (ex-info (str "babashka.ffi: " (at-path path) "array value needs " n " elements, got "
                                    (if (or (sequential? v) (some-> v class .isArray))
                                      (count v)
                                      (pr-str v)))
-                              {:value v :count n})))]
+                              {:value v :count n :path path})))]
         (fn [arena seg v]
           (when-not (and (or (sequential? v) (some-> v class .isArray))
                          (= n (count v)))
@@ -1593,7 +1601,7 @@
       ;; long, so a variadic tail value encodes like it always did
       (let [coerce (arg-coercer t)
             w (scalar-writer t offset)]
-        (fn [_ seg v] (w seg (coerce v)))))))
+        (fn [_ seg v] (w seg (coerce v))))))))
 
 (defn- decoder
   "Returns a function that reads a value from a segment. The function uses
