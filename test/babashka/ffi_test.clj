@@ -650,8 +650,14 @@
                                   (field-reader outer [:msgs 2 :msg])))
             (is (thrown-with-msg? Exception #"continues past :int at \[:id\]"
                                   (field-writer outer [:id :x])))
-            (is (thrown-with-msg? Exception #"path is empty"
-                                  (field-reader outer []))))
+            (is (thrown-with-msg? Exception #"continues past :int"
+                                  (field-reader outer [:id 0]))))
+          (testing "the empty path is the whole layout, resolved once"
+            (let [read-bone (field-reader bone [])
+                  write-bone! (field-writer bone [])]
+              (write-bone! p {:name spine :parent 11})
+              (is (= {:name spine :parent 11} (read-bone p)))
+              (is (= (ffi/read p bone) (read-bone p)))))
           (testing "a wrong value at the place says where"
             (is (thrown-with-msg? Exception #"at \[:msgs 1 :data\], union value is a pair"
                                   ((field-writer outer [:msgs 1 :data]) q {:result 1})))

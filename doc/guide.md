@@ -727,6 +727,14 @@ made, so make it once and keep it, as with `cfn`:
 A path that names nothing is an error when the function is made. A layout is
 closed, so a missing member is a mistake in the program.
 
+The empty path `[]` is the whole layout. `(ffi/field-reader point [])` is
+`read` of the layout with its lookup done once, which matters in a loop:
+
+```clojure
+(def read-point (ffi/field-reader point []))
+(read-point p)        ;=> {:x 1, :y 2}
+```
+
 The byte offset selects one element of an array of structs:
 
 ```clojure

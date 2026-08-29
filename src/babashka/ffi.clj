@@ -1326,9 +1326,7 @@
   "Walks resolved layout lay along path. Returns the offset of the place and
   the layout there. Throws for a path that names nothing."
   [lay path]
-  (when (empty? path)
-    (throw (ex-info "babashka.ffi: the path is empty; read or write the whole layout instead"
-                    {:path path})))
+  ;; an empty path is the root: the whole layout at offset 0
   (loop [lay lay off 0 done [] todo (seq path)]
     (if-not todo
       [off lay]
@@ -1386,6 +1384,12 @@
   path that names nothing is an error here, not nil: a layout is closed,
   so a member that is not there is a mistake in the program.
 
+  The empty path [] is the whole layout, so (field-reader t []) is read of
+  the layout with its lookup done once:
+
+      (def read-point (field-reader point []))
+      (read-point p)                                    ;=> {:x 1 :y 2}
+
   Make the function once and keep it, as with cfn."
   [t path]
   (let [dec (:decode (field-codecs t path))]
@@ -1402,7 +1406,8 @@
       (set-bone-parent! p 3)
 
   The path is resolved here, once; a path that names nothing is an error
-  here. Make the function once and keep it, as with cfn."
+  here. The empty path [] is the whole layout. Make the function once and
+  keep it, as with cfn."
   [t path]
   (let [enc (:encode (field-codecs t path))]
     (fn [p v] (enc nil (accessible p) v) nil)))
