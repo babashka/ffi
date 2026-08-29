@@ -724,8 +724,8 @@ keyword or a layout, so an array can hold structs or other arrays:
 ```
 
 `read` returns an array as a vector. `write` accepts a vector, a list, or a
-Java array with exactly `n` elements. A value with another length is an
-error, in the same way that a struct value with a missing field is one:
+Java array with exactly `n` elements. A value with another length is an error,
+just as a struct value with a missing field is an error:
 
 ```clojure
 (with-open [arena (ffi/confined-arena)]
@@ -735,9 +735,9 @@ error, in the same way that a struct value with a missing field is one:
 ;;=> {:v [1 2 3 4]}
 ```
 
-A `char` array reads as a vector of bytes, because C uses one both for a
-string and for raw bytes. To read the string in a fixed-width field, read
-that field with a limit:
+A `char` array reads as a vector of bytes. C uses `char` for both strings and
+raw bytes. To read the string in a fixed-width field, read that field with a
+limit:
 
 ```clojure
 (with-open [arena (ffi/confined-arena)]

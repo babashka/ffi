@@ -30,8 +30,9 @@
 
   A layout describes memory: [:struct [[name type] ...]] for a struct and
   [:array type n] for a fixed array. read returns a struct as a map and an
-  array as a vector, and write accepts the same. A field of a struct can be
-  either, so `char name[32]` is [:name [:array :char 32]].
+  array as a vector. write accepts a map for a struct and a sequence for an
+  array. A field of a struct can be either, so `char name[32]` is
+  [:name [:array :char 32]].
 
   A function that takes a struct as an argument, or returns one, without a
   pointer in between, gets a layout on that position in the signature. A
