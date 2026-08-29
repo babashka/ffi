@@ -22,7 +22,7 @@ calls without these settings.
   - [Pass a struct by value](#pass-a-struct-by-value)
 - [Call a variadic function](#call-a-variadic-function)
 - [Use native memory](#use-native-memory)
-  - [Memory that C allocated](#memory-that-c-allocated)
+  - [Memory allocated by C](#memory-allocated-by-c)
   - [Arenas](#arenas)
   - [Read and write a struct](#read-and-write-a-struct)
   - [Fixed arrays](#fixed-arrays)
@@ -495,7 +495,7 @@ byte count. It uses the natural alignment of the type or layout:
 (ffi/alloc arena [:struct [[:x :int] [:y :int]]])   ; 8 bytes, aligned for the struct
 ```
 
-### Memory that C allocated
+### Memory allocated by C
 
 A C function can return memory that the caller has to release. Give that
 pointer to an arena, with the library's own deallocator as the cleanup
