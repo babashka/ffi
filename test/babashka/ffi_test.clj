@@ -6,11 +6,16 @@
   only babashka can observe, such as the libffi backend selection, the
   trampoline set, and builds without libffi."
   (:require [babashka.ffi :as ffi :refer [defcfn]]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
 
 ;; strlen lives in the C runtime, which the default lookup finds on every OS
 ;; that has one. Binding is lazy, so this is safe even where it does not.
 (defcfn strlen "strlen" [:string] :long)
+
+(def strdup-sym
+  "strdup is POSIX. The Windows CRT spells it _strdup."
+  (if (str/starts-with? (System/getProperty "os.name") "Windows") "_strdup" "strdup"))
 
 (def default-lookup?
   "A statically linked musl binary has no dlopen and no FFM default lookup,
@@ -105,18 +110,20 @@
 (def unsized-string?
   "Reading a string from a pointer with no size arrived after the first
   release; an older built-in namespace refuses one."
+  ;; the whole probe sits inside the try: a symbol that does not resolve must
+  ;; skip the tests, not escape from the delay
   (delay (and @default-lookup?
-              (let [p ((ffi/cfn "strdup" [:string] :pointer) "probe")]
-                (try (ffi/ptr->string p) true
-                     (catch Exception _ false)
-                     (finally (ffi/free p)))))))
+              (try (let [p ((ffi/cfn strdup-sym [:string] :pointer) "probe")]
+                     (try (ffi/ptr->string p) true
+                          (finally (ffi/free p))))
+                   (catch Exception _ false)))))
 
 (deftest ptr->string-test
   (if-not @unsized-string?
     (println (if @default-lookup?
                "ptr->string skipped: this babashka predates reading a sizeless pointer"
                "ptr->string skipped: this build has no default lookup"))
-    (let [strdup (ffi/cfn "strdup" [:string] :pointer)]
+    (let [strdup (ffi/cfn strdup-sym [:string] :pointer)]
       (testing "a pointer C returned has no size, and reads to the NUL"
         (is (= "hello" (ffi/ptr->string (strdup "hello")))))
       (testing "a limit stops the read"
