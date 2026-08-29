@@ -1088,6 +1088,42 @@
    ;; Arena.allocate(byteSize) guarantees only alignment 1.
    (.allocate arena (long (first (size-and-alignment n))) (long alignment))))
 
+;; -- scalar access sites ------------------------------------------------------
+;;
+;; Every .get and .set against a ValueLayout compiles to a few kilobytes in a
+;; native image: the VarHandle path with its bounds, scope and exception
+;; branches, inlined at the site. A build report put write at 86 KB and read
+;; at 33 KB for that reason. So the namespace has one site per width, here,
+;; and read, write and the codec slots call these. Direct linking makes each
+;; call a static invocation.
+
+(defn- get-i32 ^long [^MemorySegment seg ^long off]
+  (long (.get seg ValueLayout/JAVA_INT_UNALIGNED off)))
+(defn- get-i64 ^long [^MemorySegment seg ^long off]
+  (.get seg ValueLayout/JAVA_LONG_UNALIGNED off))
+(defn- get-i16 ^long [^MemorySegment seg ^long off]
+  (long (.get seg ValueLayout/JAVA_SHORT_UNALIGNED off)))
+(defn- get-i8 ^long [^MemorySegment seg ^long off]
+  (long (.get seg ValueLayout/JAVA_BYTE off)))
+(defn- get-f64 ^double [^MemorySegment seg ^long off]
+  (.get seg ValueLayout/JAVA_DOUBLE_UNALIGNED off))
+;; a float stays a boxed Float, as read always returned one
+(defn- get-f32 [^MemorySegment seg ^long off]
+  (.get seg ValueLayout/JAVA_FLOAT_UNALIGNED off))
+
+(defn- set-i32 [^MemorySegment seg ^long off ^long v]
+  (.set seg ValueLayout/JAVA_INT_UNALIGNED off (unchecked-int v)))
+(defn- set-i64 [^MemorySegment seg ^long off ^long v]
+  (.set seg ValueLayout/JAVA_LONG_UNALIGNED off v))
+(defn- set-i16 [^MemorySegment seg ^long off ^long v]
+  (.set seg ValueLayout/JAVA_SHORT_UNALIGNED off (unchecked-short v)))
+(defn- set-i8 [^MemorySegment seg ^long off ^long v]
+  (.set seg ValueLayout/JAVA_BYTE off (unchecked-byte v)))
+(defn- set-f64 [^MemorySegment seg ^long off ^double v]
+  (.set seg ValueLayout/JAVA_DOUBLE_UNALIGNED off v))
+(defn- set-f32 [^MemorySegment seg ^long off v]
+  (.set seg ValueLayout/JAVA_FLOAT_UNALIGNED off (float v)))
+
 (defn read
   "Reads a value of type t from p. The default byte offset is zero.
 
@@ -1098,21 +1134,20 @@
    (let [off (long offset)
          ^MemorySegment seg (accessible p)]
      (case t
-       (:int :int32) (long (.get seg ValueLayout/JAVA_INT_UNALIGNED off))
-       (:uint :uint32) (bit-and (long (.get seg ValueLayout/JAVA_INT_UNALIGNED off)) 0xFFFFFFFF)
-       (:long :ulong :int64 :uint64 :size_t :ssize_t)
-       (.get seg ValueLayout/JAVA_LONG_UNALIGNED off)
+       (:int :int32) (get-i32 seg off)
+       (:uint :uint32) (bit-and (get-i32 seg off) 0xFFFFFFFF)
+       (:long :ulong :int64 :uint64 :size_t :ssize_t) (get-i64 seg off)
        ;; read as a long and wrap it: the address layout's getter costs twice
        ;; as much in a native image
-       :pointer (MemorySegment/ofAddress (.get seg ValueLayout/JAVA_LONG_UNALIGNED off))
-       :int16 (long (.get seg ValueLayout/JAVA_SHORT_UNALIGNED off))
-       :uint16 (bit-and (long (.get seg ValueLayout/JAVA_SHORT_UNALIGNED off)) 0xFFFF)
-       :bool (not (zero? (long (.get seg ValueLayout/JAVA_BYTE off))))
-      (:int8 :byte :char) (long (.get seg ValueLayout/JAVA_BYTE off))
-       :uint8 (bit-and (long (.get seg ValueLayout/JAVA_BYTE off)) 0xFF)
-       :double (.get seg ValueLayout/JAVA_DOUBLE_UNALIGNED off)
-       :float (.get seg ValueLayout/JAVA_FLOAT_UNALIGNED off)
-       :string (string-at (.get seg ValueLayout/JAVA_LONG_UNALIGNED off))
+       :pointer (MemorySegment/ofAddress (get-i64 seg off))
+       :int16 (get-i16 seg off)
+       :uint16 (bit-and (get-i16 seg off) 0xFFFF)
+       :bool (not (zero? (get-i8 seg off)))
+       (:int8 :byte :char) (get-i8 seg off)
+       :uint8 (bit-and (get-i8 seg off) 0xFF)
+       :double (get-f64 seg off)
+       :float (get-f32 seg off)
+       :string (string-at (get-i64 seg off))
        (if (layout-vector? t)
          (let [dec (cached-codec :decode (layout-of t))]
            (dec (if (zero? off) seg (.asSlice seg off))))
@@ -1128,15 +1163,14 @@
    (let [off (long offset)
          ^MemorySegment seg (accessible p)]
      (case t
-       (:int :uint :int32 :uint32) (.set seg ValueLayout/JAVA_INT_UNALIGNED off (unchecked-int (long v)))
-       (:long :ulong :int64 :uint64 :size_t :ssize_t)
-       (.set seg ValueLayout/JAVA_LONG_UNALIGNED off (long v))
-       :pointer (.set seg ValueLayout/JAVA_LONG_UNALIGNED off (long (pointer-address v)))
-       (:int16 :uint16) (.set seg ValueLayout/JAVA_SHORT_UNALIGNED off (unchecked-short (long v)))
-       :bool (.set seg ValueLayout/JAVA_BYTE off (unchecked-byte (if v 1 0)))
-       (:int8 :uint8 :byte :char) (.set seg ValueLayout/JAVA_BYTE off (unchecked-byte (long v)))
-       :double (.set seg ValueLayout/JAVA_DOUBLE_UNALIGNED off (double v))
-       :float (.set seg ValueLayout/JAVA_FLOAT_UNALIGNED off (float v))
+       (:int :uint :int32 :uint32) (set-i32 seg off (long v))
+       (:long :ulong :int64 :uint64 :size_t :ssize_t) (set-i64 seg off (long v))
+       :pointer (set-i64 seg off (long (pointer-address v)))
+       (:int16 :uint16) (set-i16 seg off (long v))
+       :bool (set-i8 seg off (if v 1 0))
+       (:int8 :uint8 :byte :char) (set-i8 seg off (long v))
+       :double (set-f64 seg off (double v))
+       :float (set-f32 seg off v)
        (if (layout-vector? t)
          (let [lay (layout-of t)]
            ((cached-codec :encode lay) nil (if (zero? off) seg (.asSlice seg off)) v))
@@ -1293,23 +1327,24 @@
 
 (defn- scalar-reader
   "Returns a function of a segment that reads scalar type t at offset. The
-  result matches read for the same type."
+  result matches read for the same type. One function per type, so a codec
+  slot dispatches nothing per call; each body is a call to the shared access
+  site for its width."
   [t ^long offset]
   (let [off offset]
     (case t
-      (:int :int32) (fn [^MemorySegment seg] (long (.get seg ValueLayout/JAVA_INT_UNALIGNED off)))
-      (:uint :uint32) (fn [^MemorySegment seg] (bit-and (long (.get seg ValueLayout/JAVA_INT_UNALIGNED off)) 0xFFFFFFFF))
-      (:long :ulong :int64 :uint64 :size_t :ssize_t)
-      (fn [^MemorySegment seg] (.get seg ValueLayout/JAVA_LONG_UNALIGNED off))
-      :pointer (fn [^MemorySegment seg] (MemorySegment/ofAddress (.get seg ValueLayout/JAVA_LONG_UNALIGNED off)))
-      :int16 (fn [^MemorySegment seg] (long (.get seg ValueLayout/JAVA_SHORT_UNALIGNED off)))
-      :uint16 (fn [^MemorySegment seg] (bit-and (long (.get seg ValueLayout/JAVA_SHORT_UNALIGNED off)) 0xFFFF))
-      :bool (fn [^MemorySegment seg] (not (zero? (long (.get seg ValueLayout/JAVA_BYTE off)))))
-      (:int8 :byte :char) (fn [^MemorySegment seg] (long (.get seg ValueLayout/JAVA_BYTE off)))
-      :uint8 (fn [^MemorySegment seg] (bit-and (long (.get seg ValueLayout/JAVA_BYTE off)) 0xFF))
-      :double (fn [^MemorySegment seg] (.get seg ValueLayout/JAVA_DOUBLE_UNALIGNED off))
-      :float (fn [^MemorySegment seg] (.get seg ValueLayout/JAVA_FLOAT_UNALIGNED off))
-      :string (fn [^MemorySegment seg] (string-at (.get seg ValueLayout/JAVA_LONG_UNALIGNED off)))
+      (:int :int32) (fn [^MemorySegment seg] (get-i32 seg off))
+      (:uint :uint32) (fn [^MemorySegment seg] (bit-and (get-i32 seg off) 0xFFFFFFFF))
+      (:long :ulong :int64 :uint64 :size_t :ssize_t) (fn [^MemorySegment seg] (get-i64 seg off))
+      :pointer (fn [^MemorySegment seg] (MemorySegment/ofAddress (get-i64 seg off)))
+      :int16 (fn [^MemorySegment seg] (get-i16 seg off))
+      :uint16 (fn [^MemorySegment seg] (bit-and (get-i16 seg off) 0xFFFF))
+      :bool (fn [^MemorySegment seg] (not (zero? (get-i8 seg off))))
+      (:int8 :byte :char) (fn [^MemorySegment seg] (get-i8 seg off))
+      :uint8 (fn [^MemorySegment seg] (bit-and (get-i8 seg off) 0xFF))
+      :double (fn [^MemorySegment seg] (get-f64 seg off))
+      :float (fn [^MemorySegment seg] (get-f32 seg off))
+      :string (fn [^MemorySegment seg] (string-at (get-i64 seg off)))
       (throw (ex-info (str "babashka.ffi: cannot read type " t) {:type t})))))
 
 (defn- scalar-writer
@@ -1318,16 +1353,14 @@
   [t ^long offset]
   (let [off offset]
     (case t
-      (:int :uint :int32 :uint32)
-      (fn [^MemorySegment seg v] (.set seg ValueLayout/JAVA_INT_UNALIGNED off (unchecked-int (long v))))
-      (:long :ulong :int64 :uint64 :size_t :ssize_t)
-      (fn [^MemorySegment seg v] (.set seg ValueLayout/JAVA_LONG_UNALIGNED off (long v)))
-      :pointer (fn [^MemorySegment seg v] (.set seg ValueLayout/JAVA_LONG_UNALIGNED off (long (pointer-address v))))
-      (:int16 :uint16) (fn [^MemorySegment seg v] (.set seg ValueLayout/JAVA_SHORT_UNALIGNED off (unchecked-short (long v))))
-      :bool (fn [^MemorySegment seg v] (.set seg ValueLayout/JAVA_BYTE off (unchecked-byte (if v 1 0))))
-      (:int8 :uint8 :byte :char) (fn [^MemorySegment seg v] (.set seg ValueLayout/JAVA_BYTE off (unchecked-byte (long v))))
-      :double (fn [^MemorySegment seg v] (.set seg ValueLayout/JAVA_DOUBLE_UNALIGNED off (double v)))
-      :float (fn [^MemorySegment seg v] (.set seg ValueLayout/JAVA_FLOAT_UNALIGNED off (float v)))
+      (:int :uint :int32 :uint32) (fn [^MemorySegment seg v] (set-i32 seg off (long v)))
+      (:long :ulong :int64 :uint64 :size_t :ssize_t) (fn [^MemorySegment seg v] (set-i64 seg off (long v)))
+      :pointer (fn [^MemorySegment seg v] (set-i64 seg off (long (pointer-address v))))
+      (:int16 :uint16) (fn [^MemorySegment seg v] (set-i16 seg off (long v)))
+      :bool (fn [^MemorySegment seg v] (set-i8 seg off (if v 1 0)))
+      (:int8 :uint8 :byte :char) (fn [^MemorySegment seg v] (set-i8 seg off (long v)))
+      :double (fn [^MemorySegment seg v] (set-f64 seg off (double v)))
+      :float (fn [^MemorySegment seg v] (set-f32 seg off v))
       (throw (ex-info (str "babashka.ffi: cannot write type " t) {:type t})))))
 
 (defn- encoder
