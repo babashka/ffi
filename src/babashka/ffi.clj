@@ -1253,6 +1253,36 @@
      (MemorySegment/copy arr 0 seg layout (long offset) (java.lang.reflect.Array/getLength arr))
      nil)))
 
+(defn copy
+  "Copies bytes from pointer src to pointer dst. Without n, copies the byte
+  size of src; dst must be at least that large. With n, copies n bytes.
+  Returns nil.
+
+  Both pointers need a size. A pointer from C has none: give it one with
+  reinterpret. To copy into the middle of dst, slice it first:
+
+      (ffi/copy src (ffi/slice dst 16) n)
+
+  The regions may overlap; the copy behaves as memmove."
+  ([src dst]
+   (let [^MemorySegment s (accessible src)]
+     (copy s dst (.byteSize s))))
+  ([src dst n]
+   (let [^MemorySegment s (accessible src)
+         ^MemorySegment d (accessible dst)]
+     (MemorySegment/copy s 0 d 0 (long n))
+     nil)))
+
+(defn clone
+  "Allocates a copy of pointer src in arena, with the same size, and returns
+  the new pointer. src needs a size; give a pointer from C one with
+  reinterpret."
+  ^MemorySegment [arena src]
+  (let [^MemorySegment s (accessible src)
+        d (alloc arena (.byteSize s))]
+    (copy s d)
+    d))
+
 (defn byte-buffer
   "Returns a java.nio.ByteBuffer view of n bytes of native memory at pointer p.
   The buffer and native memory share the same bytes.
