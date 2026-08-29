@@ -734,25 +734,28 @@ Use `callback` to pass a Clojure function to C:
 as it owns the memory that `alloc` returns. The pointer is valid until the
 arena releases it.
 
+`callback` has no separate release function. The owning arena controls the
+pointer lifetime.
+
 Choose the arena for the thread that calls back:
 
-- A confined arena accepts a call from its own thread only. Use one when C
-  calls back during a call that you make, such as the comparison function
-  above. This arena is the cheapest one.
-- A shared arena accepts a call from any thread. Use one when C calls back
-  from a thread of its own, such as an event loop.
+- A confined arena accepts a call from its own thread only. If C calls back
+  during a call that you make, use this arena. The comparison function above
+  uses this pattern. This arena is the cheapest one.
+- A shared arena accepts a call from any thread. If C calls back from its own
+  thread, use this arena, such as for an event loop.
 - A global arena never releases the pointer. Use one for a callback that
   lives as long as the process, such as a signal handler.
 - An automatic arena releases the pointer when the pointer itself becomes
-  unreachable. The garbage collector cannot see the copy that C holds, so
-  use one only when a reference of yours outlives every call that C makes.
+  unreachable. The garbage collector cannot see the copy that C holds. Use
+  this arena only when your reference outlives every call that C makes.
 
 A `:pointer` callback argument comes from C and has size zero.
 
 Before you read the memory, specify its size with `reinterpret`.
 
-If C keeps the callback, keep its pointer. Unregister the callback before
-the arena releases it.
+If C keeps the callback, keep its pointer. Before the arena releases the
+callback, unregister it.
 
 A `:bool` callback argument becomes `true` or `false`.
 
