@@ -74,13 +74,16 @@
    [:pointer :pointer] :pointer))
 
 ;; PyMethodDef {const char* ml_name; PyCFunction ml_meth; int ml_flags;
-;;              const char* ml_doc} - 32 bytes on 64-bit
+;;              const char* ml_doc}: a layout, so the offsets are its business
+(def py-method-def
+  [:struct [[:ml-name :string] [:ml-meth :pointer] [:ml-flags :int] [:ml-doc :pointer]]])
 (def METH-VARARGS 1)
-(def mdef (ffi/alloc (ffi/global-arena) 32))
-(ffi/write mdef :pointer (ffi/string->ptr (ffi/global-arena) "bb_fib") 0)
-(ffi/write mdef :pointer bb-fib 8)
-(ffi/write mdef :int METH-VARARGS 16)
-(ffi/write mdef :pointer ffi/null 24)
+(def mdef (ffi/alloc (ffi/global-arena) py-method-def))
+(ffi/write mdef py-method-def
+           {:ml-name (ffi/string->ptr (ffi/global-arena) "bb_fib")
+            :ml-meth bb-fib
+            :ml-flags METH-VARARGS
+            :ml-doc ffi/null})
 
 (def py-fn (py-cfunction-new mdef ffi/null ffi/null))
 (py-dict-set-item globals "bb_fib" py-fn)

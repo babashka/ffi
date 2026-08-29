@@ -593,6 +593,10 @@ argument:
 (ffi/read p :double 8)
 ```
 
+These byte offsets are for a buffer with no shape. For a struct or an array,
+describe the memory with a layout and use `place` to resolve its members: see
+[Read and write a struct](#read-and-write-a-struct).
+
 `read` supports each listed type except `:void`. `write` also excludes
 `:string`. Write a string address as `:pointer`.
 
@@ -721,7 +725,10 @@ Use `place` for one member. It takes the layout and a member name, or a
 path of member names and array indices into nested layouts, and returns a
 place: the member resolved once. `read` and `write` take a place where they
 take a type, so the offset and the type come from the layout and there is
-nothing to compute. Make a place once and keep it, as with `cfn`:
+nothing to compute. Make a place once and keep it, as with `cfn`.
+
+Use a place for a member. Use the layout size for the stride over an array of
+structs.
 
 ```clojure
 (def bone [:struct [[:name [:array :char 32]] [:parent :int]]])
@@ -732,7 +739,7 @@ nothing to compute. Make a place once and keep it, as with `cfn`:
 
 (ffi/read p (ffi/place outer [:msgs 1 :data :result]))   ; through an array and a union
 (ffi/write p (ffi/place outer [:msgs 1]) {:msg 1 :easy nil :data [:result 0]})   ; a whole nested struct
-(ffi/read arr (ffi/place point :y) (* i 8))              ; the byte offset still composes
+(ffi/read arr (ffi/place point :y) (* i (ffi/sizeof point)))   ; the byte offset still composes: a stride
 ```
 
 A path that names nothing is an error when the place is made. A layout is
