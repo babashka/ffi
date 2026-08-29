@@ -467,3 +467,132 @@
             (write-array dst :int (int-array [1 2 3 4 5 6 7 8]))
             (copy dst (ffi/slice dst 4) 16)
             (is (= [1 1 2 3 4 6 7 8] (vec (read-array dst :int 8))))))))))
+
+;; -- unions -------------------------------------------------------------------
+
+(def union-layout?
+  "[:union members] arrived after the first release; an older built-in
+  namespace does not know the kind."
+  (delay (try (= 8 (ffi/sizeof [:union [[:a :int] [:b :double]]])) (catch Exception _ false))))
+
+(def tagged [:struct [[:tag :int] [:u [:union [[:i :int] [:d :double] [:s :pointer]]]]]])
+
+(deftest union-layout-test
+  (if-not @union-layout?
+    (println "union layouts skipped: this babashka predates them")
+    (let [data [:union [[:whatever :pointer] [:result :int]]]
+          curl-msg [:struct [[:msg :int] [:easy :pointer] [:data data]]]]
+      (testing "a union is as large as its largest member, at its strictest alignment"
+        (is (= 24 (ffi/sizeof curl-msg)))
+        (is (= [8 8] [(ffi/sizeof [:union [[:c :char] [:d :double]]])
+                      (ffi/alignof [:union [[:c :char] [:d :double]]])]))
+        (is (= [4 2] [(ffi/sizeof [:union [[:a [:array :char 3]] [:b :int16]]])
+                      (ffi/alignof [:union [[:a [:array :char 3]] [:b :int16]]])])))
+      (testing "read gives the union's bytes as a pointer; the caller reads the member"
+        (with-open [arena (ffi/confined-arena)]
+          (let [p (ffi/alloc arena curl-msg)]
+            (ffi/write p curl-msg {:msg 1 :easy nil :data [:result 7]})
+            (let [{:keys [msg data]} (ffi/read p curl-msg)]
+              (is (= 1 msg))
+              (is (ffi/pointer? data))
+              (is (= 8 (ffi/size data)))
+              (is (= 7 (ffi/read data :int)))
+              (is (= (+ (ffi/address p) 16) (ffi/address data))))
+            (ffi/write p curl-msg {:msg 1 :easy nil :data [:whatever (ffi/string->ptr arena "x")]})
+            (is (= "x" (ffi/ptr->string (ffi/read (:data (ffi/read p curl-msg)) :pointer)))))))
+      (testing "write takes a pair, [member value]"
+        (with-open [arena (ffi/confined-arena)]
+          (let [p (ffi/alloc arena data)]
+            (ffi/write p data [:result 9])
+            (is (= 9 (ffi/read p :int)))
+            (is (thrown-with-msg? Exception #"is a pair \[member value\]" (ffi/write p data {:result 1})))
+            (is (thrown-with-msg? Exception #"is a pair \[member value\]" (ffi/write p data [:result 1 :whatever nil])))
+            (is (thrown-with-msg? Exception #"unknown member :nope" (ffi/write p data [:nope 1])))
+            (is (thrown-with-msg? Exception #"is a pair" (ffi/write p data 5))))))
+      (testing "a union is not passed by value, bare or inside a struct"
+        (is (thrown-with-msg? Exception #"not passed by value" (ffi/cfn "abs" [data] :int)))
+        (is (thrown-with-msg? Exception #"not passed by value" (ffi/cfn "abs" [:int] data)))
+        (is (thrown-with-msg? Exception #"not passed by value" (ffi/cfn "abs" [curl-msg] :int)))
+        (is (fn? (ffi/cfn "abs" [:pointer] :int))))
+      (testing "a malformed union layout is an error at resolve time"
+        (is (thrown-with-msg? Exception #"is \[:union members\]" (ffi/sizeof [:union [[:a :int]] :x])))
+        (is (thrown-with-msg? Exception #"names a member twice" (ffi/sizeof [:union [[:a :int] [:a :int]]])))))))
+
+(deftest union-in-struct-c-test
+  (if-not (and @union-layout? (true? @struct-lib))
+    (println "union C test skipped:"
+             (cond (not @union-layout?) "this babashka predates union layouts"
+                   (string? @struct-lib) @struct-lib
+                   :else "unknown reason"))
+    (let [fill (ffi/cfn "tagged_fill" [:pointer :int] :void)
+          value (ffi/cfn "tagged_value" [:pointer] :double)]
+      (testing "the compiler and the layout agree on where the union sits"
+        (with-open [arena (ffi/confined-arena)]
+          (let [p (ffi/alloc arena tagged)]
+            (is (= 16 (ffi/sizeof tagged)))
+            (fill p 0)
+            (is (= 42 (ffi/read (:u (ffi/read p tagged)) :int)))
+            (fill p 1)
+            (is (= 2.5 (ffi/read (:u (ffi/read p tagged)) :double)))
+            (fill p 2)
+            (is (= "union" (ffi/ptr->string (ffi/read (:u (ffi/read p tagged)) :pointer))))
+            ;; and the other way: C reads what the layout wrote
+            (ffi/write p tagged {:tag 1 :u [:d 6.5]})
+            (is (= 6.5 (value p)))
+            (ffi/write p tagged {:tag 0 :u [:i 9]})
+            (is (= 9.0 (value p)))))))))
+
+;; -- the public API is the documented one --------------------------------------
+
+(deftest public-api-is-documented-test
+  ;; babashka exposes every public var of this namespace, so a var that is
+  ;; public by accident becomes API. API.md is generated from the public vars
+  ;; and reviewed in every change, so it serves as the list of intent: a new
+  ;; public var fails here until `bb quickdoc` is run on purpose. JVM only:
+  ;; in babashka the built-in namespace can be older than this checkout.
+  (when-not (System/getProperty "babashka.version")
+  (let [doc (slurp "API.md")
+        documented (set (map second (re-seq #"<a name=\"babashka.ffi/([^\"]+)\"" doc)))
+        public (set (map name (keys (ns-publics 'babashka.ffi))))]
+    (is (empty? (sort (remove documented public)))
+        "public vars missing from API.md: run bb quickdoc, and check they are meant to be public")
+    (is (empty? (sort (remove public documented)))
+        "API.md documents vars that are no longer public: run bb quickdoc"))))
+
+(deftest nested-value-error-path-test
+  ;; a wrong value deep in a layout names its place, so the reader of the
+  ;; message does not have to search the structure for it
+  (if-not @union-layout?
+    (println "nested error path skipped: this babashka predates union layouts")
+    (let [data [:union [[:whatever :pointer] [:result :int]]]
+          curl-msg [:struct [[:msg :int] [:easy :pointer] [:data data]]]
+          outer [:struct [[:id :int] [:msgs [:array curl-msg 2]]]]
+          ok {:msg 1 :easy nil :data [:result 0]}]
+      (with-open [arena (ffi/confined-arena)]
+        (let [p (ffi/alloc arena outer)]
+          (is (thrown-with-msg? Exception #"at \[:msgs 0 :data\], union value is a pair"
+                                (ffi/write p outer {:id 1 :msgs [(assoc ok :data [:foo 1 :baz 2]) ok]})))
+          (is (thrown-with-msg? Exception #"at \[:msgs 1 :data\], union value names unknown member :foo"
+                                (ffi/write p outer {:id 1 :msgs [ok (assoc ok :data [:foo 1])]})))
+          (is (thrown-with-msg? Exception #"at \[:msgs 1\], struct value misses field :easy"
+                                (ffi/write p outer {:id 1 :msgs [ok (dissoc ok :easy)]})))
+          (is (thrown-with-msg? Exception #"at \[:msgs\], array value needs 2 elements"
+                                (ffi/write p outer {:id 1 :msgs [ok]})))
+          ;; a :string field with a bare string, and a scalar the type cannot take
+          (let [item [:struct [[:id :int] [:name :string] [:q :pointer]]]
+                bag [:struct [[:items [:array item 2]]]]
+                fine {:id 1 :name (ffi/string->ptr arena "x") :q nil}
+                b (ffi/alloc arena bag)]
+            (is (thrown-with-msg? Exception #"at \[:items 0 :name\], a :string field holds a pointer"
+                                  (ffi/write b bag {:items [(assoc fine :name "bare") fine]})))
+            (is (thrown-with-msg? Exception #"at \[:items 1 :id\], a :int field cannot take \"two\""
+                                  (ffi/write b bag {:items [fine (assoc fine :id "two")]})))
+            (is (thrown-with-msg? Exception #"at \[:items 1 :q\], a :pointer field cannot take 42"
+                                  (ffi/write b bag {:items [fine (assoc fine :q 42)]})))
+            ;; the original exception stays as the cause
+            (is (instance? ClassCastException
+                           (ex-cause (try (ffi/write b bag {:items [fine (assoc fine :id "two")]})
+                                          (catch Exception e e))))))
+          ;; the top level has no place to name
+          (is (thrown-with-msg? Exception #"^babashka.ffi: union value"
+                                (ffi/write p data [:foo 1]))))))))
