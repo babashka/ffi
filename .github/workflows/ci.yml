@@ -16,6 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up MSVC for the struct fixture
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Install babashka dev build
         run: |
           bash <(curl -s https://raw.githubusercontent.com/babashka/babashka/master/install) --dev-build --dir . --dynamic
@@ -40,6 +44,10 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up MSVC for the struct fixture
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
 
       - uses: actions/setup-java@v4
         with:

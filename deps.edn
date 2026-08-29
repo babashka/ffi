@@ -1,7 +1,11 @@
 {:paths ["src" "resources"]
  :aliases
  {:test {:extra-paths ["test"]
-         :extra-deps {io.github.cognitect-labs/test-runner
+         ;; fs and process are built into babashka; the JVM run needs them
+         ;; as deps so one test file covers both hosts
+         :extra-deps {babashka/fs {:mvn/version "0.5.34"}
+                      babashka/process {:mvn/version "0.6.25"}
+                      io.github.cognitect-labs/test-runner
                       {:git/tag "v0.5.1"
                        :git/sha "dfb30dd6605cb6c0efc275e1df1736f6e90d4d73"}}
          :jvm-opts ["--enable-native-access=ALL-UNNAMED"]

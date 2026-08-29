@@ -1451,37 +1451,23 @@
          (catch Throwable _ nil))))
 
 (def ^:private libffi
-  "The ffi_prep_cif and ffi_call functions, which accept addresses. A native
-  image uses its linked libffi. On the JVM, the functions use the system
-  libffi."
+  "The ffi_prep_cif and ffi_call functions, which accept addresses. Only a
+  native image reaches this: every caller asks native-image? first, because
+  the FFM linker covers on the JVM what libffi covers in an image."
   (delay
-    (let [entry (or linked-libffi
-                    (when-not native-image?
-                      (try (load-system-library "ffi") (catch Exception _ nil))
-                      (let [prep (find-symbol "ffi_prep_cif")
-                            prep-var (find-symbol "ffi_prep_cif_var")
-                            call (find-symbol "ffi_call")]
-                        (when (and prep prep-var call)
-                          ;; addresses travel as longs: the same carrier as
-                          ;; a pointer, without the pointer checks
-                          {:prep-cif (cfn prep [:long :int :uint :long :long] :int)
-                           :prep-cif-var (cfn prep-var [:long :int :uint :uint :long :long] :int)
-                           :call (cfn call [:long :long :long :long] :void)}))))]
-      (when-not entry
-        (throw (ex-info (if native-image?
-                          "babashka.ffi: this call needs libffi, and this babashka binary was built without it (see bb describe, :libffi/version)"
-                          "babashka.ffi: this call needs libffi, which is not installed on this system")
-                        {})))
-      (when-not @default-abi
-        (throw (ex-info (str "babashka.ffi: libffi calls are not supported on "
-                             (System/getProperty "os.name") " "
-                             (System/getProperty "os.arch"))
-                        {})))
-      entry)))
+    (when-not linked-libffi
+      (throw (ex-info "babashka.ffi: this call needs libffi, and this babashka binary was built without it (see bb describe, :libffi/version)"
+                      {})))
+    (when-not @default-abi
+      (throw (ex-info (str "babashka.ffi: libffi calls are not supported on "
+                           (System/getProperty "os.name") " "
+                           (System/getProperty "os.arch"))
+                      {})))
+    linked-libffi))
 
 (defn- libffi-available?
-  "True when this process can make libffi calls: the linked libffi in a
-  native image, the system libffi on the JVM."
+  "True when this process can make libffi calls, which means the linked
+  libffi of a native image."
   []
   (try @libffi true (catch Exception _ false)))
 
