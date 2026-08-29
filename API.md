@@ -19,7 +19,6 @@
     -  [`ptr->string`](#babashka.ffi/ptr->string) - Returns the NUL-terminated UTF-8 string at p.
     -  [`read`](#babashka.ffi/read) - Reads a value of type t from p.
     -  [`read-array`](#babashka.ffi/read-array) - Copies n elements of type t from pointer p, at byte offset (default 0), into a new Java array.
-    -  [`read-bytes`](#babashka.ffi/read-bytes) - Copies n bytes from pointer p at byte offset (default 0) into a new byte array.
     -  [`reinterpret`](#babashka.ffi/reinterpret) - Returns a view of segment seg with byte size size.
     -  [`segment`](#babashka.ffi/segment) - Returns a pointer to addr.
     -  [`shared-arena`](#babashka.ffi/shared-arena) - Returns an arena for multiple threads.
@@ -29,7 +28,6 @@
     -  [`string->ptr`](#babashka.ffi/string->ptr) - Copies s into arena as a NUL-terminated UTF-8 string and returns its pointer.
     -  [`write`](#babashka.ffi/write) - Writes v as type t to p.
     -  [`write-array`](#babashka.ffi/write-array) - Copies Java array arr into memory at pointer p, at byte offset (default 0), as elements of type t.
-    -  [`write-bytes`](#babashka.ffi/write-bytes) - Copies byte array arr into memory at pointer p at byte offset (default 0).
 
 -----
 # <a name="babashka.ffi">babashka.ffi</a>
@@ -178,7 +176,7 @@ invalid memory access can stop the process.
 
 The byte order is big-endian, as it is for each new ByteBuffer. If you need a
 different byte order, set it with .order.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1277-L1288">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1256-L1267">Source</a></sub></p>
 
 ## <a name="babashka.ffi/callback">`callback`</a>
 ``` clojure
@@ -208,7 +206,7 @@ automatic arena only when your reference outlives every call that C can make.
 
 CAUTION: C can call the pointer until its arena releases it, and not one
 instruction longer. Unregister the callback first.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1885-L1969">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1864-L1948">Source</a></sub></p>
 
 ## <a name="babashka.ffi/cfn">`cfn`</a>
 ``` clojure
@@ -366,7 +364,7 @@ names such as libz.so.1. Returns the same library map as load-library.
 
 
 The NULL pointer.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1296-L1298">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1275-L1277">Source</a></sub></p>
 
 ## <a name="babashka.ffi/null?">`null?`</a>
 ``` clojure
@@ -375,7 +373,7 @@ The NULL pointer.
 Function.
 
 Returns true for a NULL pointer. Returns false for all other pointers.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1300-L1303">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1279-L1282">Source</a></sub></p>
 
 ## <a name="babashka.ffi/pointer?">`pointer?`</a>
 ``` clojure
@@ -437,18 +435,7 @@ eight-byte types fill a long[], and :pointer fills a long[] of addresses.
 
 For an array of structs, or for elements decoded the way read decodes
 them, use read with an [:array t n] layout.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1238-L1257">Source</a></sub></p>
-
-## <a name="babashka.ffi/read-bytes">`read-bytes`</a>
-``` clojure
-(read-bytes p n)
-(read-bytes p n offset)
-```
-Function.
-
-Copies n bytes from pointer p at byte offset (default 0) into a new byte
-array.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1184-L1193">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1217-L1236">Source</a></sub></p>
 
 ## <a name="babashka.ffi/reinterpret">`reinterpret`</a>
 ``` clojure
@@ -543,7 +530,7 @@ Function.
 
 Copies s into arena as a NUL-terminated UTF-8 string and returns its
 pointer. The arena controls the lifetime of the string.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1290-L1294">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1269-L1273">Source</a></sub></p>
 
 ## <a name="babashka.ffi/write">`write`</a>
 ``` clojure
@@ -571,15 +558,4 @@ Copies Java array arr into memory at pointer p, at byte offset (default
 The copy is a memcpy, as in read-array, and the array must be the Java
 array for the type: an int[] for :int, a long[] for :long or :pointer, a
 byte[] for :char.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1259-L1275">Source</a></sub></p>
-
-## <a name="babashka.ffi/write-bytes">`write-bytes`</a>
-``` clojure
-(write-bytes p arr)
-(write-bytes p arr offset)
-```
-Function.
-
-Copies byte array arr into memory at pointer p at byte offset (default
-0).
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1195-L1203">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1238-L1254">Source</a></sub></p>

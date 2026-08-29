@@ -160,7 +160,7 @@
         (let [p (ffi/alloc arena 8)]
           ;; every byte non-NUL: a scan that respects the size must throw,
           ;; and must report the size rather than the larger limit
-          (ffi/write-bytes p (byte-array (repeat 8 (byte 65))))
+          (dotimes [i 8] (ffi/write p :int8 65 i))
           (is (thrown-with-msg? Exception #"no NUL byte in the first 8 bytes"
                                 (ffi/ptr->string p 64)))))
       (testing "NULL is nil, with and without a limit"

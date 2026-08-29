@@ -590,20 +590,14 @@ argument:
 `read` supports each listed type except `:void`. `write` also excludes
 `:string`. Write a string address as `:pointer`.
 
-Use `read-bytes` and `write-bytes` to copy complete byte arrays between
-native memory and the JVM. Both functions accept an optional byte offset:
-
-```clojure
-(ffi/write-bytes p (byte-array [1 2 3 4]))
-(ffi/read-bytes p 4)
-;;=> byte array [1 2 3 4]
-```
-
 Use `read-array` and `write-array` to copy elements of one scalar type between
 native memory and a Java primitive array. The copy uses `memcpy` and does not
-decode each element:
+decode each element. Both functions accept an optional byte offset:
 
 ```clojure
+(ffi/write-array p :byte (byte-array [1 2 3 4]))
+(ffi/read-array p :byte 4)
+;;=> byte array [1 2 3 4]
 (ffi/write-array p :int (int-array [1 2 3 4]))
 (ffi/read-array p :int 4)
 ;;=> int array [1 2 3 4]
