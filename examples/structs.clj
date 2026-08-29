@@ -16,8 +16,9 @@
 (println "div(7, 2) =" (c-div 7 2))
 (println "sizeof div_t =" (ffi/sizeof div-t) "bytes, aligned to" (ffi/alignof div-t))
 
-;; Compare a struct call through libffi with a primitive call through a
-;; trampoline.
+;; Compare a struct call with a primitive call. In a native image the struct
+;; call goes through libffi and the primitive call through a trampoline. On
+;; the JVM both go through the FFM linker.
 
 (def N 200000)
 

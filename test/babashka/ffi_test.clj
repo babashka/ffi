@@ -27,6 +27,26 @@
     (testing "a C call through the default lookup"
       (is (= 5 (strlen "hello"))))))
 
+(def native-image?
+  (boolean (System/getProperty "org.graalvm.nativeimage.imagecode")))
+
+(deftest struct-call-test
+  (if-not @default-lookup?
+    (println "struct call skipped: this build has no default lookup")
+    (let [div-t [:struct [[:quot :int] [:rem :int]]]
+          c-div (ffi/cfn "div" [:int :int] div-t)]
+      (testing "libc div returns a struct by value, as a map"
+        (is (= [{:quot 3 :rem 1} {:quot -3 :rem -1}]
+               [(c-div 7 2) (c-div -7 2)])))
+      (testing "the JVM links a struct call itself, an image asks libffi"
+        (is (= (if native-image? :libffi :ffm)
+               (:babashka.ffi/backend (meta c-div)))))
+      (testing "a struct value must name every field and no other"
+        (let [f (ffi/cfn "div" [div-t] :void)]
+          (is (thrown-with-msg? Exception #"misses field :rem" (f {:quot 1})))
+          (is (thrown-with-msg? Exception #"has unknown field :x" (f {:quot 1 :rem 2 :x 3})))
+          (is (thrown-with-msg? Exception #"needs a map of" (f [1 2]))))))))
+
 (deftest memory-test
   (testing "an arena allocation roundtrip"
     (with-open [arena (ffi/confined-arena)]
