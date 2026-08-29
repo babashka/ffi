@@ -304,8 +304,8 @@
   A pointer returned by C has no size, so the read runs to the first NUL
   byte. This is what a :string return type does.
 
-  Give a limit in bytes. If no NUL appears within the limit, this function
-  throws. A limit only narrows: a pointer that knows its own size keeps it.
+  Give a limit in bytes. If no NUL appears within the limit, `ptr->string`
+  throws an error. A limit only narrows: a pointer with a known size keeps it.
 
   CAUTION: Without a limit, ptr->string can read past a buffer that has no
   NUL byte. This can stop the process."
