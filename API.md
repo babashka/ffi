@@ -186,10 +186,11 @@ Choose the arena for the thread that calls back:
 
     (ffi/callback (ffi/shared-arena) f [:pointer] :void)
 
-A shared arena accepts a call from any thread, which is what C usually
-does. A confined arena accepts a call from its own thread only. If C calls
-back during a call that you make, use this arena, such as for a comparison
-function. A global arena never releases the pointer.
+A shared arena allows C to invoke the callback from any thread, including a
+thread that your code did not create. Use it for asynchronous callbacks, such
+as event-loop notifications. A confined arena accepts a call from its own
+thread only. If C calls back during a call that you make, use this arena, such
+as for a comparison function. A global arena never releases the pointer.
 
 An automatic arena releases the pointer once the pointer itself becomes
 unreachable. The garbage collector cannot see the copy that C holds. Use an
@@ -197,7 +198,7 @@ automatic arena only when your reference outlives every call that C can make.
 
 CAUTION: C can call the pointer until its arena releases it, and not one
 instruction longer. Unregister the callback first.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1681-L1764">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1681-L1765">Source</a></sub></p>
 
 ## <a name="babashka.ffi/cfn">`cfn`</a>
 ``` clojure

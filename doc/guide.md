@@ -742,8 +742,9 @@ Choose the arena for the thread that calls back:
 - A confined arena accepts a call from its own thread only. If C calls back
   during a call that you make, use this arena. The comparison function above
   uses this pattern. This arena is the cheapest one.
-- A shared arena accepts a call from any thread. If C calls back from its own
-  thread, use this arena, such as for an event loop.
+- A shared arena allows C to invoke the callback from any thread, including a
+  thread that your code did not create. Use it for asynchronous callbacks, such
+  as event-loop notifications.
 - A global arena never releases the pointer. Use one for a callback that
   lives as long as the process, such as a signal handler.
 - An automatic arena releases the pointer when the pointer itself becomes

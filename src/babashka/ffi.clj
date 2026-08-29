@@ -1689,10 +1689,11 @@
 
       (ffi/callback (ffi/shared-arena) f [:pointer] :void)
 
-  A shared arena accepts a call from any thread, which is what C usually
-  does. A confined arena accepts a call from its own thread only. If C calls
-  back during a call that you make, use this arena, such as for a comparison
-  function. A global arena never releases the pointer.
+  A shared arena allows C to invoke the callback from any thread, including a
+  thread that your code did not create. Use it for asynchronous callbacks, such
+  as event-loop notifications. A confined arena accepts a call from its own
+  thread only. If C calls back during a call that you make, use this arena, such
+  as for a comparison function. A global arena never releases the pointer.
 
   An automatic arena releases the pointer once the pointer itself becomes
   unreachable. The garbage collector cannot see the copy that C holds. Use an
