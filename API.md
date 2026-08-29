@@ -1,7 +1,5 @@
 # Table of contents
 -  [`babashka.ffi`](#babashka.ffi)  - Call functions in native shared libraries.
-    -  [`->Place`](#babashka.ffi/->place)
-    -  [`Place`](#babashka.ffi/place)
     -  [`address`](#babashka.ffi/address) - Returns the native address of pointer p as a Clojure long.
     -  [`alignof`](#babashka.ffi/alignof) - Returns the alignment, in bytes, of type keyword t or of a struct layout.
     -  [`alloc`](#babashka.ffi/alloc) - Allocates zeroed native memory in arena and returns its pointer.
@@ -19,7 +17,7 @@
     -  [`load-system-library`](#babashka.ffi/load-system-library) - Loads a shared library by its short name.
     -  [`null`](#babashka.ffi/null) - The NULL pointer.
     -  [`null?`](#babashka.ffi/null?) - Returns true for a NULL pointer.
-    -  [`place`](#babashka.ffi/place-1) - Returns a place: one member of layout t, resolved once, for read and write to use where they take a type.
+    -  [`place`](#babashka.ffi/place) - Returns a place: one member of layout t, resolved once, for read and write to use where they take a type.
     -  [`pointer?`](#babashka.ffi/pointer?) - Returns true when x is a pointer: a MemorySegment of native memory.
     -  [`ptr->string`](#babashka.ffi/ptr->string) - Returns the NUL-terminated UTF-8 string at p.
     -  [`read`](#babashka.ffi/read) - Reads a value of type t from p.
@@ -125,19 +123,6 @@ doubles. Strings use C strings:
 
 
 
-
-## <a name="babashka.ffi/->place">`->Place`</a>
-``` clojure
-(->Place layout path decode encode)
-```
-Function.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1238-L1240">Source</a></sub></p>
-
-## <a name="babashka.ffi/place">`Place`</a>
-
-
-
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1238-L1240">Source</a></sub></p>
 
 ## <a name="babashka.ffi/address">`address`</a>
 ``` clojure
@@ -436,7 +421,7 @@ Function.
 Returns true for a NULL pointer. Returns false for all other pointers.
 <p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1518-L1521">Source</a></sub></p>
 
-## <a name="babashka.ffi/place-1">`place`</a>
+## <a name="babashka.ffi/place">`place`</a>
 ``` clojure
 (place t)
 (place t path)

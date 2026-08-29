@@ -662,7 +662,6 @@
             (is (thrown-with-msg? Exception #"at \[:msgs 1 :msg\], a :int field cannot take"
                                   (ffi/write q (place outer [:msgs 1 :msg]) "x")))))))))
 
-                                  ((field-writer outer [:msgs 1 :msg]) q "x")))))))))
 
 ;; -- a declared variadic tail ------------------------------------------------
 

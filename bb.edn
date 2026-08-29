@@ -16,8 +16,13 @@
   quickdoc
   {:doc "Invoke quickdoc"
    :requires ([quickdoc.api :as api])
+   ;; the task body is evaluated, so the override map is quoted. The vars
+   ;; a deftype generates are not API: the constructor is private at run
+   ;; time, which static analysis cannot see.
    :task (api/quickdoc {:git/branch "main"
                         :github/repo "https://github.com/babashka/ffi"
+                        :overrides (quote {babashka.ffi {->Place {:no-doc true}
+                                                         Place {:no-doc true}}})
                         :toc true
                         :var-links true
                         :var-pattern :wikilinks})}}}
