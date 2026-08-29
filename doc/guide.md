@@ -1,10 +1,7 @@
 # babashka.ffi
 
-`babashka.ffi` calls functions in native shared libraries.
-
-The API is experimental.
-
-This library is built-in to babashka but it also runs on the JVM.
+`babashka.ffi` calls functions in native shared libraries. The API is
+experimental. The library is built into babashka and also runs on the JVM.
 
 On the JVM, you need to:
 
@@ -146,9 +143,6 @@ dependencies:
 Without a library map, `cfn` searches all loaded libraries and the default
 system lookup. `find-symbol` follows the same rules.
 
-A shared library exports functions and global variables by name. An exported
-name is a symbol.
-
 Use `find-symbol` to access a symbol without a function binding:
 
 ```clojure
@@ -166,9 +160,6 @@ Pass a library map to limit the search to that library and its dependencies:
 ```clojure
 (ffi/find-symbol zlib "zlibVersion")
 ```
-
-Without a library map, `find-symbol` searches all loaded libraries and then
-the default system lookup.
 
 If the selected library and a dependency export the same symbol, the search
 returns the symbol from the selected library.
@@ -208,8 +199,8 @@ or `callback`.
 `cfn` rejects address zero. A function lookup usually returns zero when it
 cannot find the requested function.
 
-CAUTION: Make sure that the address points to a function with the declared
-signature. An incorrect address or signature can stop the process.
+> **_NOTE_** Make sure that the address points to a function with the declared
+> signature. An incorrect address or signature can stop the process.
 
 Use `defcfn` to define and bind a function:
 
@@ -286,7 +277,7 @@ accepts a dynamic expression.
 
 ### Types
 
-The keywords, denoting C types can be used in function signatures.
+Use type keywords that denote C types in function signatures.
 
 | Type | Meaning |
 |---|---|
@@ -294,7 +285,7 @@ The keywords, denoting C types can be used in function signatures.
 | `:int`, `:int32` | Signed 32-bit integer. |
 | `:uint`, `:uint32` | Unsigned 32-bit integer. |
 | `:long`, `:int64` | Signed 64-bit integer. |
-| `:ulong`, `:uint64` | Unsigned 64-bit integer bits in a Clojure long. |
+| `:ulong`, `:uint64` | Unsigned 64-bit integer represented by a Clojure long. |
 | `:int16` | Signed 16-bit integer. |
 | `:uint16` | Unsigned 16-bit integer. |
 | `:int8`, `:byte`, `:char` | Signed 8-bit integer. |
@@ -380,7 +371,7 @@ To map a struct to a value of your own, wrap the binding:
 ```
 
 On the JVM, a struct call uses the FFM linker. The linker builds a downcall
-handle from the struct layout. This requires only the JDK.
+handle from the struct layout.
 
 A native image cannot build this handle at run time. It can call only
 signatures that were registered when the image was built. A struct descriptor
@@ -440,18 +431,18 @@ C:
 - memory from a confined arena created by another thread
 
 On the JVM, a pointer is a `java.lang.foreign.MemorySegment`. Babashka does not
-expose this class to scripts because it significantly increases the binary
+expose this class to scripts because it increases the binary
 size. Use `size`, `address`, `slice`, `reinterpret`, and `pointer?` to work with
 a `MemorySegment` instead.
 
-CAUTION: Do not pass a confined segment from another thread. C can bypass the
-thread-access restriction.
+> **_NOTE_** Do not pass a confined segment from another thread. C can bypass
+> the thread-access restriction.
 
 `alloc` returns a segment with a size. Access outside a nonzero segment throws
 an `IndexOutOfBoundsException`.
 
-C does not report the size of a returned pointer. Thus, the pointer has size
-zero. Memory access functions reject these pointers.
+C does not report the size of a returned pointer. The pointer has size zero.
+Memory access functions reject these pointers.
 
 Before you access the memory, specify its size with `reinterpret`:
 
@@ -530,8 +521,8 @@ deallocator of its own, bind `free`:
 (defcfn c-free "free" [:pointer] :void)
 ```
 
-CAUTION: After the deallocator runs, do not use the pointer. This can corrupt
-memory or stop the process.
+> **_NOTE_** After the deallocator runs, do not use the pointer. This can
+> corrupt memory or stop the process.
 
 ### Arenas
 
@@ -553,7 +544,8 @@ The arena releases `p` and `q` when the body ends. It also releases them if the
 body throws. After release, memory access throws an `IllegalStateException`.
 C functions reject pointers from a closed arena.
 
-CAUTION: While C uses the arena memory, do not close the arena, since C can continue to use the memory after the arena closes.
+> **_NOTE_** Do not close the arena while C uses its memory. C can continue to
+> use the memory after the arena closes.
 
 `alloc` chooses the correct alignment for a type or layout. For a byte count, it
 uses 16-byte alignment. Specify another alignment only when the C API requires
@@ -567,8 +559,8 @@ Use `confined-arena` for memory that should only be accessible from one thread.
 Use `shared-arena` for memory that should be accessible from multiple threads.
 Both arena types work with `with-open`.
 
-CAUTION: While another thread is in a C call that uses the shared arena
-memory, do not close the arena. The call could continue to use the released memory and the arena does not protect you from that
+> **_NOTE_** Do not close the shared arena while another thread is in a C call
+> that uses its memory. The call can continue after the arena closes.
 
 The garbage collector releases an `auto-arena` after it becomes unreachable.
 While C uses its pointers, keep the arena reachable.
@@ -620,8 +612,8 @@ memory:
 
 The buffer and native memory share the same bytes.
 
-CAUTION: After you release the native memory, do not use the buffer. An
-invalid memory access can stop the process.
+> **_NOTE_** After you release the native memory, do not use the buffer. An
+> invalid memory access can stop the process.
 
 Use `sizeof` to get the size of a type:
 
@@ -666,8 +658,8 @@ If memory contains a string pointer, use `read` with `:string`:
 This operation first reads the pointer from `pointer-slot`. Then it reads
 the string at that pointer.
 
-CAUTION: Use only valid addresses and offsets. An invalid memory access can
-stop the process.
+> **_NOTE_** Use only valid addresses and offsets. An invalid memory access can
+> stop the process.
 
 ### Read and write a struct
 
@@ -705,10 +697,8 @@ The byte offset selects one element of an array of structs:
 
 Layouts nest, and a nested struct is a nested map.
 
-A `:string` field differs from the others. Every other field holds its value
-inside the struct, so writing it creates nothing. A `:string` field holds a
-pointer to bytes that live elsewhere and must outlive the write, so those
-bytes need an owner. Allocate them and write the pointer:
+A `:string` field stores a pointer to bytes outside the struct. The bytes must
+remain valid after `write` returns. Allocate the bytes and write the pointer:
 
 ```clojure
 (def named [:struct [[:id :int] [:name :string]]])
@@ -720,8 +710,7 @@ bytes need an owner. Allocate them and write the pointer:
 ;;=> {:id 7, :name "seven"}
 ```
 
-`read` has no such restriction. It copies the bytes out, which raises no
-question of ownership.
+`read` copies the string bytes out. It does not allocate memory.
 
 ### Fixed arrays
 
@@ -838,8 +827,8 @@ callback, unregister it.
 
 A `:bool` callback argument becomes `true` or `false`.
 
-CAUTION: Do not let a callback throw an exception. Catch exceptions inside
-the callback, or the process can stop.
+> **_NOTE_** Do not let a callback throw an exception. Catch exceptions inside
+> the callback, or the process can stop.
 
 ## Performance and limits
 
@@ -853,10 +842,9 @@ Binding metadata shows which backend it uses:
 
 ### On the JVM
 
-On the JVM, the FFM linker supports every signature, structs by value
-included. It creates a downcall handle for each signature, and the JIT
-compiles the handle. This path has no fixed signature limits, and it needs
-nothing on the system beyond the JDK.
+On the JVM, the FFM linker supports every signature, including structs by
+value. It creates a downcall handle for each signature, and the JIT compiles
+the handle. This path has no fixed signature limits.
 
 A primitive call costs about 40 nanoseconds once the loop around it is
 compiled. A struct call uses a confined arena for its arguments and return
@@ -877,16 +865,13 @@ JVM manages. The set covers:
 
 Argument order does not change this set.
 
-The set is a chosen balance between image size and call speed: every shape
-in it adds compiled code to the babashka binary. If a shape you need is
-missing, or a call you make often falls back to libffi, open an issue. The
-set can grow.
+Every shape in the set adds compiled code to the babashka binary. If a shape
+you need is missing, or a call you make often falls back to libffi, open an
+issue. The set can grow.
 
 Everything else calls through libffi: a fixed signature outside the set,
 every variadic call, and every struct call. A libffi call takes about 1
-microsecond. Every babashka binary includes libffi, except the musl static
-binary and a build made with `BABASHKA_LIBFFI=none`. `bb describe` shows the
-version under `:libffi/version`.
+microsecond.
 
 In a build without libffi, a fixed signature outside the set throws.
 Variadic calls use the FFM fallback with these limits:
@@ -909,8 +894,7 @@ Callbacks do not use libffi on either host and keep these limits:
 - A callback cannot use `:float`.
 - A return type can be `:void`, an integer type, or `:double`.
 
-These limits are the same balance between image size and coverage. If a C
-API needs a callback shape outside this set, open an issue.
+If a C API needs a callback shape outside this set, open an issue.
 
 ## Examples
 
