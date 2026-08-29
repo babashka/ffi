@@ -26,6 +26,9 @@ The guide in [doc/guide.md](../doc/guide.md) explains the API these use.
 - `helitorus.clj` draws a helix around a torus with raylib
   (`brew install raylib`, or the raylib package of your distribution).
 - `doom.clj` is a raycaster with textures and sprites, also through raylib.
+- `portaudio.clj` plays an arpeggio through a realtime audio callback and
+  reports whether the stream underran (`brew install portaudio`, or the
+  PortAudio package of your distribution).
 - `gtk4.clj` opens a native window that renders from an atom. A button counts
   clicks and a background thread updates a clock (`brew install gtk4`, or the
   GTK 4 package of your distribution).
