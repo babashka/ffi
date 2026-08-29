@@ -704,28 +704,37 @@ the required calls:
 ;;=> {:x 7, :y 11}
 ```
 
-Use `field-reader` and `field-writer` for one member. Each takes the layout
-and a place. `field-reader` returns a function of a pointer. `field-writer`
-returns a function of a pointer and a value. The place is a member name, or
-a path of member names and array indices into nested layouts. The offset and
-the type come from the layout. The path is resolved when the function is
-made, so make it once and keep it, as with `cfn`:
+Use `place` for one member. It takes the layout and a member name, or a
+path of member names and array indices into nested layouts, and returns a
+place: the member resolved once. `read` and `write` take a place where they
+take a type, so the offset and the type come from the layout and there is
+nothing to compute. Make a place once and keep it, as with `cfn`:
 
 ```clojure
 (def bone [:struct [[:name [:array :char 32]] [:parent :int]]])
+(def parent (ffi/place bone :parent))
 
-(def bone-parent (ffi/field-reader bone :parent))
-(def set-bone-parent! (ffi/field-writer bone :parent))
+(ffi/read p parent)                                   ;=> 7
+(ffi/write p parent 3)
 
-(bone-parent p)                                       ;=> 7
-(set-bone-parent! p 3)
-
-((ffi/field-reader outer [:msgs 1 :data :result]) p)  ; through an array and a union
-((ffi/field-writer outer [:msgs 1]) p {:msg 1 :easy nil :data [:result 0]})   ; a whole nested struct
+(ffi/read p (ffi/place outer [:msgs 1 :data :result]))   ; through an array and a union
+(ffi/write p (ffi/place outer [:msgs 1]) {:msg 1 :easy nil :data [:result 0]})   ; a whole nested struct
+(ffi/read arr (ffi/place point :y) (* i 8))              ; the byte offset still composes
 ```
 
-A path that names nothing is an error when the function is made. A layout is
+A path that names nothing is an error when the place is made. A layout is
 closed, so a missing member is a mistake in the program.
+
+Without a path, the place is the whole layout. `(ffi/read p (ffi/place point))`
+is `(ffi/read p point)` with its lookup done once. On the JVM that lookup is
+most of the cost of reading a small struct, so a struct read in a loop is
+worth hoisting there; in babashka the decode dominates and the gain is
+small. The layout itself stays the form for a one-off:
+
+```clojure
+(def point-at (ffi/place point))
+(ffi/read p point-at)        ;=> {:x 1, :y 2}
+```
 
 The byte offset selects one element of an array of structs:
 
@@ -815,11 +824,11 @@ to the union, and you read the member you know applies:
 ```clojure
 (def CURLMSG_DONE 1)   ; curl/multi.h
 
-(def msg-kind (ffi/field-reader curl-msg :msg))
-(def msg-result (ffi/field-reader curl-msg [:data :result]))   ; the path names the member, so the type is known
+(def msg-kind (ffi/place curl-msg :msg))
+(def msg-result (ffi/place curl-msg [:data :result]))   ; the path names the member, so the type is known
 
-(when (= (msg-kind p) CURLMSG_DONE)
-  (msg-result p))
+(when (= (ffi/read p msg-kind) CURLMSG_DONE)
+  (ffi/read p msg-result))
 ```
 
 `read` of the union itself gives a pointer to its bytes, for a member you

@@ -39,10 +39,10 @@
   member you know applies from that pointer. write takes a pair, [member
   value]. A union is not passed by value in a signature.
 
-  field-reader and field-writer return functions that access one member of
-  a layout by name, or by a path of names and array indices into nested
-  layouts. The path is resolved once; the offset and the type come from
-  the layout.
+  place resolves one member of a layout, by name or by a path of names and
+  array indices into nested layouts, into a place that read and write take
+  where they take a type. The path is resolved once; the offset and the
+  type come from the layout.
 
   read-array and write-array copy elements of one scalar type between
   native memory and a Java array of that width, as a memcpy.
@@ -1158,8 +1158,21 @@
 (defn- set-f32 [^MemorySegment seg ^long off v]
   (.set seg ValueLayout/JAVA_FLOAT_UNALIGNED off (float v)))
 
+;; A place is a location in a layout, resolved once: the codecs for it,
+;; built at its offset. read and write take one where they take a type.
+;; See ADR 0006.
+(deftype Place [layout path decode encode]
+  Object
+  (toString [_] (str "place " (pr-str path) " in " (pr-str layout))))
+
+;; the generated constructor is not API: place is
+(alter-meta! #'->Place assoc :private true)
+
 (defn read
   "Reads a value of type t from p. The default byte offset is zero.
+
+  t is a type keyword, a layout, or a place from `place`. A place is a
+  member of a layout resolved once, so reading through it does no lookup.
 
   Checks the access against the size of p. Rejects a zero-size pointer.
   reinterpret specifies a valid size."
@@ -1182,13 +1195,20 @@
        :double (get-f64 seg off)
        :float (get-f32 seg off)
        :string (string-at (get-i64 seg off))
-       (if (layout-vector? t)
+       (cond
+         (instance? Place t)
+         ((.-decode ^Place t) (if (zero? off) seg (.asSlice seg off)))
+         (layout-vector? t)
          (let [dec (cached-codec :decode (layout-of t))]
            (dec (if (zero? off) seg (.asSlice seg off))))
+         :else
          (throw (ex-info (str "babashka.ffi: cannot read type " t) {:type t})))))))
 
 (defn write
   "Writes v as type t to p. The default byte offset is zero. Returns nil.
+
+  t is a type keyword, a layout, or a place from `place`. Through a place
+  the member's type is known, so a union member needs no pair.
 
   Checks the access against the size of p. Rejects a zero-size pointer.
   reinterpret specifies a valid size."
@@ -1205,9 +1225,13 @@
        (:int8 :uint8 :byte :char) (set-i8 seg off (long v))
        :double (set-f64 seg off (double v))
        :float (set-f32 seg off v)
-       (if (layout-vector? t)
+       (cond
+         (instance? Place t)
+         ((.-encode ^Place t) nil (if (zero? off) seg (.asSlice seg off)) v)
+         (layout-vector? t)
          (let [lay (layout-of t)]
            ((cached-codec :encode lay) nil (if (zero? off) seg (.asSlice seg off)) v))
+         :else
          (throw (ex-info (str "babashka.ffi: cannot write type " t) {:type t}))))
      nil)))
 
@@ -1318,17 +1342,14 @@
 ;; A place in a layout is a member name or a path of names and array
 ;; indices. Resolving one walks the resolved layout to an offset and the
 ;; layout at the end; the codecs for that place are built once, at that
-;; offset, and cached per [layout path]. field-reader and field-writer
-;; resolve when they are made, so the functions they return only access.
-;; See ADR 0006.
+;; offset, and cached per [layout path]. place resolves when it is made,
+;; so read and write through it do no lookup. See ADR 0006.
 
 (defn- resolve-path
   "Walks resolved layout lay along path. Returns the offset of the place and
   the layout there. Throws for a path that names nothing."
   [lay path]
-  (when (empty? path)
-    (throw (ex-info "babashka.ffi: the path is empty; read or write the whole layout instead"
-                    {:path path})))
+  ;; an empty path is the root: the whole layout at offset 0
   (loop [lay lay off 0 done [] todo (seq path)]
     (if-not todo
       [off lay]
@@ -1371,41 +1392,31 @@
           (swap! field-cache (fn [m] (if (<= codec-cache-limit (count m)) m (assoc m k v))))
           v))))
 
-(defn field-reader
-  "Returns a function of a pointer that reads one member of layout t. path
-  is a member name, or a vector of member names and array indices that
-  reaches into nested layouts. The member is decoded as its type, the way
-  read decodes it: a struct as a map, an array as a vector, a union as a
-  pointer. Through a union the path names the member, so the type is known.
+(defn place
+  "Returns a place: one member of layout t, resolved once, for read and
+  write to use where they take a type. path is a member name, or a vector
+  of member names and array indices that reaches into nested layouts.
+  Without a path the place is the whole layout.
 
-      (def bone-parent (field-reader bone :parent))
-      (bone-parent p)                                   ;=> 7
-      ((field-reader outer [:msgs 1 :data :result]) p)
+      (def parent (place bone :parent))
+      (read p parent)                          ;=> 7
+      (write p parent 3)
+      (read p (place outer [:msgs 1 :data :result]))
+      (read p (place point))                   ; the whole layout, its lookup done once
 
-  The path is resolved here, once; the function it returns only reads. A
-  path that names nothing is an error here, not nil: a layout is closed,
-  so a member that is not there is a mistake in the program.
+  The member is decoded and encoded as its type, the way read and write do
+  it: a struct as a map, an array as a vector, a union as a pointer on
+  read and a pair on write. Through a union the path names the member, so
+  a write needs no pair.
 
-  Make the function once and keep it, as with cfn."
-  [t path]
-  (let [dec (:decode (field-codecs t path))]
-    (fn [p] (dec (accessible p)))))
-
-(defn field-writer
-  "Returns a function of a pointer and a value that writes one member of
-  layout t. path is as in field-reader. The value is encoded as the
-  member's type, the way write encodes it: a struct from a map, an array
-  from a sequence, a union from a pair. Through a union the path names the
-  member, so no pair is needed. The function returns nil.
-
-      (def set-bone-parent! (field-writer bone :parent))
-      (set-bone-parent! p 3)
-
-  The path is resolved here, once; a path that names nothing is an error
-  here. Make the function once and keep it, as with cfn."
-  [t path]
-  (let [enc (:encode (field-codecs t path))]
-    (fn [p v] (enc nil (accessible p) v) nil)))
+  A path that names nothing is an error here, not nil: a layout is closed,
+  so a member that is not there is a mistake in the program. Make a place
+  once and keep it, as with cfn."
+  ([t] (place t []))
+  ([t path]
+   (let [path (if (vector? path) path [path])
+         {:keys [decode encode]} (field-codecs t path)]
+     (->Place t path decode encode))))
 
 (defn byte-buffer
   "Returns a java.nio.ByteBuffer view of n bytes of native memory at pointer p.
