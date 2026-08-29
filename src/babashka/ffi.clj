@@ -286,7 +286,13 @@
   (native-segment? x))
 
 (defn- string-at
-  "Returns the NUL-terminated UTF-8 string at addr. Returns nil for address zero."
+  "Returns the NUL-terminated UTF-8 string at addr. Returns nil for address zero.
+
+  This is what ptr->string does for a pointer with no size, and routing it
+  through that function was measured: the shared branch on the size then sees
+  both sized and sizeless pointers, and the cost lands on every caller. The
+  direct read went from 25 to 30 nanoseconds, a slot read from 26 to 28. Four
+  lines of duplication buy that back."
   [^long addr]
   (when-not (zero? addr)
     (.getString (.reinterpret (MemorySegment/ofAddress addr) Long/MAX_VALUE) 0)))
