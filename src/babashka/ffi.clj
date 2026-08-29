@@ -28,6 +28,12 @@
   represents a one-byte C boolean and returns true or false. Thus, a C
   predicate does not return the truthy number 0.
 
+  A layout describes memory: [:struct [[name type] ...]] for a struct and
+  [:array type n] for a fixed array. read returns a struct as a map and an
+  array as a vector. write accepts a map for a struct and a sequence for an
+  array. A field of a struct can be either, so `char name[32]` is
+  [:name [:array :char 32]].
+
   A function that takes a struct as an argument, or returns one, without a
   pointer in between, gets a layout on that position in the signature. A
   struct value is a map of its fields:
@@ -603,13 +609,16 @@
 
 (def ^:private layout-kinds
   ;; Keep in sync with .clj-kondo/hooks/babashka/ffi.clj.
-  #{:struct})
+  #{:struct :array})
 
 (defn- layout-vector? [t]
   (and (vector? t) (contains? layout-kinds (first t))))
 
 (defn- struct-layout? [t]
   (and (vector? t) (= :struct (first t))))
+
+(defn- array-layout? [t]
+  (and (vector? t) (= :array (first t))))
 
 (declare ^:private fixed-cfn ^:private fixed-ffm-cfn ^:private variadic-ffm-cfn
          ^:private libffi-cfn ^:private libffi-available? ^:private struct-ffm-cfn)
@@ -753,6 +762,14 @@
                             "A layout goes in one type position as " (pr-str [t '...])
                             ". Make sure that argtypes and the return type are in the correct order: "
                             (pr-str argtypes))
+                       {:argtypes argtypes :rettype rettype}))))
+   ;; C never passes an array by value: a parameter declared as one is a
+   ;; pointer to its first element, and a function cannot return one
+   (doseq [t (cons rettype argtypes)]
+     (when (array-layout? t)
+       (throw (ex-info (str "babashka.ffi: an array is not a C argument or return type: " (pr-str t)
+                            ". C passes an array as a pointer, so declare :pointer."
+                            " A struct that holds an array is passed by value as usual.")
                        {:argtypes argtypes :rettype rettype}))))
    (let [fixed (check-variadic-marker argtypes)
          ;; any vector on a type position is a layout; layout-of says which
@@ -1072,6 +1089,42 @@
    ;; Arena.allocate(byteSize) guarantees only alignment 1.
    (.allocate arena (long (first (size-and-alignment n))) (long alignment))))
 
+;; -- scalar access sites ------------------------------------------------------
+;;
+;; Every .get and .set against a ValueLayout compiles to a few kilobytes in a
+;; native image: the VarHandle path with its bounds, scope and exception
+;; branches, inlined at the site. A build report put write at 86 KB and read
+;; at 33 KB for that reason. So the namespace has one site per width, here,
+;; and read, write and the codec slots call these. Direct linking makes each
+;; call a static invocation.
+
+(defn- get-i32 ^long [^MemorySegment seg ^long off]
+  (long (.get seg ValueLayout/JAVA_INT_UNALIGNED off)))
+(defn- get-i64 ^long [^MemorySegment seg ^long off]
+  (.get seg ValueLayout/JAVA_LONG_UNALIGNED off))
+(defn- get-i16 ^long [^MemorySegment seg ^long off]
+  (long (.get seg ValueLayout/JAVA_SHORT_UNALIGNED off)))
+(defn- get-i8 ^long [^MemorySegment seg ^long off]
+  (long (.get seg ValueLayout/JAVA_BYTE off)))
+(defn- get-f64 ^double [^MemorySegment seg ^long off]
+  (.get seg ValueLayout/JAVA_DOUBLE_UNALIGNED off))
+;; a float stays a boxed Float, as read always returned one
+(defn- get-f32 [^MemorySegment seg ^long off]
+  (.get seg ValueLayout/JAVA_FLOAT_UNALIGNED off))
+
+(defn- set-i32 [^MemorySegment seg ^long off ^long v]
+  (.set seg ValueLayout/JAVA_INT_UNALIGNED off (unchecked-int v)))
+(defn- set-i64 [^MemorySegment seg ^long off ^long v]
+  (.set seg ValueLayout/JAVA_LONG_UNALIGNED off v))
+(defn- set-i16 [^MemorySegment seg ^long off ^long v]
+  (.set seg ValueLayout/JAVA_SHORT_UNALIGNED off (unchecked-short v)))
+(defn- set-i8 [^MemorySegment seg ^long off ^long v]
+  (.set seg ValueLayout/JAVA_BYTE off (unchecked-byte v)))
+(defn- set-f64 [^MemorySegment seg ^long off ^double v]
+  (.set seg ValueLayout/JAVA_DOUBLE_UNALIGNED off v))
+(defn- set-f32 [^MemorySegment seg ^long off v]
+  (.set seg ValueLayout/JAVA_FLOAT_UNALIGNED off (float v)))
+
 (defn read
   "Reads a value of type t from p. The default byte offset is zero.
 
@@ -1082,21 +1135,20 @@
    (let [off (long offset)
          ^MemorySegment seg (accessible p)]
      (case t
-       (:int :int32) (long (.get seg ValueLayout/JAVA_INT_UNALIGNED off))
-       (:uint :uint32) (bit-and (long (.get seg ValueLayout/JAVA_INT_UNALIGNED off)) 0xFFFFFFFF)
-       (:long :ulong :int64 :uint64 :size_t :ssize_t)
-       (.get seg ValueLayout/JAVA_LONG_UNALIGNED off)
+       (:int :int32) (get-i32 seg off)
+       (:uint :uint32) (bit-and (get-i32 seg off) 0xFFFFFFFF)
+       (:long :ulong :int64 :uint64 :size_t :ssize_t) (get-i64 seg off)
        ;; read as a long and wrap it: the address layout's getter costs twice
        ;; as much in a native image
-       :pointer (MemorySegment/ofAddress (.get seg ValueLayout/JAVA_LONG_UNALIGNED off))
-       :int16 (long (.get seg ValueLayout/JAVA_SHORT_UNALIGNED off))
-       :uint16 (bit-and (long (.get seg ValueLayout/JAVA_SHORT_UNALIGNED off)) 0xFFFF)
-       :bool (not (zero? (long (.get seg ValueLayout/JAVA_BYTE off))))
-      (:int8 :byte :char) (long (.get seg ValueLayout/JAVA_BYTE off))
-       :uint8 (bit-and (long (.get seg ValueLayout/JAVA_BYTE off)) 0xFF)
-       :double (.get seg ValueLayout/JAVA_DOUBLE_UNALIGNED off)
-       :float (.get seg ValueLayout/JAVA_FLOAT_UNALIGNED off)
-       :string (string-at (.get seg ValueLayout/JAVA_LONG_UNALIGNED off))
+       :pointer (MemorySegment/ofAddress (get-i64 seg off))
+       :int16 (get-i16 seg off)
+       :uint16 (bit-and (get-i16 seg off) 0xFFFF)
+       :bool (not (zero? (get-i8 seg off)))
+       (:int8 :byte :char) (get-i8 seg off)
+       :uint8 (bit-and (get-i8 seg off) 0xFF)
+       :double (get-f64 seg off)
+       :float (get-f32 seg off)
+       :string (string-at (get-i64 seg off))
        (if (layout-vector? t)
          (let [dec (cached-codec :decode (layout-of t))]
            (dec (if (zero? off) seg (.asSlice seg off))))
@@ -1112,15 +1164,14 @@
    (let [off (long offset)
          ^MemorySegment seg (accessible p)]
      (case t
-       (:int :uint :int32 :uint32) (.set seg ValueLayout/JAVA_INT_UNALIGNED off (unchecked-int (long v)))
-       (:long :ulong :int64 :uint64 :size_t :ssize_t)
-       (.set seg ValueLayout/JAVA_LONG_UNALIGNED off (long v))
-       :pointer (.set seg ValueLayout/JAVA_LONG_UNALIGNED off (long (pointer-address v)))
-       (:int16 :uint16) (.set seg ValueLayout/JAVA_SHORT_UNALIGNED off (unchecked-short (long v)))
-       :bool (.set seg ValueLayout/JAVA_BYTE off (unchecked-byte (if v 1 0)))
-       (:int8 :uint8 :byte :char) (.set seg ValueLayout/JAVA_BYTE off (unchecked-byte (long v)))
-       :double (.set seg ValueLayout/JAVA_DOUBLE_UNALIGNED off (double v))
-       :float (.set seg ValueLayout/JAVA_FLOAT_UNALIGNED off (float v))
+       (:int :uint :int32 :uint32) (set-i32 seg off (long v))
+       (:long :ulong :int64 :uint64 :size_t :ssize_t) (set-i64 seg off (long v))
+       :pointer (set-i64 seg off (long (pointer-address v)))
+       (:int16 :uint16) (set-i16 seg off (long v))
+       :bool (set-i8 seg off (if v 1 0))
+       (:int8 :uint8 :byte :char) (set-i8 seg off (long v))
+       :double (set-f64 seg off (double v))
+       :float (set-f32 seg off v)
        (if (layout-vector? t)
          (let [lay (layout-of t)]
            ((cached-codec :encode lay) nil (if (zero? off) seg (.asSlice seg off)) v))
@@ -1237,6 +1288,23 @@
                                  [[] 0] fields)]
         {:type :struct :fields fields :align align :size (align-up end align)}))
 
+    (array-layout? t)
+    (let [[_ elem n] t]
+      (when-not (= 3 (count t))
+        (throw (ex-info (str "babashka.ffi: an array layout is [:array elem n], got " (pr-str t))
+                        {:layout t})))
+      (when-not (and (integer? n) (pos? n))
+        (throw (ex-info (str "babashka.ffi: :array needs a positive element count, got " (pr-str t))
+                        {:layout t})))
+      (when (= :void elem)
+        (throw (ex-info (str "babashka.ffi: :void is not an element type: " (pr-str t))
+                        {:layout t})))
+      ;; a C array is its elements back to back: the size is the count
+      ;; times the element size, and the alignment is the element's
+      (let [el (layout-of elem)]
+        {:type :array :elem el :count (long n)
+         :align (:align el) :size (* (long n) (long (:size el)))}))
+
     (keyword? t)
     (if-let [size (sizes t)]
       {:type t :size size :align size}
@@ -1253,6 +1321,48 @@
 ;; The encoder and decoder convert between Clojure values and bytes. They
 ;; resolve the layout when the binding is made. A call then uses the returned
 ;; functions without resolving the layout again.
+
+;; A codec slot for a scalar resolves the type once. read and write dispatch
+;; on the type and check the segment on every call; inside a codec the type
+;; is fixed and the caller checked the segment, so a slot does neither.
+
+(defn- scalar-reader
+  "Returns a function of a segment that reads scalar type t at offset. The
+  result matches read for the same type. One function per type, so a codec
+  slot dispatches nothing per call; each body is a call to the shared access
+  site for its width."
+  [t ^long offset]
+  (let [off offset]
+    (case t
+      (:int :int32) (fn [^MemorySegment seg] (get-i32 seg off))
+      (:uint :uint32) (fn [^MemorySegment seg] (bit-and (get-i32 seg off) 0xFFFFFFFF))
+      (:long :ulong :int64 :uint64 :size_t :ssize_t) (fn [^MemorySegment seg] (get-i64 seg off))
+      :pointer (fn [^MemorySegment seg] (MemorySegment/ofAddress (get-i64 seg off)))
+      :int16 (fn [^MemorySegment seg] (get-i16 seg off))
+      :uint16 (fn [^MemorySegment seg] (bit-and (get-i16 seg off) 0xFFFF))
+      :bool (fn [^MemorySegment seg] (not (zero? (get-i8 seg off))))
+      (:int8 :byte :char) (fn [^MemorySegment seg] (get-i8 seg off))
+      :uint8 (fn [^MemorySegment seg] (bit-and (get-i8 seg off) 0xFF))
+      :double (fn [^MemorySegment seg] (get-f64 seg off))
+      :float (fn [^MemorySegment seg] (get-f32 seg off))
+      :string (fn [^MemorySegment seg] (string-at (get-i64 seg off)))
+      (throw (ex-info (str "babashka.ffi: cannot read type " t) {:type t})))))
+
+(defn- scalar-writer
+  "Returns a function of a segment and a value that writes scalar type t at
+  offset, with the coercion write applies to that type."
+  [t ^long offset]
+  (let [off offset]
+    (case t
+      (:int :uint :int32 :uint32) (fn [^MemorySegment seg v] (set-i32 seg off (long v)))
+      (:long :ulong :int64 :uint64 :size_t :ssize_t) (fn [^MemorySegment seg v] (set-i64 seg off (long v)))
+      :pointer (fn [^MemorySegment seg v] (set-i64 seg off (long (pointer-address v))))
+      (:int16 :uint16) (fn [^MemorySegment seg v] (set-i16 seg off (long v)))
+      :bool (fn [^MemorySegment seg v] (set-i8 seg off (if v 1 0)))
+      (:int8 :uint8 :byte :char) (fn [^MemorySegment seg v] (set-i8 seg off (long v)))
+      :double (fn [^MemorySegment seg v] (set-f64 seg off (double v)))
+      :float (fn [^MemorySegment seg v] (set-f32 seg off v))
+      (throw (ex-info (str "babashka.ffi: cannot write type " t) {:type t})))))
 
 (defn- encoder
   "Returns a function that writes a value to a segment. The function writes
@@ -1300,18 +1410,59 @@
                              (.allocateFrom ^Arena arena ^String v))
                          v)
                        offset))
+      :array
+      (let [el (:elem lay)
+            n (long (:count lay))
+            sz (long (:size el))
+            ^objects encs (object-array
+                           (map (fn [i] (encoder el (+ offset (* (long i) sz)))) (range n)))
+            ;; the element count is part of the layout, so a value of another
+            ;; length is an error, as a struct value with another field set is
+            length-error
+            (fn [v]
+              (throw (ex-info (str "babashka.ffi: array value needs " n " elements, got "
+                                   (if (or (sequential? v) (some-> v class .isArray))
+                                     (count v)
+                                     (pr-str v)))
+                              {:value v :count n})))]
+        (fn [arena seg v]
+          (when-not (and (or (sequential? v) (some-> v class .isArray))
+                         (= n (count v)))
+            (length-error v))
+          (if (or (vector? v) (some-> v class .isArray))
+            (dotimes [i n] ((aget encs i) arena seg (nth v i)))
+            (loop [i 0 s (seq v)]
+              (when s
+                ((aget encs i) arena seg (first s))
+                (recur (inc i) (next s)))))))
       ;; write :pointer takes a segment or nil itself
-      (:pointer :bool) (fn [_ seg v] (write seg t v offset))
+      (:pointer :bool) (let [w (scalar-writer t offset)] (fn [_ seg v] (w seg v)))
       ;; the same coercion as the FFM path: nil and a pointer become a
       ;; long, so a variadic tail value encodes like it always did
-      (let [coerce (arg-coercer t)]
-        (fn [_ seg v] (write seg t (coerce v) offset))))))
+      (let [coerce (arg-coercer t)
+            w (scalar-writer t offset)]
+        (fn [_ seg v] (w seg (coerce v)))))))
 
 (defn- decoder
   "Returns a function that reads a value from a segment. The function uses
-  layout lay at offset. It returns a struct as a map."
+  layout lay at offset. It returns a struct as a map and an array as a
+  vector."
   [lay ^long offset]
-  (if (= :struct (:type lay))
+  (case (:type lay)
+    :array
+    (let [el (:elem lay)
+          n (long (:count lay))
+          sz (long (:size el))
+          ^objects decs (object-array
+                         (map (fn [i] (decoder el (+ offset (* (long i) sz)))) (range n)))]
+      (fn [seg]
+        (let [^objects out (object-array n)]
+          (dotimes [i n]
+            (aset out i ((aget decs i) seg)))
+          ;; the vector takes the array as its own storage, no copy
+          (clojure.lang.LazilyPersistentVector/createOwning out))))
+
+    :struct
     (let [fields (:fields lay)
           c (count fields)
           ^objects names (object-array (map :name fields))
@@ -1327,8 +1478,8 @@
           (if (<= c 8)
             (clojure.lang.PersistentArrayMap. kvs)
             (clojure.lang.PersistentHashMap/create kvs)))))
-    (let [t (:type lay)]
-      (fn [seg] (read seg t offset)))))
+
+    (scalar-reader (:type lay) offset)))
 
 ;; libffi's FFI_TYPE_* codes, from ffi.h
 (def ^:private ffi-type-codes
@@ -1351,11 +1502,19 @@
 (def ^:private cif-bytes 256)
 
 (defn- ffi-type!
-  "Builds the ffi_type tree of layout t in arena. Returns the ffi_type."
+  "Builds the ffi_type tree of layout t in arena. Returns the ffi_type.
+
+  libffi has no array kind. An array is described the way its manual says
+  to: a struct whose elements are the element type, repeated. One ffi_type
+  serves every slot, since the elements are pointers to a shared type."
   ^MemorySegment [^Arena arena t]
   (let [p (.allocate arena (long ffi-type-bytes) 8)]
-    (if (struct-layout? t)
-      (let [elems (mapv (fn [[_ ty]] (ffi-type! arena ty)) (second t))
+    (if (or (struct-layout? t) (array-layout? t))
+      (let [elems (if (struct-layout? t)
+                    (mapv (fn [[_ ty]] (ffi-type! arena ty)) (second t))
+                    (let [[_ elem n] t
+                          et (ffi-type! arena elem)]
+                      (vec (repeat n et))))
             n (count elems)
             arr (.allocate arena (long (* 8 (inc n))) 8)]
         (dotimes [i n] (write arr :pointer (nth elems i) (* 8 i)))
@@ -1375,21 +1534,23 @@
     p))
 
 (defn- check-layout!
-  "Compares each struct size and alignment with the ffi_prep_cif result.
-  Throws an exception if they are different."
+  "Compares each struct and array size and alignment with the ffi_prep_cif
+  result. Throws an exception if they are different."
   [lay ^MemorySegment tp]
-  (when (= :struct (:type lay))
+  (when (contains? #{:struct :array} (:type lay))
     (let [size (read tp :size_t 0)
           align (read tp :uint16 8)]
       (when-not (and (= size (:size lay)) (= align (:align lay)))
-        (throw (ex-info "babashka.ffi: struct layout disagrees with libffi"
+        (throw (ex-info (str "babashka.ffi: " (name (:type lay)) " layout disagrees with libffi")
                         {:babashka.ffi/layout (select-keys lay [:size :align])
                          :libffi {:size size :align align}}))))
-    (let [fields (:fields lay)
-          n (count fields)
+    (let [members (if (= :struct (:type lay)) (:fields lay) [(:elem lay)])
+          n (count members)
           elems (reinterpret (read tp :pointer 16) (* 8 n))]
+      ;; every slot of an array points at one shared element type, so the
+      ;; first slot checks them all
       (dotimes [i n]
-        (check-layout! (nth fields i)
+        (check-layout! (nth members i)
                        (reinterpret (read elems :pointer (* 8 i)) ffi-type-bytes))))))
 
 ;; FFI_DEFAULT_ABI comes from ffitarget.h. Read it at run time to use the
@@ -1471,7 +1632,18 @@
   structLayout whose padding puts every member on the offset that layout-of
   computed, so babashka.ffi and the linker describe the same struct."
   ^MemoryLayout [lay]
-  (if (= :struct (:type lay))
+  (case (:type lay)
+    ;; A nested array flattens to one sequence of the innermost element: the
+    ;; bytes are the same, and the JDK misclassifies a nested sequence layout
+    ;; on macOS AArch64, where struct{ seq(2, seq(2, double)) } arrives as
+    ;; garbage while seq(4, double) arrives in the four FP registers.
+    :array
+    (loop [n (long (:count lay)) el (:elem lay)]
+      (if (= :array (:type el))
+        (recur (* n (long (:count el))) (:elem el))
+        (MemoryLayout/sequenceLayout n (ffm-layout el))))
+
+    :struct
     (let [members (loop [acc [] off 0 fs (seq (:fields lay))]
                     (if-let [f (first fs)]
                       (let [at (long (:offset f))
@@ -1484,6 +1656,7 @@
                         (cond-> acc
                           (> size off) (conj (MemoryLayout/paddingLayout (- size off)))))))]
       (MemoryLayout/structLayout (into-array MemoryLayout members)))
+
     (or (exact-layout (:type lay))
         (throw (ex-info (str "babashka.ffi: unknown type " (:type lay))
                         {:type (:type lay)})))))

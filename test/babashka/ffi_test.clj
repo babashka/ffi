@@ -293,3 +293,95 @@
           (let [out (ffi/alloc arena :int)]
             ((ffi/cfn "p2_store" [p2 :pointer] :void) {:x 3 :y 4} out)
             (is (= 304 (ffi/read out :int)))))))))
+
+;; -- fixed arrays -------------------------------------------------------------
+
+(def array-layout?
+  "[:array elem n] arrived after the first release; an older built-in
+  namespace does not know the kind."
+  (delay (try (= 16 (ffi/sizeof [:array :int 4])) (catch Exception _ false))))
+
+(def bone [:struct [[:name [:array :char 32]] [:parent :int]]])
+(def spine
+  "The bytes of \"spine\" in a char[32], as C stores a fixed-width string."
+  (vec (concat (map long (.getBytes "spine")) (repeat 27 0))))
+
+(deftest array-layout-test
+  (if-not @array-layout?
+    (println "array layouts skipped: this babashka predates them")
+    (do
+      (testing "an array is its elements back to back"
+        (is (= 16 (ffi/sizeof [:array :int 4])))
+        (is (= 4 (ffi/alignof [:array :int 4])))
+        (is (= 36 (ffi/sizeof bone)))
+        (is (= 32 (ffi/sizeof [:array [:array :double 2] 2])))
+        (is (= 16 (ffi/sizeof [:array p2 2]))))
+      (testing "an array reads as a vector and writes from any sequence"
+        (with-open [arena (ffi/confined-arena)]
+          (let [p (ffi/alloc arena [:array :int 4])]
+            (ffi/write p [:array :int 4] [1 2 3 4])
+            (is (= [1 2 3 4] (ffi/read p [:array :int 4])))
+            (is (= 3 (ffi/read p :int 8)))
+            (ffi/write p [:array :int 4] (int-array [5 6 7 8]))
+            (is (= [5 6 7 8] (ffi/read p [:array :int 4])))
+            (ffi/write p [:array :int 4] (list 9 9 9 9))
+            (is (= [9 9 9 9] (ffi/read p [:array :int 4]))))))
+      (testing "a char array in a struct, and the fixed-width string in it"
+        (with-open [arena (ffi/confined-arena)]
+          (let [p (ffi/alloc arena bone)]
+            (ffi/write p bone {:name spine :parent 7})
+            (is (= {:name spine :parent 7} (ffi/read p bone)))
+            ;; the string read is a bounded ptr->string over the field
+            (is (= "spine" (ffi/ptr->string (ffi/slice p 0 32) 32))))))
+      (testing "arrays nest, and hold structs and pointers"
+        (with-open [arena (ffi/confined-arena)]
+          (let [m [:array [:array :double 2] 2]
+                q (ffi/alloc arena m)]
+            (ffi/write q m [[1.0 2.0] [3.0 4.0]])
+            (is (= [[1.0 2.0] [3.0 4.0]] (ffi/read q m))))
+          (let [pair [:array p2 2]
+                q (ffi/alloc arena pair)]
+            (ffi/write q pair [{:x 1 :y 2} {:x 3 :y 4}])
+            (is (= [{:x 1 :y 2} {:x 3 :y 4}] (ffi/read q pair))))
+          (let [ptrs [:array :pointer 2]
+                q (ffi/alloc arena ptrs)]
+            (ffi/write q ptrs [(ffi/string->ptr arena "one") (ffi/string->ptr arena "two")])
+            (is (= ["one" "two"] (mapv ffi/ptr->string (ffi/read q ptrs)))))))
+      (testing "the element count is part of the layout"
+        (with-open [arena (ffi/confined-arena)]
+          (let [p (ffi/alloc arena [:array :int 4])]
+            (is (thrown-with-msg? Exception #"needs 4 elements, got 3"
+                                  (ffi/write p [:array :int 4] [1 2 3])))
+            (is (thrown-with-msg? Exception #"needs 4 elements, got 5"
+                                  (ffi/write p [:array :int 4] [1 2 3 4 5])))
+            (is (thrown-with-msg? Exception #"needs 4 elements, got 42"
+                                  (ffi/write p [:array :int 4] 42))))))
+      (testing "a malformed array layout is an error at resolve time"
+        (is (thrown-with-msg? Exception #"positive element count" (ffi/sizeof [:array :int 0])))
+        (is (thrown-with-msg? Exception #"is \[:array elem n\]" (ffi/sizeof [:array :int])))
+        (is (thrown-with-msg? Exception #":void is not an element" (ffi/sizeof [:array :void 2]))))
+      (testing "C passes an array as a pointer, so a bare array is not a signature type"
+        (is (thrown-with-msg? Exception #"C passes an array as a pointer"
+                              (ffi/cfn "abs" [[:array :int 4]] :int)))
+        (is (thrown-with-msg? Exception #"C passes an array as a pointer"
+                              (ffi/cfn "abs" [:int] [:array :int 4])))))))
+
+(deftest array-in-struct-call-test
+  (if-not (and @array-layout? (true? @struct-lib))
+    (println "array struct calls skipped:"
+             (cond (not @array-layout?) "this babashka predates array layouts"
+                   (string? @struct-lib) @struct-lib
+                   :else "unknown reason"))
+    (let [quad [:struct [[:v [:array :int 4]]]]
+          mat2 [:struct [[:m [:array [:array :double 2] 2]]]]
+          pair [:struct [[:pts [:array p2 2]]]]]
+      (testing "an array of ints in two integer registers"
+        (is (= 10 ((ffi/cfn "quad_sum" [quad] :int) {:v [1 2 3 4]})))
+        (is (= {:v [5 6 7 8]} ((ffi/cfn "quad_make" [:int] quad) 5))))
+      (testing "a char array in a struct passed in memory, both directions"
+        (is (= 12 ((ffi/cfn "bone_len" [bone] :int) {:name spine :parent 7})))
+        (is (= {:name spine :parent 3} ((ffi/cfn "bone_make" [:int] bone) 3))))
+      (testing "a two-dimensional array of doubles, which is an HFA"
+        (is (= 5.0 ((ffi/cfn "mat2_trace" [mat2] :double) {:m [[1.0 2.0] [3.0 4.0]]}))))
+      (testing "an array of structs"
+        (is (= 10 ((ffi/cfn "pair_sum" [pair] :int) {:pts [{:x 1 :y 2} {:x 3 :y 4}]})))))))
