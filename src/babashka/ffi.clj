@@ -39,6 +39,11 @@
   member you know applies from that pointer. write takes a pair, [member
   value]. A union is not passed by value in a signature.
 
+  field-reader and field-writer return functions that access one member of
+  a layout by name, or by a path of names and array indices into nested
+  layouts. The path is resolved once; the offset and the type come from
+  the layout.
+
   read-array and write-array copy elements of one scalar type between
   native memory and a Java array of that width, as a memcpy.
 
@@ -1307,6 +1312,100 @@
         d (alloc arena (.byteSize s))]
     (copy s d)
     d))
+
+;; -- one member of a layout ---------------------------------------------------
+;;
+;; A place in a layout is a member name or a path of names and array
+;; indices. Resolving one walks the resolved layout to an offset and the
+;; layout at the end; the codecs for that place are built once, at that
+;; offset, and cached per [layout path]. field-reader and field-writer
+;; resolve when they are made, so the functions they return only access.
+;; See ADR 0006.
+
+(defn- resolve-path
+  "Walks resolved layout lay along path. Returns the offset of the place and
+  the layout there. Throws for a path that names nothing."
+  [lay path]
+  (when (empty? path)
+    (throw (ex-info "babashka.ffi: the path is empty; read or write the whole layout instead"
+                    {:path path})))
+  (loop [lay lay off 0 done [] todo (seq path)]
+    (if-not todo
+      [off lay]
+      (let [step (first todo)
+            here (fn [] (if (seq done) (str " at " (pr-str done)) ""))]
+        (case (:type lay)
+          (:struct :union)
+          (let [f (some #(when (= step (:name %)) %) (:fields lay))]
+            (when-not (keyword? step)
+              (throw (ex-info (str "babashka.ffi: " (pr-str step) " is not a member name" (here)
+                                   "; the members are " (pr-str (mapv :name (:fields lay))))
+                              {:path path :step step})))
+            (when-not f
+              (throw (ex-info (str "babashka.ffi: no member " (pr-str step) (here)
+                                   "; the members are " (pr-str (mapv :name (:fields lay))))
+                              {:path path :step step})))
+            (recur f (+ off (long (:offset f))) (conj done step) (next todo)))
+          :array
+          (let [n (long (:count lay))]
+            (when-not (and (integer? step) (<= 0 step) (< step n))
+              (throw (ex-info (str "babashka.ffi: " (pr-str step) " is not an index into " n " elements" (here))
+                              {:path path :step step :count n})))
+            (recur (:elem lay) (+ off (* (long step) (long (:size (:elem lay))))) (conj done step) (next todo)))
+          (throw (ex-info (str "babashka.ffi: the path continues past " (pr-str (:type lay)) (here)
+                               " with " (pr-str step) ", but a " (pr-str (:type lay)) " has no members")
+                          {:path path :step step})))))))
+
+(def ^:private field-cache (atom {}))
+
+(defn- field-codecs
+  "The decoder and encoder for the place path names in layout t, built at
+  its offset. Cached per [layout path], bounded like the other caches."
+  [t path]
+  (let [path (if (vector? path) path [path])
+        k [t path]]
+    (or (get @field-cache k)
+        (let [[off lay] (resolve-path (layout-of t) path)
+              v {:decode (decoder lay off)
+                 :encode (encoder lay off path)}]
+          (swap! field-cache (fn [m] (if (<= codec-cache-limit (count m)) m (assoc m k v))))
+          v))))
+
+(defn field-reader
+  "Returns a function of a pointer that reads one member of layout t. path
+  is a member name, or a vector of member names and array indices that
+  reaches into nested layouts. The member is decoded as its type, the way
+  read decodes it: a struct as a map, an array as a vector, a union as a
+  pointer. Through a union the path names the member, so the type is known.
+
+      (def bone-parent (field-reader bone :parent))
+      (bone-parent p)                                   ;=> 7
+      ((field-reader outer [:msgs 1 :data :result]) p)
+
+  The path is resolved here, once; the function it returns only reads. A
+  path that names nothing is an error here, not nil: a layout is closed,
+  so a member that is not there is a mistake in the program.
+
+  Make the function once and keep it, as with cfn."
+  [t path]
+  (let [dec (:decode (field-codecs t path))]
+    (fn [p] (dec (accessible p)))))
+
+(defn field-writer
+  "Returns a function of a pointer and a value that writes one member of
+  layout t. path is as in field-reader. The value is encoded as the
+  member's type, the way write encodes it: a struct from a map, an array
+  from a sequence, a union from a pair. Through a union the path names the
+  member, so no pair is needed. The function returns nil.
+
+      (def set-bone-parent! (field-writer bone :parent))
+      (set-bone-parent! p 3)
+
+  The path is resolved here, once; a path that names nothing is an error
+  here. Make the function once and keep it, as with cfn."
+  [t path]
+  (let [enc (:encode (field-codecs t path))]
+    (fn [p v] (enc nil (accessible p) v) nil)))
 
 (defn byte-buffer
   "Returns a java.nio.ByteBuffer view of n bytes of native memory at pointer p.
