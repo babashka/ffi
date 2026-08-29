@@ -657,3 +657,42 @@
                                   ((field-writer outer [:msgs 1 :data]) q {:result 1})))
             (is (thrown-with-msg? Exception #"at \[:msgs 1 :msg\], a :int field cannot take"
                                   ((field-writer outer [:msgs 1 :msg]) q "x")))))))))
+
+;; -- a declared variadic tail ------------------------------------------------
+
+(def declared-tail?
+  "Types after :& arrived after the first release; an older built-in
+  namespace refuses them. The probe also needs snprintf through the default
+  lookup, which a musl build and Windows do not give."
+  (delay (try (with-open [arena (ffi/confined-arena)]
+                (let [f (ffi/cfn "snprintf" [:pointer :size_t :string :& :int] :int)
+                      buf (ffi/alloc arena 16)]
+                  (= 2 (f buf 16 "%d" 42))))
+              (catch Throwable _ false))))
+
+(deftest declared-variadic-tail-test
+  (if-not @declared-tail?
+    (println "declared variadic tail skipped: this babashka predates it, or snprintf is not reachable")
+    (with-open [arena (ffi/confined-arena)]
+      (let [buf (ffi/alloc arena 64)
+            declared (ffi/cfn "snprintf" [:pointer :size_t :string :& :int :string] :int)
+            inferred (ffi/cfn "snprintf" [:pointer :size_t :string :&] :int)]
+        (testing "a declared tail calls with the variadic convention and an exact arity"
+          (is (= 12 (declared buf 64 "%d and %s" 42 "hello")))
+          (is (= "42 and hello" (ffi/ptr->string buf 64)))
+          (is (= (inferred buf 64 "%d and %s" 42 "hello") (declared buf 64 "%d and %s" 42 "hello")))
+          (is (thrown-with-msg? Exception #"expects 5 args, got 4" (declared buf 64 "%d" 42))))
+        (testing "a double in the tail"
+          ((ffi/cfn "snprintf" [:pointer :size_t :string :& :double] :int) buf 64 "%.2f" 2.5)
+          ;; the decimal separator follows the process locale
+          (is (re-matches #"2[.,]50" (ffi/ptr->string buf 64))))
+        (testing "a type C would promote is refused with the type to declare"
+          (is (thrown-with-msg? Exception #"promotes it to :double; declare :double"
+                                (ffi/cfn "snprintf" [:pointer :size_t :string :& :float] :int)))
+          (is (thrown-with-msg? Exception #"promotes it to :int; declare :int"
+                                (ffi/cfn "snprintf" [:pointer :size_t :string :& :int8] :int)))
+          (is (thrown-with-msg? Exception #"cannot be a variadic tail type"
+                                (ffi/cfn "snprintf" [:pointer :size_t :string :& [:struct [[:x :int]]]] :int))))
+        (testing "the marker rules"
+          (is (thrown-with-msg? Exception #"appears twice" (ffi/cfn "snprintf" [:string :& :int :&] :int)))
+          (is (thrown-with-msg? Exception #"at least one fixed" (ffi/cfn "snprintf" [:& :int] :int))))))))

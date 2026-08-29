@@ -111,20 +111,41 @@
    :double ValueLayout/JAVA_DOUBLE
    :float ValueLayout/JAVA_FLOAT})
 
+(def ^:private variadic-tail-types
+  "The types a declared variadic tail may name. C promotes every variadic
+  argument: a float becomes a double and an integer narrower than int
+  becomes an int, so those widths cannot be passed and are refused with the
+  promoted type to use."
+  #{:int :uint :int32 :uint32 :long :ulong :int64 :uint64 :size_t :ssize_t
+    :pointer :string :double})
+
 (defn- check-variadic-marker
-  "Validates use of the :& variadic marker. Returns the fixed types (the
-  vector without the trailing :&) for a variadic signature, nil for a plain
-  one."
+  "Validates use of the :& variadic marker. Returns nil for a plain
+  signature. For a variadic one returns [fixed tail]: the types before :&,
+  and the types after it. An empty tail means the tail is inferred from
+  the values on each call; a non-empty one declares the shape once."
   [argtypes]
-  (when (some #(= :& %) (butlast argtypes))
-    (throw (ex-info "babashka.ffi: :& must be last; variadic tail types are inferred per call"
-                    {:argtypes argtypes})))
-  (when (= :& (peek argtypes))
-    (let [fixed (pop argtypes)]
-      (when (zero? (count fixed))
-        (throw (ex-info "babashka.ffi: a variadic signature needs at least one fixed argtype before :&"
-                        {:argtypes argtypes})))
-      fixed)))
+  (let [i (.indexOf ^java.util.List argtypes :&)]
+    (when-not (neg? i)
+      (let [fixed (subvec argtypes 0 i)
+            tail (subvec argtypes (inc i))]
+        (when (some #(= :& %) tail)
+          (throw (ex-info "babashka.ffi: :& appears twice" {:argtypes argtypes})))
+        (when (zero? (count fixed))
+          (throw (ex-info "babashka.ffi: a variadic signature needs at least one fixed argtype before :&"
+                          {:argtypes argtypes})))
+        (doseq [t tail]
+          (when-not (contains? variadic-tail-types t)
+            (throw (ex-info (str "babashka.ffi: " (pr-str t) " cannot be a variadic tail type: C promotes it"
+                                 (case t
+                                   :float " to :double"
+                                   (:int8 :uint8 :int16 :uint16 :byte :char :bool) " to :int"
+                                   "")
+                                 "; declare " (pr-str (case t :float :double
+                                                            (:int8 :uint8 :int16 :uint16 :byte :char :bool) :int
+                                                            t)))
+                            {:argtypes argtypes :type t}))))
+        [fixed tail]))))
 
 (defn- tail-type
   "The inferred type of one variadic tail value. Sound because C promotes
@@ -685,6 +706,52 @@
           (apply f args)))
       {:babashka.ffi/backend :libffi})))
 
+(defn- declared-variadic-cfn
+  "A variadic binding whose tail shape is declared in the signature, so it
+  is resolved once here and the call infers nothing. In a native image the
+  call goes through libffi with the variadic convention; on the JVM one FFM
+  handle with firstVariadicArg. The arity is exact: fixed plus tail."
+  [lib sym fixed tail rettype]
+  (doseq [t fixed] (carrier t))
+  (carrier rettype)
+  (let [nf (count fixed)
+        all-types (into fixed tail)
+        n (count all-types)
+        arity-error (fn [got]
+                      (throw (ex-info (str "babashka.ffi: " sym " expects " n " args, got " got)
+                                      {:symbol sym})))]
+    (if (and native-image? (libffi-available?))
+      (let [call (libffi-cfn lib sym all-types rettype nf nil)]
+        (with-meta (fn [& args]
+                     (when-not (= n (count args)) (arity-error (count args)))
+                     (apply call args))
+          {:babashka.ffi/backend :libffi}))
+      (do
+        (when (and native-image?
+                   (or (> n 5)
+                       (> (count (filter #(= :double (carrier %)) all-types)) 2)
+                       (> nf 3)
+                       (some #(= :float (carrier %)) fixed)
+                       (#{:double :float} (carrier rettype))))
+          (throw (unsupported-ex sym all-types rettype variadic-limits)))
+        (let [address (delay (require-symbol lib sym))
+              handle (delay (.downcallHandle
+                             ^Linker @linker*
+                             ^MemorySegment @address
+                             (descriptor all-types rettype)
+                             (into-array java.lang.foreign.Linker$Option
+                                         [(java.lang.foreign.Linker$Option/firstVariadicArg nf)])))
+              coercers ^objects (object-array (map arg-coercer all-types))]
+          (with-meta
+            (fn [& args]
+              (when-not (= n (count args)) (arity-error (count args)))
+              (with-string-args all-types (vec args)
+                (fn [args]
+                  (let [^objects arr (object-array args)]
+                    (dotimes [i n] (aset arr i ((aget coercers i) (aget arr i))))
+                    (narrow-ret rettype (.invokeWithArguments ^MethodHandle @handle arr))))))
+            {:babashka.ffi/backend :ffm}))))))
+
 (defn- variadic-cfn
   "A variadic binding: fixed types declared, tail inferred per call. In a
   native image the call goes through libffi (an FFM handle is interpreted
@@ -765,8 +832,10 @@
   the default system lookup. The first call resolves the symbol and creates
   the call handle. You can create the binding before you load its library.
 
-  A trailing :& declares a variadic C function. The types before :& are the
-  fixed parameters. Each call infers the tail types from its values."
+  A :& in argtypes declares a variadic C function. The types before :& are
+  the fixed parameters. Types after :& declare the tail once, resolved when
+  the binding is made; with nothing after :&, each call infers the tail
+  types from its values."
   ([sym argtypes rettype] (cfn nil sym argtypes rettype))
   ([lib sym argtypes rettype]
    (when-not (or (string? sym) (native-segment? sym))
@@ -806,20 +875,24 @@
                             ". Declare :pointer and read the union from memory."
                             " A struct that holds a union is not passed by value either.")
                        {:argtypes argtypes :rettype rettype}))))
-   (let [fixed (check-variadic-marker argtypes)
+   (let [[fixed tail :as variadic] (check-variadic-marker argtypes)
          ;; any vector on a type position is a layout; layout-of says which
          ;; kinds exist
          structs? (or (vector? rettype) (boolean (some vector? argtypes)))]
      (cond
-       (and structs? fixed)
+       (and structs? variadic)
        (throw (ex-info (str "babashka.ffi: a variadic signature cannot pass a struct by value: " sym)
                        {:argtypes argtypes :rettype rettype}))
+       ;; a declared tail shape is resolved once, here, like a fixed
+       ;; signature; only the calling convention is variadic. See ADR 0007.
+       (and variadic (seq tail))
+       (declared-variadic-cfn lib sym fixed tail rettype)
        ;; the FFM linker builds a struct handle at run time, so the JVM needs
        ;; no libffi for this. An image cannot, and calls libffi instead.
        structs? (if native-image?
                   (libffi-cfn lib sym argtypes rettype)
                   (struct-ffm-cfn lib sym argtypes rettype))
-       fixed (variadic-cfn lib sym fixed argtypes rettype)
+       variadic (variadic-cfn lib sym fixed argtypes rettype)
        :else (fixed-cfn lib sym argtypes rettype)))))
 
 (defn- fixed-cfn
