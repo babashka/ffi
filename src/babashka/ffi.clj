@@ -2211,12 +2211,15 @@
     (throw (ex-info (str "babashka.ffi: :void is not an argument type: " (pr-str argtypes))
                     {:argtypes argtypes})))
   (when (and native-image?
-             (or (> (count argtypes) 4)
-                 (some #(= :float (carrier %)) argtypes)
-                 (> (count (filter #(= :double (carrier %)) argtypes)) 2)
-                 (= :float (carrier rettype))))
+             (let [n (count argtypes)
+                   doubles (count (filter #(= :double (carrier %)) argtypes))]
+               (or (> n 6)
+                   (and (> n 4) (pos? doubles))
+                   (some #(= :float (carrier %)) argtypes)
+                   (> doubles 2)
+                   (= :float (carrier rettype)))))
     (throw (unsupported-ex "callback" argtypes rettype
-                           "callbacks support up to 4 args, at most 2 :double, no :float, and a :void, integer or :double return")))
+                           "callbacks support up to 4 args with at most 2 :double, or up to 6 integer and pointer args; no :float, and a :void, integer or :double return")))
   (let [;; f returns arbitrary Clojure values and receives raw carriers:
         ;; coerce the result to the declared return type (a Boolean or
         ;; Integer crossing the upcall boundary uncaught would kill the VM)

@@ -701,3 +701,37 @@
         (testing "the marker rules"
           (is (thrown-with-msg? Exception #"appears twice" (ffi/cfn "snprintf" [:string :& :int :&] :int)))
           (is (thrown-with-msg? Exception #"at least one fixed" (ffi/cfn "snprintf" [:& :int] :int))))))))
+
+
+;; -- callbacks with five and six integer arguments ----------------------------
+
+(def wide-callback?
+  "A native image registers pure-integer upcalls up to six arguments since
+  the FSEvents work; an older image stops at four."
+  (delay (try (ffi/callback (ffi/global-arena) (fn [_ _ _ _ _ _] 0)
+                            [:long :long :long :long :long :long] :long)
+              true
+              (catch Throwable _ false))))
+
+(deftest wide-callback-test
+  (if-not @wide-callback?
+    (println "wide callback skipped: this babashka stops at four callback arguments")
+    (with-open [arena (ffi/confined-arena)]
+      (testing "six longs in, one out, called back through its own pointer"
+        (let [cb (ffi/callback arena (fn [a b c d e f] (+ a (* 10 b) (* 100 c) (* 1000 d) (* 10000 e) (* 100000 f)))
+                               [:long :long :long :long :long :long] :long)
+              call (ffi/cfn cb [:long :long :long :long :long :long] :long)]
+          (is (= 654321 (call 1 2 3 4 5 6)))))
+      (testing "five pointers, the shape of a GLFW or FSEvents callback"
+        (let [seen (atom nil)
+              cb (ffi/callback arena (fn [a b c d e] (reset! seen (mapv ffi/address [a b c d e])))
+                               [:pointer :pointer :pointer :pointer :pointer] :void)
+              call (ffi/cfn cb [:pointer :pointer :pointer :pointer :pointer] :void)
+              p (ffi/alloc arena 8)]
+          (call p p ffi/null p ffi/null)
+          (is (= [(ffi/address p) (ffi/address p) 0 (ffi/address p) 0] @seen))))
+      (testing "a double among more than four arguments stays refused on a native image"
+        (when (System/getProperty "org.graalvm.nativeimage.imagecode")
+          (is (thrown-with-msg? Exception #"up to 6 integer and pointer args"
+                                (ffi/callback arena (fn [_ _ _ _ _] 0)
+                                              [:long :long :long :long :double] :long))))))))
