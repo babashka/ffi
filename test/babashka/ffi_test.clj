@@ -163,3 +163,56 @@
       (testing "NULL is nil, with and without a limit"
         (is (nil? (ffi/ptr->string ffi/null)))
         (is (nil? (ffi/ptr->string ffi/null 8)))))))
+
+(def callback-arena?
+  "An arena owns a callback pointer since the first release; an older
+  built-in namespace takes the function first and frees by pointer."
+  (delay (try (ffi/callback (ffi/global-arena) (fn [] 0) [] :int) true
+              (catch Throwable _ false))))
+
+(defn- sort-ints
+  "Sorts xs through libc qsort with cmp as the comparison callback. qsort
+  calls back on this thread, during the call, which is what a confined arena
+  allows."
+  [make-callback xs]
+  (let [qsort (ffi/cfn "qsort" [:pointer :size_t :size_t :pointer] :void)
+        n (count xs)]
+    (with-open [arena (ffi/confined-arena)]
+      (let [p (ffi/alloc arena (* 4 n))]
+        (dotimes [i n] (ffi/write p :int (nth xs i) (* 4 i)))
+        (qsort p n 4 (make-callback))
+        (mapv #(ffi/read p :int (* 4 %)) (range n))))))
+
+(defn- compare-ints [a b]
+  (- (ffi/read (ffi/reinterpret a 4) :int)
+     (ffi/read (ffi/reinterpret b 4) :int)))
+
+(deftest callback-test
+  (cond
+    (not @default-lookup?)
+    (println "callback skipped: this build has no default lookup")
+    (not @callback-arena?)
+    (println "callback skipped: this babashka predates the arena argument")
+    :else
+    (let [xs [5 3 9 1 7 2]
+          sorted [1 2 3 5 7 9]]
+      (testing "every arena kind owns a callback"
+        (with-open [a (ffi/confined-arena)]
+          (is (= sorted (sort-ints #(ffi/callback a compare-ints [:pointer :pointer] :int) xs))))
+        (with-open [a (ffi/shared-arena)]
+          (is (= sorted (sort-ints #(ffi/callback a compare-ints [:pointer :pointer] :int) xs))))
+        (is (= sorted (sort-ints #(ffi/callback (ffi/global-arena) compare-ints
+                                                [:pointer :pointer] :int)
+                                 xs)))
+        (is (= sorted (sort-ints #(ffi/callback (ffi/auto-arena) compare-ints
+                                                [:pointer :pointer] :int)
+                                 xs))))
+      (testing "a closed arena releases the pointer"
+        (let [a (ffi/confined-arena)
+              cb (ffi/callback a compare-ints [:pointer :pointer] :int)]
+          (.close a)
+          (is (thrown? Exception (sort-ints (constantly cb) xs)))))
+      (testing "a shared arena accepts a call from another thread"
+        (with-open [a (ffi/shared-arena)]
+          (let [cb (ffi/callback a compare-ints [:pointer :pointer] :int)]
+            (is (= sorted @(future (sort-ints (constantly cb) xs))))))))))
