@@ -704,12 +704,12 @@ the required calls:
 ;;=> {:x 7, :y 11}
 ```
 
-Use `field-reader` and `field-writer` for one member. Each takes the
-layout and a place, and returns a function of a pointer. The place is a
-member name, or a path of member names and array indices into nested
-layouts. The offset and the type come from the layout, so there is nothing
-to compute. The path is resolved when the function is made, so make it
-once and keep it, as with `cfn`:
+Use `field-reader` and `field-writer` for one member. Each takes the layout
+and a place. `field-reader` returns a function of a pointer. `field-writer`
+returns a function of a pointer and a value. The place is a member name, or
+a path of member names and array indices into nested layouts. The offset and
+the type come from the layout. The path is resolved when the function is
+made, so make it once and keep it, as with `cfn`:
 
 ```clojure
 (def bone [:struct [[:name [:array :char 32]] [:parent :int]]])
@@ -724,9 +724,8 @@ once and keep it, as with `cfn`:
 ((ffi/field-writer outer [:msgs 1]) p {:msg 1 :easy nil :data [:result 0]})   ; a whole nested struct
 ```
 
-A path that names nothing is an error when the function is made, not
-`nil`: a layout is closed, so a member that is not there is a mistake in
-the program, and `nil` could not be told from a `0` that was read.
+A path that names nothing is an error when the function is made. A layout is
+closed, so a missing member is a mistake in the program.
 
 The byte offset selects one element of an array of structs:
 
