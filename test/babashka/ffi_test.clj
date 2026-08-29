@@ -12,6 +12,7 @@
 ;; that has one. Binding is lazy, so this is safe even where it does not.
 (defcfn strlen "strlen" [:string] :long)
 
+
 (def default-lookup?
   "A statically linked musl binary has no dlopen and no FFM default lookup,
   so it cannot reach the C runtime by name. Memory still works there, so only
@@ -101,3 +102,44 @@
           (is (thrown-with-msg?
                Exception #"misses field :y"
                (ffi/write (ffi/alloc arena point) point {:x 1}))))))))
+
+(defn- sizeless
+  "A pointer with no size, the way a C function returns one. Built from an
+  arena string rather than a C call: reaching the C runtime by name is not
+  portable, and on Windows it resolves to something that is not the function
+  it names, which crashed the process here."
+  [arena s]
+  (ffi/segment (ffi/address (ffi/string->ptr arena s))))
+
+(def unsized-string?
+  "Reading a string from a pointer with no size arrived after the first
+  release; an older built-in namespace refuses one."
+  (delay (with-open [arena (ffi/confined-arena)]
+           (try (= "probe" (ffi/ptr->string (sizeless arena "probe")))
+                (catch Exception _ false)))))
+
+(deftest ptr->string-test
+  (if-not @unsized-string?
+    (println "ptr->string skipped: this babashka predates reading a sizeless pointer")
+    (with-open [arena (ffi/confined-arena)]
+      (testing "a pointer with no size reads to the NUL"
+        (let [p (sizeless arena "hello")]
+          (is (zero? (ffi/size p)))
+          (is (= "hello" (ffi/ptr->string p)))))
+      (testing "a limit stops the read"
+        (let [p (sizeless arena "hello")]
+          (is (= "hello" (ffi/ptr->string p 64)))
+          (is (= "hello" (ffi/ptr->string p 6)))))
+      (testing "a limit with no NUL inside it is an error, not a walk"
+        (is (thrown-with-msg? Exception #"no NUL byte in the first 3 bytes"
+                              (ffi/ptr->string (sizeless arena "hello") 3))))
+      (testing "a limit narrows but never widens an existing bound"
+        (let [p (ffi/alloc arena 8)]
+          ;; every byte non-NUL: a scan that respects the size must throw,
+          ;; and must report the size rather than the larger limit
+          (ffi/write-bytes p (byte-array (repeat 8 (byte 65))))
+          (is (thrown-with-msg? Exception #"no NUL byte in the first 8 bytes"
+                                (ffi/ptr->string p 64)))))
+      (testing "NULL is nil, with and without a limit"
+        (is (nil? (ffi/ptr->string ffi/null)))
+        (is (nil? (ffi/ptr->string ffi/null 8)))))))

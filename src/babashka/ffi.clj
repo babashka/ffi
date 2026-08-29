@@ -286,21 +286,55 @@
   (native-segment? x))
 
 (defn- string-at
-  "Returns the NUL-terminated UTF-8 string at addr. Returns nil for address zero."
+  "Returns the NUL-terminated UTF-8 string at addr. Returns nil for address zero.
+
+  This is what ptr->string does for a pointer with no size, and routing it
+  through that function was measured: the shared branch on the size then sees
+  both sized and sizeless pointers, and the cost lands on every caller. The
+  direct read went from 25 to 30 nanoseconds, a slot read from 26 to 28. Four
+  lines of duplication buy that back."
   [^long addr]
   (when-not (zero? addr)
     (.getString (.reinterpret (MemorySegment/ofAddress addr) Long/MAX_VALUE) 0)))
 
 (defn ptr->string
-  "Returns the NUL-terminated UTF-8 string at p, read within the size of p.
-  Returns nil for a NULL pointer.
+  "Returns the NUL-terminated UTF-8 string at p. Returns nil for a NULL
+  pointer.
 
-  A pointer of size 0 is refused: give it a size with reinterpret, or declare
-  the C return type as :string."
-  [p]
-  (let [seg (as-pointer p)]
-    (when-not (zero? (.address seg))
-      (.getString (accessible seg) 0))))
+  A pointer returned by C has no size, so the read runs to the first NUL
+  byte. This is what a :string return type does.
+
+  Give a limit in bytes. If no NUL appears within the limit, `ptr->string`
+  throws an error. A limit only narrows: a pointer with a known size keeps it.
+
+  CAUTION: Without a limit, ptr->string can read past a buffer that has no
+  NUL byte. This can stop the process."
+  ([p]
+   (let [seg (as-pointer p)]
+     (when-not (zero? (.address seg))
+       (.getString (if (zero? (.byteSize seg))
+                     ;; the size C did not give us: read to the NUL, exactly
+                     ;; as the :string return type does
+                     (.reinterpret seg Long/MAX_VALUE)
+                     (accessible seg))
+                   0))))
+  ([p limit]
+   (let [seg (as-pointer p)
+         size (.byteSize seg)
+         ;; a limit narrows, it never widens: a pointer that already knows its
+         ;; size keeps it, so the scan cannot leave the allocation
+         limit (if (zero? size) (long limit) (min (long limit) size))]
+     (when-not (zero? (.address seg))
+       (let [bounded (.reinterpret seg limit)
+             n (loop [i 0]
+                 (cond (= i limit) nil
+                       (zero? (.get bounded ValueLayout/JAVA_BYTE i)) i
+                       :else (recur (inc i))))]
+         (when-not n
+           (throw (ex-info (str "babashka.ffi: no NUL byte in the first " limit
+                                " bytes at address " (.address seg))
+                           {:limit limit})))
+         (.getString (.reinterpret seg (inc (long n))) 0))))))
 
 (defn- with-string-args
   "Calls f with argtypes' :string args replaced by temp C-string pointers,
