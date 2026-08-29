@@ -6,16 +6,12 @@
   only babashka can observe, such as the libffi backend selection, the
   trampoline set, and builds without libffi."
   (:require [babashka.ffi :as ffi :refer [defcfn]]
-            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
 
 ;; strlen lives in the C runtime, which the default lookup finds on every OS
 ;; that has one. Binding is lazy, so this is safe even where it does not.
 (defcfn strlen "strlen" [:string] :long)
 
-(def strdup-sym
-  "strdup is POSIX. The Windows CRT spells it _strdup."
-  (if (str/starts-with? (System/getProperty "os.name") "Windows") "_strdup" "strdup"))
 
 (def default-lookup?
   "A statically linked musl binary has no dlopen and no FFM default lookup,
@@ -107,41 +103,43 @@
                Exception #"misses field :y"
                (ffi/write (ffi/alloc arena point) point {:x 1}))))))))
 
+(defn- sizeless
+  "A pointer with no size, the way a C function returns one. Built from an
+  arena string rather than a C call: reaching the C runtime by name is not
+  portable, and on Windows it resolves to something that is not the function
+  it names, which crashed the process here."
+  [arena s]
+  (ffi/segment (ffi/address (ffi/string->ptr arena s))))
+
 (def unsized-string?
   "Reading a string from a pointer with no size arrived after the first
   release; an older built-in namespace refuses one."
-  ;; the whole probe sits inside the try: a symbol that does not resolve must
-  ;; skip the tests, not escape from the delay
-  (delay (and @default-lookup?
-              (try (let [p ((ffi/cfn strdup-sym [:string] :pointer) "probe")]
-                     (try (ffi/ptr->string p) true
-                          (finally (ffi/free p))))
-                   (catch Exception _ false)))))
+  (delay (with-open [arena (ffi/confined-arena)]
+           (try (= "probe" (ffi/ptr->string (sizeless arena "probe")))
+                (catch Exception _ false)))))
 
 (deftest ptr->string-test
   (if-not @unsized-string?
-    (println (if @default-lookup?
-               "ptr->string skipped: this babashka predates reading a sizeless pointer"
-               "ptr->string skipped: this build has no default lookup"))
-    (let [strdup (ffi/cfn strdup-sym [:string] :pointer)]
-      (testing "a pointer C returned has no size, and reads to the NUL"
-        (is (= "hello" (ffi/ptr->string (strdup "hello")))))
+    (println "ptr->string skipped: this babashka predates reading a sizeless pointer")
+    (with-open [arena (ffi/confined-arena)]
+      (testing "a pointer with no size reads to the NUL"
+        (let [p (sizeless arena "hello")]
+          (is (zero? (ffi/size p)))
+          (is (= "hello" (ffi/ptr->string p)))))
       (testing "a limit stops the read"
-        (is (= "hello" (ffi/ptr->string (strdup "hello") 64)))
-        (is (= "hello" (ffi/ptr->string (strdup "hello") 6))))
+        (let [p (sizeless arena "hello")]
+          (is (= "hello" (ffi/ptr->string p 64)))
+          (is (= "hello" (ffi/ptr->string p 6)))))
       (testing "a limit with no NUL inside it is an error, not a walk"
-        (let [p (strdup "hello")]
-          (try (is (thrown-with-msg? Exception #"no NUL byte in the first 3 bytes"
-                                     (ffi/ptr->string p 3)))
-               (finally (ffi/free p)))))
+        (is (thrown-with-msg? Exception #"no NUL byte in the first 3 bytes"
+                              (ffi/ptr->string (sizeless arena "hello") 3))))
       (testing "a limit narrows but never widens an existing bound"
-        (with-open [arena (ffi/confined-arena)]
-          (let [p (ffi/alloc arena 8)]
-            ;; every byte non-NUL: a scan that respects the size must throw,
-            ;; and must report the size rather than the larger limit
-            (ffi/write-bytes p (byte-array (repeat 8 (byte 65))))
-            (is (thrown-with-msg? Exception #"no NUL byte in the first 8 bytes"
-                                  (ffi/ptr->string p 64))))))
+        (let [p (ffi/alloc arena 8)]
+          ;; every byte non-NUL: a scan that respects the size must throw,
+          ;; and must report the size rather than the larger limit
+          (ffi/write-bytes p (byte-array (repeat 8 (byte 65))))
+          (is (thrown-with-msg? Exception #"no NUL byte in the first 8 bytes"
+                                (ffi/ptr->string p 64)))))
       (testing "NULL is nil, with and without a limit"
         (is (nil? (ffi/ptr->string ffi/null)))
         (is (nil? (ffi/ptr->string ffi/null 8)))))))
