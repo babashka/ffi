@@ -541,3 +541,20 @@
             (is (= 6.5 (value p)))
             (ffi/write p tagged {:tag 0 :u [:i 9]})
             (is (= 9.0 (value p)))))))))
+
+;; -- the public API is the documented one --------------------------------------
+
+(deftest public-api-is-documented-test
+  ;; babashka exposes every public var of this namespace, so a var that is
+  ;; public by accident becomes API. API.md is generated from the public vars
+  ;; and reviewed in every change, so it serves as the list of intent: a new
+  ;; public var fails here until `bb quickdoc` is run on purpose. JVM only:
+  ;; in babashka the built-in namespace can be older than this checkout.
+  (when-not (System/getProperty "babashka.version")
+  (let [doc (slurp "API.md")
+        documented (set (map second (re-seq #"<a name=\"babashka.ffi/([^\"]+)\"" doc)))
+        public (set (map name (keys (ns-publics 'babashka.ffi))))]
+    (is (empty? (sort (remove documented public)))
+        "public vars missing from API.md: run bb quickdoc, and check they are meant to be public")
+    (is (empty? (sort (remove public documented)))
+        "API.md documents vars that are no longer public: run bb quickdoc"))))
