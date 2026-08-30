@@ -32,6 +32,7 @@ calls without these settings.
 - [Performance and limits](#performance-and-limits)
   - [On the JVM](#on-the-jvm)
   - [In a babashka native binary](#in-a-babashka-native-binary)
+  - [String arguments](#string-arguments)
   - [Callbacks](#callbacks)
 - [Examples](#examples)
 
@@ -997,6 +998,27 @@ Variadic calls use the FFM fallback with these limits:
 These figures include only the call itself. In babashka, the interpreter
 usually costs more. A `loop` with `recur` adds roughly 30 nanoseconds per
 iteration before C runs.
+
+### String arguments
+
+A `:string` argument copies the string into native memory for the call and
+releases it afterwards. That copy costs about 300 nanoseconds on both hosts,
+several times the call itself.
+
+If a loop passes the same string repeatedly, convert it once with `string->ptr`
+and declare the parameter as `:pointer`:
+
+```clojure
+(def strlen (ffi/cfn "strlen" [:pointer] :size_t))
+
+(with-open [arena (ffi/confined-arena)]
+  (let [p (ffi/string->ptr arena "hello world")]
+    (dotimes [_ 1000000] (strlen p))))
+```
+
+In a babashka binary, each call takes 379 nanoseconds through `:string` and 85
+nanoseconds through a pointer created once. An empty loop takes 26 nanoseconds
+per iteration.
 
 ### Callbacks
 
