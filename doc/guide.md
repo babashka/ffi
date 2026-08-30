@@ -1005,7 +1005,7 @@ A `:string` argument copies the string into native memory for the call and
 releases it afterwards. That copy costs about 300 nanoseconds on both hosts,
 several times the call itself.
 
-Convert a string that a loop passes again and again once, with `string->ptr`,
+If a loop passes the same string repeatedly, convert it once with `string->ptr`
 and declare the parameter as `:pointer`:
 
 ```clojure
@@ -1016,8 +1016,9 @@ and declare the parameter as `:pointer`:
     (dotimes [_ 1000000] (strlen p))))
 ```
 
-Measured in a babashka binary: 379 nanoseconds per call through `:string`,
-85 through a pointer made once, against a 26 nanosecond empty loop.
+In a babashka binary, each call takes 379 nanoseconds through `:string` and 85
+nanoseconds through a pointer created once. An empty loop takes 26 nanoseconds
+per iteration.
 
 ### Callbacks
 
