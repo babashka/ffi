@@ -22,7 +22,9 @@
    :task (api/quickdoc {:git/branch "main"
                         :github/repo "https://github.com/babashka/ffi"
                         :overrides (quote {babashka.ffi {->Place {:no-doc true}
-                                                         Place {:no-doc true}}})
+                                                         Place {:no-doc true}
+                                                         ->Binding {:no-doc true}
+                                                         Binding {:no-doc true}}})
                         :toc true
                         :var-links true
                         :var-pattern :wikilinks})}}}

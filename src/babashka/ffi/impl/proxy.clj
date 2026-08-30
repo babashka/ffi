@@ -65,45 +65,52 @@
       (MethodHandles/filterReturnValue h @double->long-bits)
       h)))
 
+;; Coercers return a primitive long and the return fn takes one, through
+;; the IFn$OL and IFn$LO interfaces, so no argument or result is boxed
+;; between the caller and the downcall.
 (defn- bits-coercer [carrier arg-coercer t]
   (if (= :long (carrier t))
     (arg-coercer t)
-    (fn [a] (Double/doubleToRawLongBits (double a)))))
+    (fn ^long [a] (Double/doubleToRawLongBits (double a)))))
 
 (defn- bits-ret-fn [carrier narrow-ret rettype]
   (case (carrier rettype)
-    :void (fn [_] nil)
-    :long (fn [r] (narrow-ret rettype r))
-    (fn [r] (narrow-ret rettype (Double/longBitsToDouble (long r))))))
+    :long (fn [^long r] (narrow-ret rettype r))
+    (fn [^long r] (narrow-ret rettype (Double/longBitsToDouble r)))))
 
 (defmacro ^:private proxy-caller
   "A fn of n arguments that coerces each with the fn at its index in cs,
   calls the proxy in pd, and passes the result to ret."
-  [iface n]
+  [iface n void?]
   (let [args (mapv #(symbol (str "a" %)) (range n))
         cs (mapv #(symbol (str "c" %)) (range n))
-        p (with-meta (gensym "p") {:tag iface})]
+        p (with-meta (gensym "p") {:tag iface})
+        ret (with-meta 'ret {:tag 'clojure.lang.IFn$LO})
+        call `(.call ~p ~@(map (fn [c a] `(.invokePrim ~c ~a)) cs args))]
     `(fn [pd# ~(with-meta 'cs {:tag 'objects}) ~'ret]
-       (let [~@(interleave cs (map (fn [i] `(aget ~'cs ~i)) (range n)))]
+       (let [~@(interleave (map #(with-meta % {:tag 'clojure.lang.IFn$OL}) cs)
+                           (map (fn [i] `(aget ~'cs ~i)) (range n)))]
          (fn [~@args]
            (let [~p (force pd#)]
-             (~'ret (.call ~p ~@(map (fn [c a] `(~c ~a)) cs args)))))))))
+             ~(if void?
+                `(do ~call nil)
+                `(.invokePrim ~ret ~call))))))))
 
 (def ^:private proxy-callers
-  {[0 false] (proxy-caller babashka.ffi.impl.proxy.L0 0)
-   [1 false] (proxy-caller babashka.ffi.impl.proxy.L1 1)
-   [2 false] (proxy-caller babashka.ffi.impl.proxy.L2 2)
-   [3 false] (proxy-caller babashka.ffi.impl.proxy.L3 3)
-   [4 false] (proxy-caller babashka.ffi.impl.proxy.L4 4)
-   [5 false] (proxy-caller babashka.ffi.impl.proxy.L5 5)
-   [6 false] (proxy-caller babashka.ffi.impl.proxy.L6 6)
-   [0 true] (proxy-caller babashka.ffi.impl.proxy.V0 0)
-   [1 true] (proxy-caller babashka.ffi.impl.proxy.V1 1)
-   [2 true] (proxy-caller babashka.ffi.impl.proxy.V2 2)
-   [3 true] (proxy-caller babashka.ffi.impl.proxy.V3 3)
-   [4 true] (proxy-caller babashka.ffi.impl.proxy.V4 4)
-   [5 true] (proxy-caller babashka.ffi.impl.proxy.V5 5)
-   [6 true] (proxy-caller babashka.ffi.impl.proxy.V6 6)})
+  {[0 false] (proxy-caller babashka.ffi.impl.proxy.L0 0 false)
+   [1 false] (proxy-caller babashka.ffi.impl.proxy.L1 1 false)
+   [2 false] (proxy-caller babashka.ffi.impl.proxy.L2 2 false)
+   [3 false] (proxy-caller babashka.ffi.impl.proxy.L3 3 false)
+   [4 false] (proxy-caller babashka.ffi.impl.proxy.L4 4 false)
+   [5 false] (proxy-caller babashka.ffi.impl.proxy.L5 5 false)
+   [6 false] (proxy-caller babashka.ffi.impl.proxy.L6 6 false)
+   [0 true] (proxy-caller babashka.ffi.impl.proxy.V0 0 true)
+   [1 true] (proxy-caller babashka.ffi.impl.proxy.V1 1 true)
+   [2 true] (proxy-caller babashka.ffi.impl.proxy.V2 2 true)
+   [3 true] (proxy-caller babashka.ffi.impl.proxy.V3 3 true)
+   [4 true] (proxy-caller babashka.ffi.impl.proxy.V4 4 true)
+   [5 true] (proxy-caller babashka.ffi.impl.proxy.V5 5 true)
+   [6 true] (proxy-caller babashka.ffi.impl.proxy.V6 6 true)})
 
 (defn proxy-cfn
   "A JVM binding: the downcall handle behind an interface proxy, arguments
