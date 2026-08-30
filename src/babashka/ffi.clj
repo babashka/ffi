@@ -888,10 +888,20 @@
     (fixed-ffm-cfn lib sym argtypes rettype)))
 
 ;; On the JVM a binding calls through an interface proxy over the downcall
-;; handle, see babashka.ffi.impl.proxy. The namespace is loaded on first use
-;; and only off native image, so an image never includes it.
+;; handle, see babashka.ffi.impl.proxy. Resolved here, at load time, and
+;; never in a native image: a run-time require would make the Clojure
+;; compiler reachable and grow the image.
 (def ^:private proxy-cfn
-  (delay (requiring-resolve 'babashka.ffi.impl.proxy/proxy-cfn)))
+  (when-not native-image?
+    (let [f (requiring-resolve 'babashka.ffi.impl.proxy/proxy-cfn)
+          helpers {:carrier carrier
+                   :arg-coercer arg-coercer
+                   :narrow-ret narrow-ret
+                   :with-string-args with-string-args
+                   :descriptor descriptor
+                   :require-symbol require-symbol
+                   :linker (fn [] @linker*)}]
+      (fn [lib sym argtypes rettype] (f helpers lib sym argtypes rettype)))))
 
 (defn- fixed-ffm-cfn
   [lib sym argtypes rettype]
@@ -956,7 +966,7 @@
        (cond
          ;; the JVM: the proxy path, JIT-compiled to a direct call
          (and (not native-image?) (<= n 6))
-         (@proxy-cfn lib sym types rettype)
+         (proxy-cfn lib sym types rettype)
 
          strings?
          (fn [& args]

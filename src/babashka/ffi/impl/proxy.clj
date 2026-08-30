@@ -8,21 +8,16 @@
   MethodHandleProxies binds the two. The JIT inlines the call through the
   interface, about 4ns. Doubles and floats travel as their raw long bits.
 
-  babashka.ffi loads this namespace on the JVM only. A native image calls
-  through its trampolines and never includes this code."
-  (:require [babashka.ffi])
+  babashka.ffi loads this namespace while it loads itself, on the JVM only.
+  A native image calls through its trampolines and never includes this
+  code. Do not require this namespace directly."
   (:import [java.lang.foreign Linker]
            [java.lang.invoke MethodHandle MethodHandleProxies MethodHandles MethodType]))
 
 (set! *warn-on-reflection* true)
 
-(def ^:private carrier* @#'babashka.ffi/carrier)
-(def ^:private arg-coercer* @#'babashka.ffi/arg-coercer)
-(def ^:private narrow-ret* @#'babashka.ffi/narrow-ret)
-(def ^:private with-string-args* @#'babashka.ffi/with-string-args)
-(def ^:private descriptor* @#'babashka.ffi/descriptor)
-(def ^:private require-symbol* @#'babashka.ffi/require-symbol)
-(def ^:private linker** @#'babashka.ffi/linker*)
+;; babashka.ffi passes its helpers in, so this namespace depends on nothing
+;; and loads in any order
 
 (definterface L0 (^long call []))
 (definterface L1 (^long call [^long a]))
@@ -53,9 +48,9 @@
 (defn- long-bits-handle
   "Adapts downcall handle h so that each argument is a long, doubles and
   floats as raw bits, and the result is a long or void."
-  ^MethodHandle [^MethodHandle h argtypes rettype]
-  (let [carriers (mapv carrier* argtypes)
-        ret ^Class (case (carrier* rettype) :void Void/TYPE :long Long/TYPE Double/TYPE)
+  ^MethodHandle [carrier ^MethodHandle h argtypes rettype]
+  (let [carriers (mapv carrier argtypes)
+        ret ^Class (case (carrier rettype) :void Void/TYPE :long Long/TYPE Double/TYPE)
         params ^"[Ljava.lang.Class;" (into-array Class (map #(if (= :long %) Long/TYPE Double/TYPE)
                                                              carriers))
         h (MethodHandles/explicitCastArguments h (MethodType/methodType ret params))
@@ -70,16 +65,16 @@
       (MethodHandles/filterReturnValue h @double->long-bits)
       h)))
 
-(defn- bits-coercer [t]
-  (if (= :long (carrier* t))
-    (arg-coercer* t)
+(defn- bits-coercer [carrier arg-coercer t]
+  (if (= :long (carrier t))
+    (arg-coercer t)
     (fn [a] (Double/doubleToRawLongBits (double a)))))
 
-(defn- bits-ret-fn [rettype]
-  (case (carrier* rettype)
+(defn- bits-ret-fn [carrier narrow-ret rettype]
+  (case (carrier rettype)
     :void (fn [_] nil)
-    :long (fn [r] (narrow-ret* rettype r))
-    (fn [r] (narrow-ret* rettype (Double/longBitsToDouble (long r))))))
+    :long (fn [r] (narrow-ret rettype r))
+    (fn [r] (narrow-ret rettype (Double/longBitsToDouble (long r))))))
 
 (defmacro ^:private proxy-caller
   "A fn of n arguments that coerces each with the fn at its index in cs,
@@ -112,25 +107,30 @@
 
 (defn proxy-cfn
   "A JVM binding: the downcall handle behind an interface proxy, arguments
-  in declared order. The handle is created on the first call."
-  [lib sym argtypes rettype]
+  in declared order. The handle is created on the first call. helpers holds
+  the babashka.ffi fns :carrier, :arg-coercer, :narrow-ret,
+  :with-string-args, :descriptor, :require-symbol, and :linker."
+  [{:keys [carrier arg-coercer narrow-ret with-string-args descriptor require-symbol linker]}
+   lib sym argtypes rettype]
   (let [n (count argtypes)
         void? (= :void rettype)
         pd (delay
-             (let [handle (.downcallHandle ^Linker @linker**
-                                           (require-symbol* lib sym)
-                                           (descriptor* argtypes rettype)
+             (let [handle (.downcallHandle ^Linker (linker)
+                                           (require-symbol lib sym)
+                                           (descriptor argtypes rettype)
                                            (make-array java.lang.foreign.Linker$Option 0))]
                (MethodHandleProxies/asInterfaceInstance
                 (nth (if void? void-ifaces long-ifaces) n)
-                (long-bits-handle handle argtypes rettype))))
+                (long-bits-handle carrier handle argtypes rettype))))
         fixed ((proxy-callers [n void?])
-               pd (object-array (map bits-coercer argtypes)) (bits-ret-fn rettype))]
+               pd
+               (object-array (map #(bits-coercer carrier arg-coercer %) argtypes))
+               (bits-ret-fn carrier narrow-ret rettype))]
     (if (some #(= :string %) argtypes)
       ;; strings need a temporary arena that has to outlive the call
       (fn [& args]
         (if (= (count args) n)
-          (with-string-args* argtypes (vec args) #(apply fixed %))
+          (with-string-args argtypes (vec args) #(apply fixed %))
           (throw (ex-info (str "babashka.ffi: " sym " expects " n " args, got " (count args))
                           {:symbol sym}))))
       fixed)))
