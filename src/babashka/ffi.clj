@@ -93,6 +93,85 @@
 ;; image (addresses would be baked into the image heap).
 (def ^:private linker* (delay (Linker/nativeLinker)))
 
+;; A binding carries metadata, :babashka.ffi/backend. with-meta on a fn
+;; returns a wrapper that routes every call through applyTo with a fresh
+;; argument seq, so a binding is this type instead: the calls delegate
+;; directly. A call with the wrong number of arguments names the symbol,
+;; and the binding prints as its signature.
+(defn- arity-ex [sym expects got]
+  (ex-info (str "babashka.ffi: " sym " expects " expects " args, got " got)
+           {:symbol sym}))
+
+(deftype Binding [^clojure.lang.IFn f m sym argtypes rettype ^long arity]
+  clojure.lang.Fn
+  clojure.lang.IFn
+  (invoke [_]
+    (if (or (== arity -1) (== arity 0)) (.invoke f) (throw (arity-ex sym arity 0))))
+  (invoke [_ a0]
+    (if (or (== arity -1) (== arity 1)) (.invoke f a0) (throw (arity-ex sym arity 1))))
+  (invoke [_ a0 a1]
+    (if (or (== arity -1) (== arity 2)) (.invoke f a0 a1) (throw (arity-ex sym arity 2))))
+  (invoke [_ a0 a1 a2]
+    (if (or (== arity -1) (== arity 3)) (.invoke f a0 a1 a2) (throw (arity-ex sym arity 3))))
+  (invoke [_ a0 a1 a2 a3]
+    (if (or (== arity -1) (== arity 4)) (.invoke f a0 a1 a2 a3) (throw (arity-ex sym arity 4))))
+  (invoke [_ a0 a1 a2 a3 a4]
+    (if (or (== arity -1) (== arity 5)) (.invoke f a0 a1 a2 a3 a4) (throw (arity-ex sym arity 5))))
+  (invoke [_ a0 a1 a2 a3 a4 a5]
+    (if (or (== arity -1) (== arity 6)) (.invoke f a0 a1 a2 a3 a4 a5) (throw (arity-ex sym arity 6))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6]
+    (if (or (== arity -1) (== arity 7)) (.invoke f a0 a1 a2 a3 a4 a5 a6) (throw (arity-ex sym arity 7))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7]
+    (if (or (== arity -1) (== arity 8)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7) (throw (arity-ex sym arity 8))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8]
+    (if (or (== arity -1) (== arity 9)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8) (throw (arity-ex sym arity 9))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9]
+    (if (or (== arity -1) (== arity 10)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9) (throw (arity-ex sym arity 10))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10]
+    (if (or (== arity -1) (== arity 11)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10) (throw (arity-ex sym arity 11))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11]
+    (if (or (== arity -1) (== arity 12)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11) (throw (arity-ex sym arity 12))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12]
+    (if (or (== arity -1) (== arity 13)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12) (throw (arity-ex sym arity 13))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13]
+    (if (or (== arity -1) (== arity 14)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13) (throw (arity-ex sym arity 14))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14]
+    (if (or (== arity -1) (== arity 15)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14) (throw (arity-ex sym arity 15))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15]
+    (if (or (== arity -1) (== arity 16)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15) (throw (arity-ex sym arity 16))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16]
+    (if (or (== arity -1) (== arity 17)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16) (throw (arity-ex sym arity 17))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17]
+    (if (or (== arity -1) (== arity 18)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17) (throw (arity-ex sym arity 18))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18]
+    (if (or (== arity -1) (== arity 19)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18) (throw (arity-ex sym arity 19))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19]
+    (if (or (== arity -1) (== arity 20)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19) (throw (arity-ex sym arity 20))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 ^objects more]
+    (if (== arity -1)
+      (.applyTo f (concat [a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19] (seq more)))
+      (throw (arity-ex sym arity (+ 20 (alength more))))))
+  (applyTo [_ args]
+    (if (or (== arity -1) (== arity (count args)))
+      (.applyTo f args)
+      (throw (arity-ex sym arity (count args)))))
+  (call [_] (if (or (== arity -1) (== arity 0)) (.invoke f) (throw (arity-ex sym arity 0))))
+  (run [_] (if (or (== arity -1) (== arity 0)) (.invoke f) (throw (arity-ex sym arity 0))))
+  clojure.lang.IObj
+  (meta [_] m)
+  (withMeta [_ m2] (Binding. f m2 sym argtypes rettype arity))
+  Object
+  (toString [_] (str sym " " (pr-str argtypes) " -> " rettype)))
+
+(alter-meta! #'->Binding assoc :private true)
+
+(defn- binding-with-meta
+  "Wraps binding f in a Binding: meta m, the symbol and signature for
+  errors and printing. A variadic signature leaves the arity check to f."
+  [f m sym argtypes rettype]
+  (->Binding f m sym argtypes rettype
+             (if (some #(= :& %) argtypes) -1 (count argtypes))))
+
 (def ^:private long-carrier?
   #{:int :uint :long :ulong :int8 :uint8 :int16 :uint16 :int32 :uint32
     :int64 :uint64 :size_t :ssize_t :char :byte :pointer :string :bool})
@@ -391,13 +470,15 @@
 ;; One coercion function per type, looked up when a binding is created, so
 ;; nothing dispatches on the type during a call.
 (def ^:private arg-coercer
-  (let [as-long (fn [a] (cond (nil? a) 0
-                              (native-segment? a) (.address ^MemorySegment a)
-                              :else (long a)))
-        as-addr (fn [a] (cond (nil? a) 0
-                              (native-segment? a) (.address ^MemorySegment a)
-                              :else (throw (pointer-ex a))))
-        as-bool (fn [a] (if a 1 0))]
+  (let [;; the common case first: a boxed long, then a pointer
+        as-long (fn ^long [a] (cond (instance? Long a) (.longValue ^Long a)
+                                    (nil? a) 0
+                                    (native-segment? a) (.address ^MemorySegment a)
+                                    :else (long a)))
+        as-addr (fn ^long [a] (cond (native-segment? a) (.address ^MemorySegment a)
+                                    (nil? a) 0
+                                    :else (throw (pointer-ex a))))
+        as-bool (fn ^long [a] (if a 1 0))]
     (into {:double double :float float :bool as-bool :pointer as-addr}
           (map (fn [t] [t as-long]))
           (disj long-carrier? :bool :pointer))))
@@ -677,7 +758,7 @@
   (let [nf (count fixed)
         cache (atom {})
         address (delay (.address (require-symbol lib sym)))]
-    (with-meta
+    (binding-with-meta
       (fn [& args]
         (when (< (count args) nf)
           (throw (ex-info (str "babashka.ffi: " sym " expects at least " nf
@@ -699,7 +780,7 @@
                                                                          rettype nf address))))))
                           tail-types))]
           (apply f args)))
-      {:babashka.ffi/backend :libffi})))
+      {:babashka.ffi/backend :libffi} sym (conj fixed :&) rettype)))
 
 (defn- declared-variadic-cfn
   "A variadic binding whose tail shape is declared in the signature, so it
@@ -720,10 +801,10 @@
                              "a variadic call in a native image goes through libffi, and this build has none")))
     (if native-image?
       (let [call (libffi-cfn lib sym all-types rettype nf nil)]
-        (with-meta (fn [& args]
+        (binding-with-meta (fn [& args]
                      (when-not (= n (count args)) (arity-error (count args)))
                      (apply call args))
-          {:babashka.ffi/backend :libffi}))
+          {:babashka.ffi/backend :libffi} sym (into (conj fixed :&) tail) rettype))
       (let [address (delay (require-symbol lib sym))
               handle (delay (.downcallHandle
                              ^Linker @linker*
@@ -732,7 +813,7 @@
                              (into-array java.lang.foreign.Linker$Option
                                          [(java.lang.foreign.Linker$Option/firstVariadicArg nf)])))
               coercers ^objects (object-array (map arg-coercer all-types))]
-          (with-meta
+          (binding-with-meta
             (fn [& args]
               (when-not (= n (count args)) (arity-error (count args)))
               (with-string-args all-types (vec args)
@@ -740,7 +821,7 @@
                   (let [^objects arr (object-array args)]
                     (dotimes [i n] (aset arr i ((aget coercers i) (aget arr i))))
                     (narrow-ret rettype (.invokeWithArguments ^MethodHandle @handle arr))))))
-          {:babashka.ffi/backend :ffm})))))
+          {:babashka.ffi/backend :ffm} sym (into (conj fixed :&) tail) rettype)))))
 
 (defn- variadic-cfn
   "A variadic binding: fixed types declared, tail inferred per call. In a
@@ -779,7 +860,7 @@
                              (.invokeWithArguments ^MethodHandle handle arr))]
                 (swap! cache assoc tail-types caller)
                 caller)))]
-    (with-meta
+    (binding-with-meta
       (fn [& args]
         (when (< (count args) nf)
           (throw (ex-info (str "babashka.ffi: " sym " expects at least " nf
@@ -795,7 +876,7 @@
                           (caller (object-array
                                    (map-indexed (fn [i a] (coerce-arg (all-types i) a))
                                                 args))))))))
-      {:babashka.ffi/backend :ffm})))
+      {:babashka.ffi/backend :ffm} sym (conj fixed :&) rettype)))
 
 (defn cfn
   "Creates a Clojure function that calls the C function sym. sym is a C symbol
@@ -887,6 +968,22 @@
     (libffi-cfn lib sym argtypes rettype)
     (fixed-ffm-cfn lib sym argtypes rettype)))
 
+;; On the JVM a binding calls through an interface proxy over the downcall
+;; handle, see babashka.ffi.impl.proxy. Resolved here, at load time, and
+;; never in a native image: a run-time require would make the Clojure
+;; compiler reachable and grow the image.
+(def ^:private proxy-cfn
+  (when-not native-image?
+    (let [f (requiring-resolve 'babashka.ffi.impl.proxy/proxy-cfn)
+          helpers {:carrier carrier
+                   :arg-coercer arg-coercer
+                   :narrow-ret narrow-ret
+                   :with-string-args with-string-args
+                   :descriptor descriptor
+                   :require-symbol require-symbol
+                   :linker (fn [] @linker*)}]
+      (fn [lib sym argtypes rettype] (f helpers lib sym argtypes rettype)))))
+
 (defn- fixed-ffm-cfn
   [lib sym argtypes rettype]
   (let [types argtypes
@@ -946,11 +1043,18 @@
                        (throw (ex-info (str "babashka.ffi: " sym " expects " n
                                             " args, got " got)
                                        {:symbol sym})))]
-     (with-meta
-       (if strings?
+     (binding-with-meta
+       (cond
+         ;; the JVM: the proxy path, JIT-compiled to a direct call
+         (and (not native-image?) (<= n 6))
+         (proxy-cfn lib sym types rettype)
+
+         strings?
          (fn [& args]
            (if (= (count args) n) (general args) (arity-error (count args))))
+
          ;; fixed arities, no seq allocation, no intermediate vectors
+         :else
          (case n
              0 (fn [] (call (object-array 0)))
              1 (fn [a] (call (fill (doto (object-array 1) (aset 0 a)))))
@@ -965,7 +1069,7 @@
        ;; which call mechanism this binding uses, for tests and diagnostics:
        ;; :trampoline = compiled direct call, :ffm = downcall handle
        ;; (interpreted in a native image)
-       {:babashka.ffi/backend (if tramp-id :trampoline :ffm)})))
+       {:babashka.ffi/backend (if tramp-id :trampoline :ffm)} sym argtypes rettype)))
 
 (defmacro defcfn
   "Defines name as a C function binding created by cfn:
@@ -2061,7 +2165,7 @@
                       (throw (ex-info (str "babashka.ffi: " sym " expects " n
                                            " args, got " got)
                                       {:symbol sym})))]
-    (with-meta
+    (binding-with-meta
       (fn [& args]
         (let [args (vec args)]
           (when-not (= n (count args)) (arity-error (count args)))
@@ -2083,7 +2187,7 @@
                 (cond struct-ret? (decode raw)
                       void? nil
                       :else (narrow-ret rettype raw)))))))
-      {:babashka.ffi/backend :ffm})))
+      {:babashka.ffi/backend :ffm} sym argtypes rettype)))
 
 (defn- libffi-cfn
   "Returns a libffi binding: a struct signature on any platform, and in a
@@ -2139,7 +2243,7 @@
                         (throw (ex-info (str "babashka.ffi: " sym " expects " n
                                              " args, got " got)
                                         {:symbol sym})))]
-      (with-meta
+      (binding-with-meta
         ;; Each call uses a confined arena for scratch memory. Thus, threads
         ;; can share a binding and a call can re-enter it.
         (fn [& args]
@@ -2157,7 +2261,7 @@
                 (try (call (.address cif) @fnp (+ base rvalue-off) base)
                      (finally (java.lang.ref.Reference/reachabilityFence cif)))
                 (when decode (decode scratch))))))
-        {:babashka.ffi/backend :libffi})))))
+        {:babashka.ffi/backend :libffi} sym argtypes rettype)))))
 
 ;; -- callbacks ----------------------------------------------------------------
 

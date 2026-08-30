@@ -735,3 +735,24 @@
           (is (thrown-with-msg? Exception #"up to 6 integer and pointer args"
                                 (ffi/callback arena (fn [_ _ _ _ _] 0)
                                               [:long :long :long :long :double] :long))))))))
+
+(deftest binding-diagnostics-test
+  ;; JVM only: in babashka the built-in namespace can be older than this
+  ;; checkout
+  (when-not (System/getProperty "babashka.version")
+  (let [c-abs (ffi/cfn "abs" [:int] :int)]
+    (testing "a call with the wrong number of arguments names the symbol"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"babashka.ffi: abs expects 1 args, got 2"
+                            (c-abs 1 2)))
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"babashka.ffi: abs expects 1 args, got 0"
+                            (c-abs)))
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"expects 1 args, got 3"
+                            (apply c-abs [1 2 3]))))
+    (testing "a binding prints as its signature"
+      (is (= "abs [:int] -> :int" (str c-abs))))
+    (testing "a binding is a fn and keeps its meta through vary-meta"
+      (is (fn? c-abs))
+      (is (= 5 (c-abs -5)))
+      (is (= (:babashka.ffi/backend (meta c-abs))
+             (:babashka.ffi/backend (meta (vary-meta c-abs assoc :x 1)))))
+      (is (= 5 ((vary-meta c-abs assoc :x 1) -5)))))))
