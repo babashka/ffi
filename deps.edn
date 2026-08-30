@@ -1,4 +1,6 @@
 {:paths ["src" "resources"]
+ ;; insn generates the JVM call classes; babashka never loads it
+ :deps {insn/insn {:mvn/version "0.5.4"}}
  :aliases
  {:test {:extra-paths ["test"]
          ;; fs and process are built into babashka; the JVM run needs them

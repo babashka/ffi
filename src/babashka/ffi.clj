@@ -968,13 +968,13 @@
     (libffi-cfn lib sym argtypes rettype)
     (fixed-ffm-cfn lib sym argtypes rettype)))
 
-;; On the JVM a binding calls through an interface proxy over the downcall
-;; handle, see babashka.ffi.impl.proxy. Resolved here, at load time, and
+;; On the JVM a binding calls through a generated class around the downcall
+;; handle, see babashka.ffi.impl.insn. Resolved here, at load time, and
 ;; never in a native image: a run-time require would make the Clojure
 ;; compiler reachable and grow the image.
-(def ^:private proxy-cfn
+(def ^:private jvm-cfn
   (when-not native-image?
-    (let [f (requiring-resolve 'babashka.ffi.impl.proxy/proxy-cfn)
+    (let [f (requiring-resolve 'babashka.ffi.impl.insn/insn-cfn)
           helpers {:carrier carrier
                    :arg-coercer arg-coercer
                    :narrow-ret narrow-ret
@@ -1045,9 +1045,9 @@
                                        {:symbol sym})))]
      (binding-with-meta
        (cond
-         ;; the JVM: the proxy path, JIT-compiled to a direct call
+         ;; the JVM: the generated class, JIT-compiled to a direct call
          (and (not native-image?) (<= n 6))
-         (proxy-cfn lib sym types rettype)
+         (jvm-cfn lib sym types rettype)
 
          strings?
          (fn [& args]
