@@ -96,44 +96,81 @@
 ;; A binding carries metadata, :babashka.ffi/backend. with-meta on a fn
 ;; returns a wrapper that routes every call through applyTo with a fresh
 ;; argument seq, so a binding is this type instead: the calls delegate
-;; directly.
-(deftype Binding [^clojure.lang.IFn f m]
+;; directly. A call with the wrong number of arguments names the symbol,
+;; and the binding prints as its signature.
+(defn- arity-ex [sym expects got]
+  (ex-info (str "babashka.ffi: " sym " expects " expects " args, got " got)
+           {:symbol sym}))
+
+(deftype Binding [^clojure.lang.IFn f m sym argtypes rettype ^long arity]
   clojure.lang.Fn
   clojure.lang.IFn
-  (invoke [_] (.invoke f))
-  (invoke [_ a0] (.invoke f a0))
-  (invoke [_ a0 a1] (.invoke f a0 a1))
-  (invoke [_ a0 a1 a2] (.invoke f a0 a1 a2))
-  (invoke [_ a0 a1 a2 a3] (.invoke f a0 a1 a2 a3))
-  (invoke [_ a0 a1 a2 a3 a4] (.invoke f a0 a1 a2 a3 a4))
-  (invoke [_ a0 a1 a2 a3 a4 a5] (.invoke f a0 a1 a2 a3 a4 a5))
-  (invoke [_ a0 a1 a2 a3 a4 a5 a6] (.invoke f a0 a1 a2 a3 a4 a5 a6))
-  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7] (.invoke f a0 a1 a2 a3 a4 a5 a6 a7))
-  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8] (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8))
-  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9] (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9))
-  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10] (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10))
-  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11] (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11))
-  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12] (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12))
-  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13] (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13))
-  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14] (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14))
-  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15] (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15))
-  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16] (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16))
-  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17] (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17))
-  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18] (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18))
-  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19] (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19))
+  (invoke [_]
+    (if (or (== arity -1) (== arity 0)) (.invoke f) (throw (arity-ex sym arity 0))))
+  (invoke [_ a0]
+    (if (or (== arity -1) (== arity 1)) (.invoke f a0) (throw (arity-ex sym arity 1))))
+  (invoke [_ a0 a1]
+    (if (or (== arity -1) (== arity 2)) (.invoke f a0 a1) (throw (arity-ex sym arity 2))))
+  (invoke [_ a0 a1 a2]
+    (if (or (== arity -1) (== arity 3)) (.invoke f a0 a1 a2) (throw (arity-ex sym arity 3))))
+  (invoke [_ a0 a1 a2 a3]
+    (if (or (== arity -1) (== arity 4)) (.invoke f a0 a1 a2 a3) (throw (arity-ex sym arity 4))))
+  (invoke [_ a0 a1 a2 a3 a4]
+    (if (or (== arity -1) (== arity 5)) (.invoke f a0 a1 a2 a3 a4) (throw (arity-ex sym arity 5))))
+  (invoke [_ a0 a1 a2 a3 a4 a5]
+    (if (or (== arity -1) (== arity 6)) (.invoke f a0 a1 a2 a3 a4 a5) (throw (arity-ex sym arity 6))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6]
+    (if (or (== arity -1) (== arity 7)) (.invoke f a0 a1 a2 a3 a4 a5 a6) (throw (arity-ex sym arity 7))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7]
+    (if (or (== arity -1) (== arity 8)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7) (throw (arity-ex sym arity 8))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8]
+    (if (or (== arity -1) (== arity 9)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8) (throw (arity-ex sym arity 9))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9]
+    (if (or (== arity -1) (== arity 10)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9) (throw (arity-ex sym arity 10))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10]
+    (if (or (== arity -1) (== arity 11)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10) (throw (arity-ex sym arity 11))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11]
+    (if (or (== arity -1) (== arity 12)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11) (throw (arity-ex sym arity 12))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12]
+    (if (or (== arity -1) (== arity 13)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12) (throw (arity-ex sym arity 13))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13]
+    (if (or (== arity -1) (== arity 14)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13) (throw (arity-ex sym arity 14))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14]
+    (if (or (== arity -1) (== arity 15)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14) (throw (arity-ex sym arity 15))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15]
+    (if (or (== arity -1) (== arity 16)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15) (throw (arity-ex sym arity 16))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16]
+    (if (or (== arity -1) (== arity 17)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16) (throw (arity-ex sym arity 17))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17]
+    (if (or (== arity -1) (== arity 18)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17) (throw (arity-ex sym arity 18))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18]
+    (if (or (== arity -1) (== arity 19)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18) (throw (arity-ex sym arity 19))))
+  (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19]
+    (if (or (== arity -1) (== arity 20)) (.invoke f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19) (throw (arity-ex sym arity 20))))
   (invoke [_ a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 ^objects more]
-    (.applyTo f (concat [a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19] (seq more))))
-  (applyTo [_ args] (.applyTo f args))
-  (call [_] (.invoke f))
-  (run [_] (.invoke f))
+    (if (== arity -1)
+      (.applyTo f (concat [a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19] (seq more)))
+      (throw (arity-ex sym arity (+ 20 (alength more))))))
+  (applyTo [_ args]
+    (if (or (== arity -1) (== arity (count args)))
+      (.applyTo f args)
+      (throw (arity-ex sym arity (count args)))))
+  (call [_] (if (or (== arity -1) (== arity 0)) (.invoke f) (throw (arity-ex sym arity 0))))
+  (run [_] (if (or (== arity -1) (== arity 0)) (.invoke f) (throw (arity-ex sym arity 0))))
   clojure.lang.IObj
   (meta [_] m)
-  (withMeta [_ m2] (Binding. f m2)))
+  (withMeta [_ m2] (Binding. f m2 sym argtypes rettype arity))
+  Object
+  (toString [_] (str sym " " (pr-str argtypes) " -> " rettype)))
 
 (alter-meta! #'->Binding assoc :private true)
 
-(defn- binding-with-meta [f m]
-  (->Binding f m))
+(defn- binding-with-meta
+  "Wraps binding f in a Binding: meta m, the symbol and signature for
+  errors and printing. A variadic signature leaves the arity check to f."
+  [f m sym argtypes rettype]
+  (->Binding f m sym argtypes rettype
+             (if (some #(= :& %) argtypes) -1 (count argtypes))))
 
 (def ^:private long-carrier?
   #{:int :uint :long :ulong :int8 :uint8 :int16 :uint16 :int32 :uint32
@@ -743,7 +780,7 @@
                                                                          rettype nf address))))))
                           tail-types))]
           (apply f args)))
-      {:babashka.ffi/backend :libffi})))
+      {:babashka.ffi/backend :libffi} sym (conj fixed :&) rettype)))
 
 (defn- declared-variadic-cfn
   "A variadic binding whose tail shape is declared in the signature, so it
@@ -767,7 +804,7 @@
         (binding-with-meta (fn [& args]
                      (when-not (= n (count args)) (arity-error (count args)))
                      (apply call args))
-          {:babashka.ffi/backend :libffi}))
+          {:babashka.ffi/backend :libffi} sym (into (conj fixed :&) tail) rettype))
       (let [address (delay (require-symbol lib sym))
               handle (delay (.downcallHandle
                              ^Linker @linker*
@@ -784,7 +821,7 @@
                   (let [^objects arr (object-array args)]
                     (dotimes [i n] (aset arr i ((aget coercers i) (aget arr i))))
                     (narrow-ret rettype (.invokeWithArguments ^MethodHandle @handle arr))))))
-          {:babashka.ffi/backend :ffm})))))
+          {:babashka.ffi/backend :ffm} sym (into (conj fixed :&) tail) rettype)))))
 
 (defn- variadic-cfn
   "A variadic binding: fixed types declared, tail inferred per call. In a
@@ -839,7 +876,7 @@
                           (caller (object-array
                                    (map-indexed (fn [i a] (coerce-arg (all-types i) a))
                                                 args))))))))
-      {:babashka.ffi/backend :ffm})))
+      {:babashka.ffi/backend :ffm} sym (conj fixed :&) rettype)))
 
 (defn cfn
   "Creates a Clojure function that calls the C function sym. sym is a C symbol
@@ -1032,7 +1069,7 @@
        ;; which call mechanism this binding uses, for tests and diagnostics:
        ;; :trampoline = compiled direct call, :ffm = downcall handle
        ;; (interpreted in a native image)
-       {:babashka.ffi/backend (if tramp-id :trampoline :ffm)})))
+       {:babashka.ffi/backend (if tramp-id :trampoline :ffm)} sym argtypes rettype)))
 
 (defmacro defcfn
   "Defines name as a C function binding created by cfn:
@@ -2150,7 +2187,7 @@
                 (cond struct-ret? (decode raw)
                       void? nil
                       :else (narrow-ret rettype raw)))))))
-      {:babashka.ffi/backend :ffm})))
+      {:babashka.ffi/backend :ffm} sym argtypes rettype)))
 
 (defn- libffi-cfn
   "Returns a libffi binding: a struct signature on any platform, and in a
@@ -2224,7 +2261,7 @@
                 (try (call (.address cif) @fnp (+ base rvalue-off) base)
                      (finally (java.lang.ref.Reference/reachabilityFence cif)))
                 (when decode (decode scratch))))))
-        {:babashka.ffi/backend :libffi})))))
+        {:babashka.ffi/backend :libffi} sym argtypes rettype)))))
 
 ;; -- callbacks ----------------------------------------------------------------
 
