@@ -887,6 +887,12 @@
     (libffi-cfn lib sym argtypes rettype)
     (fixed-ffm-cfn lib sym argtypes rettype)))
 
+;; On the JVM a binding calls through an interface proxy over the downcall
+;; handle, see babashka.ffi.impl.proxy. The namespace is loaded on first use
+;; and only off native image, so an image never includes it.
+(def ^:private proxy-cfn
+  (delay (requiring-resolve 'babashka.ffi.impl.proxy/proxy-cfn)))
+
 (defn- fixed-ffm-cfn
   [lib sym argtypes rettype]
   (let [types argtypes
@@ -947,10 +953,17 @@
                                             " args, got " got)
                                        {:symbol sym})))]
      (with-meta
-       (if strings?
+       (cond
+         ;; the JVM: the proxy path, JIT-compiled to a direct call
+         (and (not native-image?) (<= n 6))
+         (@proxy-cfn lib sym types rettype)
+
+         strings?
          (fn [& args]
            (if (= (count args) n) (general args) (arity-error (count args))))
+
          ;; fixed arities, no seq allocation, no intermediate vectors
+         :else
          (case n
              0 (fn [] (call (object-array 0)))
              1 (fn [a] (call (fill (doto (object-array 1) (aset 0 a)))))
