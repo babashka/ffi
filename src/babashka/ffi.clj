@@ -64,11 +64,8 @@
   set calls through libffi, at about 1 microsecond instead of about 100
   nanoseconds. Without libffi, such a signature throws.
 
-  Native images use libffi for every variadic call. If libffi is not
-  available, variadic calls use the FFM fallback. This fallback supports at
-  most five total arguments, three fixed arguments, none of them :float,
-  and two :double arguments. Its return type must be :void, an integer
-  type, or a pointer type. Callbacks
+  Native images use libffi for every variadic call. Without libffi, a
+  variadic call throws. Callbacks
   support up to four arguments and two :double arguments. Callbacks do not
   support :float. The callback return type must be :void, an integer type, or
   :double. Argument order does not affect these limits. See doc/guide.md for
@@ -639,9 +636,6 @@
                 "Please report this signature in a babashka issue; it can likely be supported.")
            {:symbol sym :argtypes argtypes :rettype rettype}))
 
-(def ^:private variadic-limits
-  "variadic calls support up to 5 args total, at most 3 fixed and none of them :float, at most 2 :double, and a :void, integer or pointer return")
-
 (def ^:private layout-kinds
   ;; Keep in sync with .clj-kondo/hooks/babashka/ffi.clj.
   #{:struct :array :union})
@@ -721,21 +715,16 @@
         arity-error (fn [got]
                       (throw (ex-info (str "babashka.ffi: " sym " expects " n " args, got " got)
                                       {:symbol sym})))]
-    (if (and native-image? (libffi-available?))
+    (when (and native-image? (not (libffi-available?)))
+      (throw (unsupported-ex sym all-types rettype
+                             "a variadic call in a native image goes through libffi, and this build has none")))
+    (if native-image?
       (let [call (libffi-cfn lib sym all-types rettype nf nil)]
         (with-meta (fn [& args]
                      (when-not (= n (count args)) (arity-error (count args)))
                      (apply call args))
           {:babashka.ffi/backend :libffi}))
-      (do
-        (when (and native-image?
-                   (or (> n 5)
-                       (> (count (filter #(= :double (carrier %)) all-types)) 2)
-                       (> nf 3)
-                       (some #(= :float (carrier %)) fixed)
-                       (#{:double :float} (carrier rettype))))
-          (throw (unsupported-ex sym all-types rettype variadic-limits)))
-        (let [address (delay (require-symbol lib sym))
+      (let [address (delay (require-symbol lib sym))
               handle (delay (.downcallHandle
                              ^Linker @linker*
                              ^MemorySegment @address
@@ -751,7 +740,7 @@
                   (let [^objects arr (object-array args)]
                     (dotimes [i n] (aset arr i ((aget coercers i) (aget arr i))))
                     (narrow-ret rettype (.invokeWithArguments ^MethodHandle @handle arr))))))
-            {:babashka.ffi/backend :ffm}))))))
+          {:babashka.ffi/backend :ffm})))))
 
 (defn- variadic-cfn
   "A variadic binding: fixed types declared, tail inferred per call. In a
@@ -761,19 +750,16 @@
   [lib sym fixed argtypes rettype]
   (doseq [t fixed] (carrier t))
   (carrier rettype)
-  (if (and native-image? (libffi-available?))
-    (variadic-libffi-cfn lib sym fixed rettype)
-    (variadic-ffm-cfn lib sym fixed argtypes rettype)))
+  (cond
+    (not native-image?) (variadic-ffm-cfn lib sym fixed rettype)
+    (libffi-available?) (variadic-libffi-cfn lib sym fixed rettype)
+    :else (throw (unsupported-ex sym argtypes rettype
+                                 "a variadic call in a native image goes through libffi, and this build has none"))))
 
 (defn- variadic-ffm-cfn
-  [lib sym fixed argtypes rettype]
-  (when (and native-image?
-             (or (> (count fixed) 3)
-                 (some #(= :float (carrier %)) fixed)
-                 ;; variadic descriptors are only registered for void and
-                 ;; integer returns
-                 (#{:double :float} (carrier rettype))))
-    (throw (unsupported-ex sym argtypes rettype variadic-limits)))
+  "The JVM path: one FFM handle per distinct tail shape, cached. A native
+  image never gets here, it calls through libffi."
+  [lib sym fixed rettype]
   (let [nf (count fixed)
         cache (atom {})
         ;; resolved once per binding, on the first call, and shared by every
@@ -782,23 +768,17 @@
         caller-for
         (fn [tail-types]
           (or (get @cache tail-types)
-              (let [all-types (into fixed tail-types)]
-                (when (and native-image?
-                           (or (> (count all-types) 5)
-                               (> (count (filter #(= :double (carrier %)) all-types)) 2)))
-                  (throw (unsupported-ex sym argtypes rettype
-                                         (str variadic-limits ", called with tail "
-                                              (pr-str tail-types)))))
-                (let [handle (.downcallHandle
-                              ^Linker @linker*
-                              ^MemorySegment @address
-                              (descriptor all-types rettype)
-                              (into-array java.lang.foreign.Linker$Option
-                                          [(java.lang.foreign.Linker$Option/firstVariadicArg nf)]))
-                      caller (fn [^objects arr]
-                               (.invokeWithArguments ^MethodHandle handle arr))]
-                  (swap! cache assoc tail-types caller)
-                  caller))))]
+              (let [all-types (into fixed tail-types)
+                    handle (.downcallHandle
+                            ^Linker @linker*
+                            ^MemorySegment @address
+                            (descriptor all-types rettype)
+                            (into-array java.lang.foreign.Linker$Option
+                                        [(java.lang.foreign.Linker$Option/firstVariadicArg nf)]))
+                    caller (fn [^objects arr]
+                             (.invokeWithArguments ^MethodHandle handle arr))]
+                (swap! cache assoc tail-types caller)
+                caller)))]
     (with-meta
       (fn [& args]
         (when (< (count args) nf)
