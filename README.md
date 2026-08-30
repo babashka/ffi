@@ -19,6 +19,16 @@ On the JVM:
 
 In babashka the namespace is built in: `(require '[babashka.ffi :as ffi])`.
 
+## Libraries built on it
+
+- [babashka.sqlite](https://github.com/babashka/babashka.sqlite): SQLite
+- [babashka.postgres](https://github.com/babashka/babashka.postgres): PostgreSQL through libpq
+- [babashka.duckdb](https://github.com/babashka/babashka.duckdb): DuckDB
+- [filewatcher](https://github.com/babashka/filewatcher): file watching through FSEvents, inotify and ReadDirectoryChangesW
+
+None of them expose an arena, a pointer, or a layout: the FFI stays inside
+the library.
+
 ## Documentation
 
 [doc/guide.md](doc/guide.md) documents the API: library loading, function
