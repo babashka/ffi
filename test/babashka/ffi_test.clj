@@ -737,6 +737,9 @@
                                               [:long :long :long :long :double] :long))))))))
 
 (deftest binding-diagnostics-test
+  ;; JVM only: in babashka the built-in namespace can be older than this
+  ;; checkout
+  (when-not (System/getProperty "babashka.version")
   (let [c-abs (ffi/cfn "abs" [:int] :int)]
     (testing "a call with the wrong number of arguments names the symbol"
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"babashka.ffi: abs expects 1 args, got 2"
@@ -752,4 +755,4 @@
       (is (= 5 (c-abs -5)))
       (is (= (:babashka.ffi/backend (meta c-abs))
              (:babashka.ffi/backend (meta (vary-meta c-abs assoc :x 1)))))
-      (is (= 5 ((vary-meta c-abs assoc :x 1) -5))))))
+      (is (= 5 ((vary-meta c-abs assoc :x 1) -5)))))))
