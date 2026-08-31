@@ -2,7 +2,8 @@
 ;;
 ;;   bb examples/doom.clj [columns] [seconds]
 ;;
-;; WASD moves, mouse turns, left click shoots, ESC quits.
+;; WASD or the arrow keys move, the mouse or the arrow keys turn, left click
+;; or the space bar shoots, ESC quits.
 ;;
 ;; Walls are textured vertical strips: one rlgl quad per screen column, with
 ;; the texture atlas generated pixel by pixel into foreign memory and handed
@@ -47,7 +48,7 @@
 (def RL-QUADS 7)
 (def RGBA8 7)                           ; RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8
 (def KEY-W 87) (def KEY-A 65) (def KEY-S 83) (def KEY-D 68)
-(def KEY-LEFT 263) (def KEY-RIGHT 262)
+(def KEY-LEFT 263) (def KEY-RIGHT 262) (def KEY-UP 265) (def KEY-DOWN 264) (def KEY-SPACE 32)
 
 (defn rgba [r g b a]
   (bit-or r (bit-shift-left g 8) (bit-shift-left b 16) (bit-shift-left a 24)))
@@ -408,10 +409,11 @@
       (when (pos? (key-down? KEY-LEFT)) (rotate! (* -1.8 dt)))
       (when (pos? (key-down? KEY-RIGHT)) (rotate! (* 1.8 dt)))
       ;; move
-      (let [fwd (+ (if (pos? (key-down? KEY-W)) 1 0) (if (pos? (key-down? KEY-S)) -1 0))
+      (let [fwd (+ (if (or (pos? (key-down? KEY-W)) (pos? (key-down? KEY-UP))) 1 0)
+                   (if (or (pos? (key-down? KEY-S)) (pos? (key-down? KEY-DOWN))) -1 0))
             str8 (+ (if (pos? (key-down? KEY-D)) 1 0) (if (pos? (key-down? KEY-A)) -1 0))]
         (when (or (not= 0 fwd) (not= 0 str8)) (move! fwd str8 dt)))
-      (when (pos? (mouse-pressed? 0)) (shoot!))
+      (when (or (pos? (mouse-pressed? 0)) (pos? (key-pressed? KEY-SPACE))) (shoot!))
       (when (pos? @health) (advance-imps! dt))
       (swap! flash #(max 0.0 (- % dt)))
 
