@@ -26,6 +26,8 @@ The guide in [doc/guide.md](../doc/guide.md) explains the API these use.
 - `helitorus.clj` draws a helix around a torus with raylib
   (`brew install raylib`, or the raylib package of your distribution).
 - `doom.clj` is a raycaster with textures and sprites, also through raylib.
+- `pacman.clj` is pac-man with the classic ghost personalities, also through
+  raylib. An optional argument limits the run to that many seconds.
 - `portaudio.clj` plays an arpeggio through a realtime audio callback and
   reports whether the stream underran (`brew install portaudio`, or the
   PortAudio package of your distribution).
