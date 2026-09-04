@@ -3,8 +3,10 @@
 ;; process, without Node.js. JavaScript calls back into Clojure through a
 ;; registered function.
 ;;
-;;   bb -Sdeps '{:deps {io.github.squint-cljs/squint {:mvn/version "0.14.208"}}}' \
-;;      examples/javascriptcore.clj
+;;   bb examples/javascriptcore.clj
+;;
+;; On the JVM, add squint to the classpath instead: babashka.deps is
+;; babashka only.
 ;;
 ;; macOS ships JavaScriptCore. On Linux it comes with webkit2gtk, in the
 ;; libjavascriptcoregtk-4.1-0 package.
@@ -13,8 +15,13 @@
 
 (require '[babashka.ffi :as ffi :refer [defcfn]]
          '[clojure.java.io :as io]
-         '[clojure.string :as str]
-         '[squint.compiler :as squint])
+         '[clojure.string :as str])
+
+(when (System/getProperty "babashka.version")
+  ((requiring-resolve 'babashka.deps/add-deps)
+   '{:deps {io.github.squint-cljs/squint {:mvn/version "0.14.208"}}}))
+
+(require '[squint.compiler :as squint])
 
 (ffi/load-library
  {:mac "/System/Library/Frameworks/JavaScriptCore.framework/JavaScriptCore"

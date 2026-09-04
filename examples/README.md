@@ -1,7 +1,8 @@
 # Examples
 
 Each of these uses `babashka.ffi` and nothing else, so it runs on either host.
-`javascriptcore.clj` also needs squint.
+`javascriptcore.clj` also needs squint, which it adds with `add-deps` in
+babashka. On the JVM, put squint on the classpath.
 
 In babashka the namespace is built in:
 
