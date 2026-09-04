@@ -1,14 +1,12 @@
-;; Embeds JavaScriptCore and runs ClojureScript in it: squint compiles the
-;; ClojureScript to JavaScript and the engine evaluates it, in the babashka
-;; process, without Node.js. JavaScript calls back into Clojure through a
-;; registered function.
+;; Embedded JavaScriptCore over babashka.ffi: compile ClojureScript with
+;; squint, evaluate it in the engine, and register a bb function that
+;; JavaScript calls back. No Node.js.
 ;;
 ;;   bb examples/javascriptcore.clj
 ;;
-;; On the JVM, add squint to the classpath instead: babashka.deps is
-;; babashka only.
+;; babashka.deps is babashka only. On the JVM, put squint on the classpath.
 ;;
-;; macOS ships JavaScriptCore. On Linux it comes with webkit2gtk, in the
+;; macOS ships JavaScriptCore. On Linux it is in the
 ;; libjavascriptcoregtk-4.1-0 package.
 
 (ns javascriptcore)
@@ -69,9 +67,10 @@
             (throw (ex-info (value->str ctx e) {:source source}))))
         (finally (string-release script))))))
 
-;; JSObjectCallAsFunctionCallback takes six integer and pointer arguments,
-;; and returns a JSValueRef. A callback cannot return :pointer, so this
-;; returns the address as :int64, which uses the same register.
+;; JSObjectCallAsFunctionCallback: JSValueRef f(JSContextRef, JSObjectRef,
+;; JSObjectRef, size_t, const JSValueRef[], JSValueRef*). A callback cannot
+;; return :pointer, so this returns the address as :int64, which uses the
+;; same register.
 (defn register-fn!
   "Installs f as a global JavaScript function named js-name. f takes the
   arguments as strings and returns a string."
@@ -102,9 +101,8 @@
       (finally (string-release name-str)))))
 
 ;; squint's core is one ES module without imports, and JSEvaluateScript has no
-;; module loader. Stripping the export keywords makes it a classic script, and
-;; the exported names become the members of squint_core, the alias the
-;; compiler emits.
+;; module loader. Stripping the export keywords makes it a classic script whose
+;; names become the members of squint_core, the alias the compiler emits.
 (let [core (slurp (io/resource "squint/core.js"))
       names (map second (re-seq #"(?m)^export (?:function|const|class) ([\w$]+)" core))]
   (eval-js (str/replace core #"(?m)^export " ""))
