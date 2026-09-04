@@ -115,11 +115,11 @@
 (def compiler-state (atom nil))
 
 (defn eval-cljs
-  "Compiles ClojureScript with squint, evaluates it, and returns the result
-  printed by squint's pr-str. A def stays in scope for the next call."
-  [source]
+  "Compiles a ClojureScript form with squint, evaluates it, and returns the
+  result printed by squint's pr-str. A def stays in scope for the next call."
+  [form]
   (let [{:keys [javascript] :as state}
-        (squint/compile* source
+        (squint/compile* (binding [*print-meta* true] (pr-str form))
                          {:context :repl-return
                           :elide-imports true
                           :elide-exports true
@@ -131,11 +131,11 @@
                   "\n;return [undefined];\n})()[0])"))))
 
 (println "javascript:  " (eval-js "[1,2,3].map(x => x * x).join(',')"))
-(println "squint:      " (eval-cljs "(->> (range 10) (map #(* % %)) (filter odd?) vec)"))
-(println "interop:     " (eval-cljs "(js/JSON.stringify #js {:engine \"JavaScriptCore\"})"))
+(println "squint:      " (eval-cljs '(->> (range 10) (map #(* % %)) (filter odd?) vec)))
+(println "interop:     " (eval-cljs '(js/JSON.stringify {:engine "JavaScriptCore"})))
 
-(eval-cljs "(def counter 41)")
-(println "def:         " (eval-cljs "(inc counter)"))
+(eval-cljs '(def counter 41))
+(println "def:         " (eval-cljs '(inc counter)))
 
 (register-fn! "bbUpper" (fn [[s]] (str/upper-case s)))
-(println "callback:    " (eval-cljs "(mapv js/bbUpper [\"babashka\" \"squint\"])"))
+(println "callback:    " (eval-cljs '(mapv js/bbUpper ["babashka" "squint"])))
