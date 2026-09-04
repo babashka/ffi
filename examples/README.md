@@ -1,6 +1,8 @@
 # Examples
 
 Each of these uses `babashka.ffi` and nothing else, so it runs on either host.
+`javascriptcore.clj` also needs squint. In babashka it adds the dep with
+`add-deps`. On the JVM, put squint on the classpath.
 
 In babashka the namespace is built in:
 
@@ -21,6 +23,10 @@ The guide in [doc/guide.md](../doc/guide.md) explains the API these use.
 - `libffi.clj` binds libffi through `babashka.ffi` itself, then calls a
   function that returns a struct by value. The bounded FFI bootstraps an
   unbounded one.
+- `javascriptcore.clj` embeds JavaScriptCore: squint compiles ClojureScript
+  and the engine evaluates it, without Node.js. JavaScript calls a registered
+  bb function back. macOS ships the library. On Linux it is in the
+  libjavascriptcoregtk-4.1-0 package.
 - `python.clj` embeds CPython: it evaluates Python expressions and registers
   a Clojure function as a Python callable. It needs libpython3.
 - `helitorus.clj` draws a helix around a torus with raylib
