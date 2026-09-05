@@ -44,6 +44,10 @@ The library exports a clj-kondo hook for `defcfn`. Copy the config with:
 
     clj-kondo --lint "$(clojure -Spath)" --copy-configs --skip-lint
 
+In a babashka project, use the built-in classpath:
+
+    clj-kondo --lint "$(bb print-deps --format classpath)" --copy-configs --skip-lint
+
 ## License
 
 Copyright © 2026 Michiel Borkent
