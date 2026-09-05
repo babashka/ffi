@@ -4,8 +4,8 @@
 ;;
 ;; Z or LEFT flips left, X or RIGHT flips right, R restarts.
 ;;
-;; The physics is the squint pinball demo, after Ten Minute Physics:
-;; https://matthias-research.github.io/pages/tenMinutePhysics/index.html
+;; The physics is TheGeez's scittle pinball, after Ten Minute Physics:
+;; https://thegeez.net/2023/03/01/pinball_scittle.html
 
 (require '[babashka.ffi :as ffi :refer [defcfn]])
 
