@@ -34,6 +34,8 @@ The guide in [doc/guide.md](../doc/guide.md) explains the API these use.
 - `doom.clj` is a raycaster with textures and sprites, also through raylib.
 - `pacman.clj` is pac-man with the classic ghost personalities, also through
   raylib. An optional argument limits the run to that many seconds.
+- `pinball.clj` is the squint pinball demo on raylib: two balls, bumpers,
+  a lambda and two flippers. Same optional argument.
 - `portaudio.clj` plays an arpeggio through a realtime audio callback and
   reports whether the stream underran (`brew install portaudio`, or the
   PortAudio package of your distribution).
