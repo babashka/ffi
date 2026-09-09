@@ -77,6 +77,12 @@ test with:
 (when-not (System/getProperty "babashka.version") ...)
 ```
 
+The guard is on the host, so the test stays off in babashka after the
+submodule update too. Once babashka carries the code, drop the guard, and
+keep the test inside the native image limits in doc/guide.md under
+Performance and limits, such as at most 6 callback arguments. A test of
+behavior that already shipped needs no guard and runs on both hosts.
+
 CI runs bb on Linux, macOS and Windows, and the JVM suite on JDK 22 and 25
 on the same three.
 
