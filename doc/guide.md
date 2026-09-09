@@ -970,10 +970,12 @@ On the JVM, the FFM linker supports every signature, including structs by
 value. It creates a downcall handle for each signature, and the JIT compiles
 the handle. This path has no fixed signature limits.
 
-A primitive call costs about 10 nanoseconds once the loop around it is
-compiled. The binding calls the downcall handle through an interface that
-the JIT inlines. A struct call uses a confined arena for its arguments and return
-value. This lets threads share a binding and lets a call re-enter it.
+A primitive call costs about 3 to 6 nanoseconds after JVM warmup.
+Creating a binding takes about 70 microseconds. Create bindings once
+and reuse them.
+
+Struct bindings support concurrent calls from multiple threads and
+reentrant calls.
 
 ### In a babashka native binary
 

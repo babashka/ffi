@@ -103,6 +103,9 @@
   (ex-info (str "babashka.ffi: " sym " expects " expects " args, got " got)
            {:symbol sym}))
 
+(defn- binding-string [sym argtypes rettype]
+  (str sym " " (pr-str argtypes) " -> " rettype))
+
 (deftype Binding [^clojure.lang.IFn f m sym argtypes rettype ^long arity]
   clojure.lang.Fn
   clojure.lang.IFn
@@ -162,7 +165,7 @@
   (meta [_] m)
   (withMeta [_ m2] (Binding. f m2 sym argtypes rettype arity))
   Object
-  (toString [_] (str sym " " (pr-str argtypes) " -> " rettype)))
+  (toString [_] (binding-string sym argtypes rettype)))
 
 (alter-meta! #'->Binding assoc :private true)
 
@@ -969,20 +972,23 @@
     (libffi-cfn lib sym argtypes rettype)
     (fixed-ffm-cfn lib sym argtypes rettype)))
 
-;; On the JVM a binding calls through an interface proxy over the downcall
-;; handle, see babashka.ffi.impl.proxy. Resolved here, at load time, and
-;; never in a native image: a run-time require would make the Clojure
-;; compiler reachable and grow the image.
-(def ^:private proxy-cfn
+;; On the JVM a binding is a generated class that holds its downcall handle
+;; as a constant, see babashka.ffi.impl.binding. Resolved here, at load
+;; time, and never in a native image: a run-time require would make the
+;; Clojure compiler reachable and grow the image.
+(def ^:private jvm-cfn
   (when-not native-image?
-    (let [f (requiring-resolve 'babashka.ffi.impl.proxy/proxy-cfn)
+    (let [f (requiring-resolve 'babashka.ffi.impl.binding/jvm-cfn)
           helpers {:carrier carrier
                    :arg-coercer arg-coercer
                    :narrow-ret narrow-ret
                    :with-string-args with-string-args
                    :descriptor descriptor
                    :require-symbol require-symbol
-                   :linker (fn [] @linker*)}]
+                   :linker (fn [] @linker*)
+                   :arity-ex arity-ex
+                   :binding-string binding-string
+                   :binding-with-meta binding-with-meta}]
       (fn [lib sym argtypes rettype] (f helpers lib sym argtypes rettype)))))
 
 (defn- fixed-ffm-cfn
@@ -1044,12 +1050,11 @@
                        (throw (ex-info (str "babashka.ffi: " sym " expects " n
                                             " args, got " got)
                                        {:symbol sym})))]
-     (binding-with-meta
+     (if (and (not native-image?) (<= n 6))
+       ;; the JVM: a generated class, its metadata and arity check included
+       (jvm-cfn lib sym types rettype)
+       (binding-with-meta
        (cond
-         ;; the JVM: the proxy path, JIT-compiled to a direct call
-         (and (not native-image?) (<= n 6))
-         (proxy-cfn lib sym types rettype)
-
          strings?
          (fn [& args]
            (if (= (count args) n) (general args) (arity-error (count args))))
@@ -1070,7 +1075,7 @@
        ;; which call mechanism this binding uses, for tests and diagnostics:
        ;; :trampoline = compiled direct call, :ffm = downcall handle
        ;; (interpreted in a native image)
-       {:babashka.ffi/backend (if tramp-id :trampoline :ffm)} sym argtypes rettype)))
+       {:babashka.ffi/backend (if tramp-id :trampoline :ffm)} sym argtypes rettype))))
 
 (defmacro defcfn
   "Defines name as a C function binding created by cfn:
