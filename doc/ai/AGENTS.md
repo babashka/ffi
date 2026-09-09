@@ -7,12 +7,15 @@ API listing is API.md, and the decisions are in doc/ai/adr/.
 
 - src/babashka/ffi.clj: the whole public API in one namespace. Babashka
   embeds it as a built-in, so it stays one file and depends only on the JDK.
-- src/babashka/ffi/impl/proxy.clj: the JVM downcall path. Loaded from
-  ffi.clj with requiring-resolve, never in a native image. It receives the
-  ffi.clj helpers it needs in a map, so it has no requires and loads in any
-  order.
+- src/babashka/ffi/impl/binding.clj: the JVM downcall path, a hidden class
+  per binding generated with clojure.asm. Loaded from ffi.clj with
+  requiring-resolve on a quoted symbol, never in a native image. Keep it
+  that way: a static require would pull it into the babashka binary. It
+  receives the ffi.clj helpers it needs in a map, so it has no requires and
+  loads in any order.
 - resources/clj-kondo.exports: the defcfn hook.
 - test/babashka/ffi_test.clj: one suite for both hosts.
+- test-jvm/babashka/ffi_binding_test.clj: the generated class, JVM only.
 - test-resources/struct_lib.c: fixture for struct-by-value tests, compiled
   into target/ when cc or cl is on PATH.
 - examples/: runnable scripts, each on both hosts.
@@ -27,15 +30,16 @@ names it as :babashka.ffi/backend.
 
 | Signature | JVM | Native image |
 |---|---|---|
-| fixed, scalars | proxy.clj interface proxy over an FFM handle, about 5 to 10 ns | compiled trampoline when the shape is in the set, about 30 ns, else libffi, about 1 us |
+| fixed, scalars, up to 6 args | binding.clj generated class with the FFM handle as a constant, 3 to 6 ns, about 70 us to create | compiled trampoline when the shape is in the set, about 30 ns, else libffi, about 1 us |
 | struct by value | FFM handle with invokeWithArguments | libffi |
 | variadic, tail inferred per call | one FFM handle per tail shape | libffi |
 | variadic, tail declared | resolved once like a fixed signature | libffi |
 
 Every type keyword has a carrier: :long, :double, :float or :void. The
-trampoline set and the proxy interfaces are keyed on carriers, not types.
-The proxy path passes every argument and result as a long, doubles and
-floats as raw bits.
+trampoline set and the generated class bytes are keyed on carriers, not
+types. The generated class passes every argument and result as a long,
+doubles and floats as raw bits, and resolves the symbol on the first call
+through a MutableCallSite.
 
 Callbacks use FFM upcall stubs on both hosts and keep the limits listed in
 doc/guide.md under Callbacks.
@@ -47,7 +51,7 @@ Adding or changing a type keyword touches each of these. Keep them in sync.
 - ffi.clj long-carrier? and carrier
 - ffi.clj arg-coercer, one fn per type, chosen at binding time
 - ffi.clj narrow-ret, the return conversion for the boxed paths
-- proxy.clj bits-ret-fn, the same table over raw long bits for the proxy path
+- binding.clj bits-ret-fn, the same table over raw long bits for the JVM path
 - ffi.clj sizes, array-carriers, exact-layout, ffi-type-codes
 - the case tables in read, write and place
 - the callback return coercion in callback

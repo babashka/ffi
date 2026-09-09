@@ -5,12 +5,18 @@
   (:import [java.lang.foreign MemorySegment]
            [java.lang.invoke MethodHandle MethodHandles MethodType]
            [java.lang.ref ReferenceQueue WeakReference]
-           [java.lang.reflect UndeclaredThrowableException]
            [java.util.concurrent CountDownLatch TimeUnit]))
 
+(def helpers
+  {:arity-ex (fn [sym expects got]
+               (ex-info (str "babashka.ffi: " sym " expects " expects " args, got " got)
+                        {:symbol sym}))
+   :binding-string (fn [sym argtypes rettype] (str sym " " (pr-str argtypes) " -> " rettype))})
+
 (defn make-call [pd n void?]
-  (binding/make-binding pd (vec (repeat n (fn ^long [x] (long x)))) (fn [^long x] x)
-                        {:probe true} "test_call" (vec (repeat n :long)) (if void? :void :long)))
+  (binding/make-binding pd (object-array (repeat n (fn ^long [x] (long x)))) (fn [^long x] x)
+                        {:probe true} "test_call" (vec (repeat n :long)) (if void? :void :long)
+                        helpers))
 
 (defn drop-args [^MethodHandle h position n]
   (MethodHandles/dropArguments h (int position) ^"[Ljava.lang.Class;" (into-array Class (repeat n Long/TYPE))))
@@ -58,28 +64,27 @@
         f (ffi/cfn (fn [] (swap! calls inc) (throw error)) "missing_function" [:pointer] :int)
         copy (with-meta f nil)]
     (is (zero? @calls))
-    (is (= "babashka.ffi: missing_function expects 1 args, got 0" (ex-message (failure #(f)))))
+    (is (= "babashka.ffi: missing_function expects 1 args, got 0" (ex-message (failure f))))
     (is (zero? @calls))
-    (is (identical? error (failure #(f "invalid pointer"))))
+    (testing "arguments are coerced before the symbol resolves"
+      (is (instance? clojure.lang.ExceptionInfo (failure #(f "invalid pointer"))))
+      (is (zero? @calls)))
     (is (identical? error (failure #(copy nil))))
+    (is (identical? error (failure #(f nil))))
     (is (= 1 @calls))
     (doseq [n [2 20 21 25]]
       (is (= (str "babashka.ffi: missing_function expects 1 args, got " n)
              (ex-message (failure #(apply f (repeat n nil)))))))
     (is (= 1 @calls))))
 
-(deftest checked-and-unchecked-target-errors
+(deftest target-errors-propagate-unchanged
   (doseq [n (range 7)
           void? [false true]
           error [(RuntimeException. "runtime") (AssertionError. "error") (Exception. "checked")]]
     (let [ret (if void? Void/TYPE Long/TYPE)
           h (-> (MethodHandles/throwException ret Throwable) (.bindTo error) (drop-args 0 n))
-          f (make-call (delay h) n void?)
-          thrown (failure #(apply f (repeat n 1)))]
-      (if (or (instance? RuntimeException error) (instance? Error error))
-        (is (identical? error thrown))
-        (is (and (instance? UndeclaredThrowableException thrown)
-                 (identical? error (.getCause ^Throwable thrown))))))))
+          f (make-call (delay h) n void?)]
+      (is (identical? error (failure #(apply f (repeat n 1))))))))
 
 (deftest pointer-access-checks
   (let [length (ffi/cfn "strlen" [:pointer] :size_t)
@@ -95,17 +100,17 @@
       (finally (.close arena)))
     (is (instance? clojure.lang.ExceptionInfo (failure #(length p))))))
 
-(defn discarded-loaders [queue]
+(defn discarded-classes [queue]
   (mapv (fn [hot?]
           (let [f (ffi/cfn "abs" [:int] :int)]
             (when hot? (f -1))
-            (WeakReference. (.getClassLoader (class f)) queue)))
+            (WeakReference. (class f) queue)))
         [false true]))
 
 (deftest discarded-bindings-can-unload
-  (testing "cold and resolved bindings leave no global class or constructor roots"
+  (testing "the class of a cold and of a resolved binding unloads with it"
     (let [queue (ReferenceQueue.)
-          refs (discarded-loaders queue)]
+          refs (discarded-classes queue)]
       (loop [attempt 0]
         (System/gc)
         (when (and (< attempt 20) (some #(.get ^WeakReference %) refs))
