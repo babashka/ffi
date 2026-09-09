@@ -1,6 +1,4 @@
-(ns ^{:no-doc true
-      :clj-kondo/config '{:lint-as {babashka.ffi.impl.binding/with-method clojure.core/let}}}
-  babashka.ffi.impl.binding
+(ns ^:no-doc babashka.ffi.impl.binding
   "JVM downcalls through a generated class that holds its handle as a
   constant.
 
@@ -17,17 +15,20 @@
   installs the downcall handle and calls it. The JIT treats the target as
   a constant and recompiles when it changes.
 
-  clojure.asm is the ASM copy inside Clojure, an internal, not public API.
+  The bytes come from the Class-File API, java.lang.classfile, final since
+  JDK 24.
 
   babashka.ffi loads this namespace while it loads itself, on the JVM only,
   through requiring-resolve on a quoted symbol. A static require would make
   it reachable in a native image. Do not require this namespace directly."
-  (:import [clojure.asm ClassWriter Label Opcodes Type]
-           [clojure.lang IFn IPersistentMap]
+  (:import [clojure.lang IFn IPersistentMap]
+           [java.lang.classfile ClassBuilder ClassFile CodeBuilder]
+           [java.lang.constant ClassDesc ConstantDescs MethodTypeDesc]
            [java.lang.foreign Linker]
            [java.lang.invoke MethodHandle MethodHandles MethodHandles$Lookup$ClassOption
             MethodType MutableCallSite]
-           [java.lang.reflect Constructor]))
+           [java.lang.reflect Constructor]
+           [java.util.function Consumer]))
 
 (set! *warn-on-reflection* true)
 
@@ -107,21 +108,37 @@
 
 ;; -- the class ---------------------------------------------------------------
 
-(def ^:private obj "Ljava/lang/Object;")
-(def ^:private objs "[Ljava/lang/Object;")
-(def ^:private mh "Ljava/lang/invoke/MethodHandle;")
-(def ^:private ifn "clojure/lang/IFn")
-(def ^:private coercer "clojure/lang/IFn$OL")
-(def ^:private ret-fn "clojure/lang/IFn$LO")
-(def ^:private imap "Lclojure/lang/IPersistentMap;")
+(defn- cd ^ClassDesc [internal-name] (ClassDesc/ofInternalName internal-name))
 
-(defmacro ^:private with-method [[v writer] access name descriptor & body]
-  `(let [~(with-meta v {:tag 'clojure.asm.MethodVisitor})
-         (.visitMethod ~(with-meta writer {:tag 'clojure.asm.ClassWriter}) ~access ~name ~descriptor nil nil)]
-     (.visitCode ~v)
-     ~@body
-     (.visitMaxs ~v 0 0)
-     (.visitEnd ~v)))
+(defn- mt ^MethodTypeDesc [^ClassDesc ret & params]
+  (MethodTypeDesc/of ret ^"[Ljava.lang.constant.ClassDesc;" (into-array ClassDesc params)))
+
+(def ^:private ^ClassDesc cd-object ConstantDescs/CD_Object)
+(def ^:private ^ClassDesc cd-objects (.arrayType ConstantDescs/CD_Object))
+(def ^:private ^ClassDesc cd-string ConstantDescs/CD_String)
+(def ^:private ^ClassDesc cd-class ConstantDescs/CD_Class)
+(def ^:private ^ClassDesc cd-integer ConstantDescs/CD_Integer)
+(def ^:private ^ClassDesc cd-mh ConstantDescs/CD_MethodHandle)
+(def ^:private ^ClassDesc cd-mhs ConstantDescs/CD_MethodHandles)
+(def ^:private ^ClassDesc cd-lookup ConstantDescs/CD_MethodHandles_Lookup)
+(def ^:private ^ClassDesc cd-afn (cd "clojure/lang/AFn"))
+(def ^:private ^ClassDesc cd-ifn (cd "clojure/lang/IFn"))
+(def ^:private ^ClassDesc cd-coercer (cd "clojure/lang/IFn$OL"))
+(def ^:private ^ClassDesc cd-ret-fn (cd "clojure/lang/IFn$LO"))
+(def ^:private ^ClassDesc cd-imap (cd "clojure/lang/IPersistentMap"))
+(def ^:private ^ClassDesc cd-iobj (cd "clojure/lang/IObj"))
+(def ^:private ^ClassDesc cd-iseq (cd "clojure/lang/ISeq"))
+(def ^:private ^ClassDesc cd-rt (cd "clojure/lang/RT"))
+
+(def ^:private ^ClassDesc cd-long ConstantDescs/CD_long)
+(def ^:private ^ClassDesc cd-int ConstantDescs/CD_int)
+(def ^:private ^ClassDesc cd-void ConstantDescs/CD_void)
+
+(defn- consumer ^Consumer [f]
+  (reify Consumer (accept [_ b] (f b))))
+
+(defn- method [^ClassBuilder clb name ^MethodTypeDesc type flags f]
+  (.withMethodBody clb ^String name type (int flags) (consumer f)))
 
 (defn- class-bytes*
   "Bytes of the class for n arguments. Static finals TARGET, ARITY and STR
@@ -130,133 +147,138 @@
   errors and printing, and the metadata."
   ^bytes [n void?]
   (let [;; a hidden class shares the package of the lookup that defines it
-        name (str "babashka/ffi/impl/Binding" n (if void? "V" "J"))
-        w (doto (ClassWriter. ClassWriter/COMPUTE_FRAMES)
-            (.visit Opcodes/V1_8 (bit-or Opcodes/ACC_PUBLIC Opcodes/ACC_FINAL)
-                    name nil "clojure/lang/AFn"
-                    (into-array String ["clojure/lang/Fn" "clojure/lang/IObj"])))
-        static-final (bit-or Opcodes/ACC_PRIVATE Opcodes/ACC_STATIC Opcodes/ACC_FINAL)
-        final Opcodes/ACC_FINAL
-        ctor (str "(" objs obj obj imap ")V")
-        longs (apply str (repeat n "J"))]
-    (doseq [[flags field desc] (concat [[static-final "TARGET" mh]
-                                        [static-final "ARITY" (str "L" ifn ";")]
-                                        [static-final "STR" (str "L" ifn ";")]
-                                        [final "cs" objs]
-                                        [final "ret" (str "L" ret-fn ";")]
-                                        [final "info" obj]
-                                        [final "m" imap]]
-                                       (map (fn [i] [final (str "c" i) (str "L" coercer ";")]) (range n)))]
-      (.visitEnd (.visitField w (int flags) field desc nil nil)))
-    (with-method [v w] Opcodes/ACC_STATIC "<clinit>" "()V"
-      (.visitMethodInsn v Opcodes/INVOKESTATIC "java/lang/invoke/MethodHandles" "lookup"
-                        "()Ljava/lang/invoke/MethodHandles$Lookup;" false)
-      (.visitLdcInsn v "_")
-      (.visitLdcInsn v (Type/getType ^String objs))
-      (.visitMethodInsn v Opcodes/INVOKESTATIC "java/lang/invoke/MethodHandles" "classData"
-                        (str "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/Class;)" obj) false)
-      (.visitTypeInsn v Opcodes/CHECKCAST objs)
-      (doseq [[i field desc cast] [[0 "TARGET" mh "java/lang/invoke/MethodHandle"]
-                                   [1 "ARITY" (str "L" ifn ";") ifn]
-                                   [2 "STR" (str "L" ifn ";") ifn]]]
-        (when (< i 2) (.visitInsn v Opcodes/DUP))
-        (.visitLdcInsn v (int i))
-        (.visitInsn v Opcodes/AALOAD)
-        (.visitTypeInsn v Opcodes/CHECKCAST cast)
-        (.visitFieldInsn v Opcodes/PUTSTATIC name field desc))
-      (.visitInsn v Opcodes/RETURN))
-    (with-method [v w] Opcodes/ACC_PUBLIC "<init>" ctor
-      (.visitVarInsn v Opcodes/ALOAD 0)
-      (.visitMethodInsn v Opcodes/INVOKESPECIAL "clojure/lang/AFn" "<init>" "()V" false)
-      (doseq [[slot field desc cast] [[1 "cs" objs nil]
-                                      [2 "ret" (str "L" ret-fn ";") ret-fn]
-                                      [3 "info" obj nil]
-                                      [4 "m" imap nil]]]
-        (.visitVarInsn v Opcodes/ALOAD 0)
-        (.visitVarInsn v Opcodes/ALOAD slot)
-        (when cast (.visitTypeInsn v Opcodes/CHECKCAST cast))
-        (.visitFieldInsn v Opcodes/PUTFIELD name field desc))
-      (dotimes [i n]
-        (.visitVarInsn v Opcodes/ALOAD 0)
-        (.visitVarInsn v Opcodes/ALOAD 1)
-        (.visitLdcInsn v (int i))
-        (.visitInsn v Opcodes/AALOAD)
-        (.visitTypeInsn v Opcodes/CHECKCAST coercer)
-        (.visitFieldInsn v Opcodes/PUTFIELD name (str "c" i) (str "L" coercer ";")))
-      (.visitInsn v Opcodes/RETURN))
-    (with-method [v w] Opcodes/ACC_PUBLIC "invoke" (str "(" (apply str (repeat n obj)) ")" obj)
-      (when-not void?
-        (.visitVarInsn v Opcodes/ALOAD 0)
-        (.visitFieldInsn v Opcodes/GETFIELD name "ret" (str "L" ret-fn ";")))
-      (.visitFieldInsn v Opcodes/GETSTATIC name "TARGET" mh)
-      (dotimes [i n]
-        (.visitVarInsn v Opcodes/ALOAD 0)
-        (.visitFieldInsn v Opcodes/GETFIELD name (str "c" i) (str "L" coercer ";"))
-        (.visitVarInsn v Opcodes/ALOAD (inc i))
-        (.visitMethodInsn v Opcodes/INVOKEINTERFACE coercer "invokePrim" (str "(" obj ")J") true))
-      (.visitMethodInsn v Opcodes/INVOKEVIRTUAL "java/lang/invoke/MethodHandle" "invokeExact"
-                        (str "(" longs ")" (if void? "V" "J")) false)
-      (if void?
-        (.visitInsn v Opcodes/ACONST_NULL)
-        (.visitMethodInsn v Opcodes/INVOKEINTERFACE ret-fn "invokePrim" (str "(J)" obj) true))
-      (.visitInsn v Opcodes/ARETURN))
-    (with-method [v w] Opcodes/ACC_PUBLIC "throwArity" (str "(I)" obj)
-      (.visitFieldInsn v Opcodes/GETSTATIC name "ARITY" (str "L" ifn ";"))
-      (.visitVarInsn v Opcodes/ALOAD 0)
-      (.visitFieldInsn v Opcodes/GETFIELD name "info" obj)
-      (.visitVarInsn v Opcodes/ILOAD 1)
-      (.visitMethodInsn v Opcodes/INVOKESTATIC "java/lang/Integer" "valueOf" "(I)Ljava/lang/Integer;" false)
-      (.visitMethodInsn v Opcodes/INVOKEINTERFACE ifn "invoke" (str "(" obj obj ")" obj) true)
-      (.visitInsn v Opcodes/ARETURN))
-    ;; AFn reports 21 for any call beyond 20 arguments: count them here
-    (with-method [v w] Opcodes/ACC_PUBLIC "invoke" (str "(" (apply str (repeat 20 obj)) objs ")" obj)
-      (.visitVarInsn v Opcodes/ALOAD 0)
-      (.visitIntInsn v Opcodes/BIPUSH 20)
-      (.visitVarInsn v Opcodes/ALOAD 21)
-      (.visitInsn v Opcodes/ARRAYLENGTH)
-      (.visitInsn v Opcodes/IADD)
-      (.visitMethodInsn v Opcodes/INVOKEVIRTUAL name "throwArity" (str "(I)" obj) false)
-      (.visitInsn v Opcodes/ARETURN))
-    (with-method [v w] Opcodes/ACC_PUBLIC "applyTo" (str "(Lclojure/lang/ISeq;)" obj)
-      (let [matches (Label.)]
-        (.visitVarInsn v Opcodes/ALOAD 1)
-        (.visitMethodInsn v Opcodes/INVOKESTATIC "clojure/lang/RT" "count" (str "(" obj ")I") false)
-        (.visitInsn v Opcodes/DUP)
-        (.visitVarInsn v Opcodes/ISTORE 2)
-        (.visitLdcInsn v (int n))
-        (.visitJumpInsn v Opcodes/IF_ICMPEQ matches)
-        (.visitVarInsn v Opcodes/ALOAD 0)
-        (.visitVarInsn v Opcodes/ILOAD 2)
-        (.visitMethodInsn v Opcodes/INVOKEVIRTUAL name "throwArity" (str "(I)" obj) false)
-        (.visitInsn v Opcodes/ARETURN)
-        (.visitLabel v matches)
-        (.visitVarInsn v Opcodes/ALOAD 0)
-        (.visitVarInsn v Opcodes/ALOAD 1)
-        (.visitMethodInsn v Opcodes/INVOKESTATIC "clojure/lang/AFn" "applyToHelper"
-                          (str "(Lclojure/lang/IFn;Lclojure/lang/ISeq;)" obj) false)
-        (.visitInsn v Opcodes/ARETURN)))
-    (with-method [v w] Opcodes/ACC_PUBLIC "toString" "()Ljava/lang/String;"
-      (.visitFieldInsn v Opcodes/GETSTATIC name "STR" (str "L" ifn ";"))
-      (.visitVarInsn v Opcodes/ALOAD 0)
-      (.visitFieldInsn v Opcodes/GETFIELD name "info" obj)
-      (.visitMethodInsn v Opcodes/INVOKEINTERFACE ifn "invoke" (str "(" obj ")" obj) true)
-      (.visitTypeInsn v Opcodes/CHECKCAST "java/lang/String")
-      (.visitInsn v Opcodes/ARETURN))
-    (with-method [v w] Opcodes/ACC_PUBLIC "meta" (str "()" imap)
-      (.visitVarInsn v Opcodes/ALOAD 0)
-      (.visitFieldInsn v Opcodes/GETFIELD name "m" imap)
-      (.visitInsn v Opcodes/ARETURN))
-    (with-method [v w] Opcodes/ACC_PUBLIC "withMeta" (str "(" imap ")Lclojure/lang/IObj;")
-      (.visitTypeInsn v Opcodes/NEW name)
-      (.visitInsn v Opcodes/DUP)
-      (doseq [[field desc] [["cs" objs] ["ret" (str "L" ret-fn ";")] ["info" obj]]]
-        (.visitVarInsn v Opcodes/ALOAD 0)
-        (.visitFieldInsn v Opcodes/GETFIELD name field desc))
-      (.visitVarInsn v Opcodes/ALOAD 1)
-      (.visitMethodInsn v Opcodes/INVOKESPECIAL name "<init>" ctor false)
-      (.visitInsn v Opcodes/ARETURN))
-    (.visitEnd w)
-    (.toByteArray w)))
+        this (cd (str "babashka/ffi/impl/Binding" n (if void? "V" "J")))
+        static-final (bit-or ClassFile/ACC_PRIVATE ClassFile/ACC_STATIC ClassFile/ACC_FINAL)
+        final ClassFile/ACC_FINAL
+        ctor (mt cd-void cd-objects cd-object cd-object cd-imap)
+        target (apply mt (if void? cd-void cd-long) (repeat n cd-long))
+        invoke (apply mt cd-object (repeat n cd-object))
+        throw-arity (mt cd-object cd-int)]
+    (.build (ClassFile/of) this
+            (consumer
+             (fn [^ClassBuilder clb]
+               (.withFlags clb (int (bit-or ClassFile/ACC_PUBLIC ClassFile/ACC_FINAL)))
+               (.withSuperclass clb cd-afn)
+               (.withInterfaceSymbols clb ^"[Ljava.lang.constant.ClassDesc;" (into-array ClassDesc [(cd "clojure/lang/Fn") cd-iobj]))
+               (doseq [[flags field type] (concat [[static-final "TARGET" cd-mh]
+                                                   [static-final "ARITY" cd-ifn]
+                                                   [static-final "STR" cd-ifn]
+                                                   [final "cs" cd-objects]
+                                                   [final "ret" cd-ret-fn]
+                                                   [final "info" cd-object]
+                                                   [final "m" cd-imap]]
+                                                  (map (fn [i] [final (str "c" i) cd-coercer]) (range n)))]
+                 (.withField clb ^String field ^ClassDesc type (int flags)))
+               (method clb "<clinit>" (mt cd-void) ClassFile/ACC_STATIC
+                       (fn [^CodeBuilder cob]
+                         (.invokestatic cob cd-mhs "lookup" (mt cd-lookup))
+                         (.loadConstant cob "_")
+                         (.loadConstant cob ^ClassDesc cd-objects)
+                         (.invokestatic cob cd-mhs "classData" (mt cd-object cd-lookup cd-string cd-class))
+                         (.checkcast cob cd-objects)
+                         (doseq [[i field type] [[0 "TARGET" cd-mh] [1 "ARITY" cd-ifn] [2 "STR" cd-ifn]]]
+                           (when (< i 2) (.dup cob))
+                           (.loadConstant cob (int i))
+                           (.aaload cob)
+                           (.checkcast cob ^ClassDesc type)
+                           (.putstatic cob this field type))
+                         (.return_ cob)))
+               (method clb "<init>" ctor ClassFile/ACC_PUBLIC
+                       (fn [^CodeBuilder cob]
+                         (.aload cob 0)
+                         (.invokespecial cob cd-afn "<init>" (mt cd-void))
+                         (doseq [[slot field type cast] [[1 "cs" cd-objects nil]
+                                                         [2 "ret" cd-ret-fn cd-ret-fn]
+                                                         [3 "info" cd-object nil]
+                                                         [4 "m" cd-imap nil]]]
+                           (.aload cob 0)
+                           (.aload cob slot)
+                           (when cast (.checkcast cob ^ClassDesc cast))
+                           (.putfield cob this field type))
+                         (dotimes [i n]
+                           (.aload cob 0)
+                           (.aload cob 1)
+                           (.loadConstant cob (int i))
+                           (.aaload cob)
+                           (.checkcast cob cd-coercer)
+                           (.putfield cob this (str "c" i) cd-coercer))
+                         (.return_ cob)))
+               (method clb "invoke" invoke ClassFile/ACC_PUBLIC
+                       (fn [^CodeBuilder cob]
+                         (when-not void?
+                           (.aload cob 0)
+                           (.getfield cob this "ret" cd-ret-fn))
+                         (.getstatic cob this "TARGET" cd-mh)
+                         (dotimes [i n]
+                           (.aload cob 0)
+                           (.getfield cob this (str "c" i) cd-coercer)
+                           (.aload cob (inc i))
+                           (.invokeinterface cob cd-coercer "invokePrim" (mt cd-long cd-object)))
+                         (.invokevirtual cob cd-mh "invokeExact" target)
+                         (if void?
+                           (.aconst_null cob)
+                           (.invokeinterface cob cd-ret-fn "invokePrim" (mt cd-object cd-long)))
+                         (.areturn cob)))
+               (method clb "throwArity" throw-arity ClassFile/ACC_PUBLIC
+                       (fn [^CodeBuilder cob]
+                         (.getstatic cob this "ARITY" cd-ifn)
+                         (.aload cob 0)
+                         (.getfield cob this "info" cd-object)
+                         (.iload cob 1)
+                         (.invokestatic cob cd-integer "valueOf" (mt cd-integer cd-int))
+                         (.invokeinterface cob cd-ifn "invoke" (mt cd-object cd-object cd-object))
+                         (.areturn cob)))
+               ;; AFn reports 21 for any call beyond 20 arguments: count them here
+               (method clb "invoke" (apply mt cd-object (concat (repeat 20 cd-object) [cd-objects])) ClassFile/ACC_PUBLIC
+                       (fn [^CodeBuilder cob]
+                         (.aload cob 0)
+                         (.bipush cob 20)
+                         (.aload cob 21)
+                         (.arraylength cob)
+                         (.iadd cob)
+                         (.invokevirtual cob this "throwArity" throw-arity)
+                         (.areturn cob)))
+               (method clb "applyTo" (mt cd-object cd-iseq) ClassFile/ACC_PUBLIC
+                       (fn [^CodeBuilder cob]
+                         (let [matches (.newLabel cob)]
+                           (.aload cob 1)
+                           (.invokestatic cob cd-rt "count" (mt cd-int cd-object))
+                           (.dup cob)
+                           (.istore cob 2)
+                           (.loadConstant cob (int n))
+                           (.if_icmpeq cob matches)
+                           (.aload cob 0)
+                           (.iload cob 2)
+                           (.invokevirtual cob this "throwArity" throw-arity)
+                           (.areturn cob)
+                           (.labelBinding cob matches)
+                           (.aload cob 0)
+                           (.aload cob 1)
+                           (.invokestatic cob cd-afn "applyToHelper" (mt cd-object cd-ifn cd-iseq))
+                           (.areturn cob))))
+               (method clb "toString" (mt cd-string) ClassFile/ACC_PUBLIC
+                       (fn [^CodeBuilder cob]
+                         (.getstatic cob this "STR" cd-ifn)
+                         (.aload cob 0)
+                         (.getfield cob this "info" cd-object)
+                         (.invokeinterface cob cd-ifn "invoke" (mt cd-object cd-object))
+                         (.checkcast cob cd-string)
+                         (.areturn cob)))
+               (method clb "meta" (mt cd-imap) ClassFile/ACC_PUBLIC
+                       (fn [^CodeBuilder cob]
+                         (.aload cob 0)
+                         (.getfield cob this "m" cd-imap)
+                         (.areturn cob)))
+               (method clb "withMeta" (mt cd-iobj cd-imap) ClassFile/ACC_PUBLIC
+                       (fn [^CodeBuilder cob]
+                         (.new_ cob this)
+                         (.dup cob)
+                         (doseq [[field type] [["cs" cd-objects] ["ret" cd-ret-fn] ["info" cd-object]]]
+                           (.aload cob 0)
+                           (.getfield cob this field type))
+                         (.aload cob 1)
+                         (.invokespecial cob this "<init>" ctor)
+                         (.areturn cob))))))))
 
 (def ^:private class-bytes (memoize class-bytes*))
 

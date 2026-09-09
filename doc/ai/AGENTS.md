@@ -8,7 +8,7 @@ API listing is API.md, and the decisions are in doc/ai/adr/.
 - src/babashka/ffi.clj: the whole public API in one namespace. Babashka
   embeds it as a built-in, so it stays one file and depends only on the JDK.
 - src/babashka/ffi/impl/binding.clj: the JVM downcall path, a hidden class
-  per binding generated with clojure.asm. Loaded from ffi.clj with
+  per binding generated with the Class-File API. Loaded from ffi.clj with
   requiring-resolve on a quoted symbol, never in a native image. Keep it
   that way: a static require would pull it into the babashka binary. It
   receives the ffi.clj helpers it needs in a map, so it has no requires and
@@ -61,7 +61,7 @@ other through a callback that returns each type.
 
 ## Run the tests
 
-JVM, needs JDK 22 or newer, the alias enables native access:
+JVM, needs JDK 25 or newer, the alias enables native access:
 
 ```sh
 clojure -M:test
@@ -81,7 +81,7 @@ test with:
 (when-not (System/getProperty "babashka.version") ...)
 ```
 
-CI runs bb on Linux, macOS and Windows, and the JVM suite on JDK 22 and 25
+CI runs bb on Linux, macOS and Windows, and the JVM suite on JDK 25
 on the same three.
 
 Test conventions:

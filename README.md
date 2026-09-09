@@ -12,7 +12,7 @@ Status: work in progress, not yet released.
 
 On the JVM:
 
-- JDK 22 or newer. The library uses the Java FFM API.
+- JDK 25 or newer. The library uses the Java FFM API.
 - Start the JVM with `--enable-native-access=ALL-UNNAMED`, or set the
   `Enable-Native-Access` manifest attribute in an uberjar. Without the flag,
   modern JDKs warn, and a future JDK release refuses the calls.
