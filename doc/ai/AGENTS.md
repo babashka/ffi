@@ -104,10 +104,10 @@ Test conventions:
 ## Lint
 
 ```sh
-clj-kondo --lint src test
+clj-kondo --lint src test test-jvm
 ```
 
-Two pre-existing infos about redundant long coercion in ffi.clj are known.
+One pre-existing info about a redundant long coercion in ffi.clj is known.
 
 ## Measure
 
@@ -125,7 +125,7 @@ clojure -Sdeps '{:deps {criterium/criterium {:mvn/version "0.4.6"}}}' \
 ```
 
 Compare a branch against main in the same session. A scalar call on the JVM
-is 6 to 12 ns. Anything above 20 ns for a scalar call is a regression.
+is 3 to 6 ns. Anything above 10 ns for a scalar call is a regression.
 
 For the babashka side, build babashka with the submodule pointed at the
 branch and time a loop. Numbers for the trampoline path are in
