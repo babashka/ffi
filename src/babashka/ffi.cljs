@@ -26,8 +26,8 @@
   read and write check each access against this size. Pointers from C have
   size zero. reinterpret specifies their size before access.
 
-  A 64-bit integer comes back as a number when it is a safe integer and as a
-  bigint when it is not. An argument takes either.
+  A 64-bit integer returns as a number when it is a safe integer, otherwise
+  as a bigint. Arguments accept either.
 
   Use ffi/with-open to close an arena. It closes the arena when the body returns, so do not return
   a promise that still uses the arena.
@@ -50,9 +50,7 @@
 (def ^:private ^js nffi (js/process.getBuiltinModule "node:ffi"))
 (def ^:private ^js node-fs (js/process.getBuiltinModule "node:fs"))
 
-;; An arena is a type with a close field, so that (.close arena) and with-open
-;; work. nbb's deftype takes no methods, and a field keeps its name in an
-;; advanced build because close is in the default externs.
+;; Default externs preserve the close field name in advanced builds.
 (deftype Arena [kind ^:mutable closed ^:mutable bufs ^:mutable cleanups ^:mutable close])
 
 ;; -- pointers -----------------------------------------------------------------
@@ -432,8 +430,7 @@
                           {:library name}
                           @last-lookup-error))))))
 
-;; The process itself: every library the process has loaded. On Windows
-;; node:ffi cannot open the process, so there the C runtime stands in.
+;; Use the C runtime on Windows and the process lookup elsewhere.
 (def ^:private default-library
   (delay (new (.-DynamicLibrary nffi) (when (= :windows (os-key)) "ucrtbase.dll"))))
 
@@ -926,9 +923,7 @@
 
 ;; -- codecs -------------------------------------------------------------------
 
-;; A decoder is a function of the pointer that is read and the address of the
-;; layout in it. An encoder also takes the value. Both resolve the layout
-;; once. The caller checks the pointer and the bounds of the whole layout.
+;; The caller checks pointer access and layout bounds.
 
 (defn- at-path [path]
   (if (seq path) (str "at " (pr-str path) ", ") ""))
@@ -1123,10 +1118,7 @@
 ;; -- bulk access ---------------------------------------------------------------
 
 (def ^:private array-carriers
-  "For each bulk-capable type: the typed array that a copy fills. The width
-  comes from the type and nothing else: a copy is a memcpy, so :uint lands in
-  an Int32Array with its bits unchanged and :pointer in a BigInt64Array of
-  addresses."
+  "Maps scalar types to typed array constructors for bulk copies."
   (let [i8 js/Int8Array i16 js/Int16Array i32 js/Int32Array i64 js/BigInt64Array]
     {:int8 i8 :uint8 i8 :byte i8 :char i8 :bool i8
      :int16 i16 :uint16 i16

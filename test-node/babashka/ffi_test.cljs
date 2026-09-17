@@ -16,7 +16,7 @@
   (testing "a C call through the default lookup"
     (is (= 5 (strlen "hello")))
     (is (= :node (:babashka.ffi/backend (meta strlen)))))
-  (testing "node:ffi rejects -0 and a fraction, so the binding converts them"
+  (testing "integer arguments coerce negative zero and fractions"
     (let [abs (ffi/cfn "abs" [:int] :int)]
       (is (= [0 5 2] [(abs (- 0)) (abs -5) (abs -2.7)]))))
   (testing "a 64-bit value is a number when it is a safe integer, else a bigint"
@@ -44,7 +44,7 @@
     (is (nil? (ffi/find-symbol "babashka_ffi_no_such_symbol")))))
 
 (deftest unsupported-test
-  (testing "what node:ffi cannot do is an error when the binding is made"
+  (testing "unsupported signatures throw when the binding is created"
     (is (thrown-with-msg? js/Error #"does not pass a struct by value"
                           (ffi/cfn "div" [:int :int] [:struct [[:quot :int] [:rem :int]]])))
     (is (thrown-with-msg? js/Error #"does not make variadic calls"
@@ -153,7 +153,7 @@
               p (ffi/alloc arena named)]
           (ffi/write p named {:id 7 :name (ffi/string->ptr arena "seven")})
           (is (= {:id 7 :name "seven"} (ffi/read p named))))))
-    (testing "a bare string has no owner, so it is refused with the remedy"
+    (testing "a string field rejects a string value and suggests string->ptr"
       (ffi/with-open [arena (ffi/confined-arena)]
         (is (thrown-with-msg?
              js/Error #"string->ptr arena"
@@ -185,7 +185,7 @@
       (let [p (sizeless arena "hello")]
         (is (= "hello" (ffi/ptr->string p 64)))
         (is (= "hello" (ffi/ptr->string p 6)))))
-    (testing "a limit with no NUL inside it is an error, not a walk"
+    (testing "a string without NUL within the limit throws"
       (is (thrown-with-msg? js/Error #"no NUL byte in the first 3 bytes"
                             (ffi/ptr->string (sizeless arena "hello") 3))))
     (testing "a limit narrows but never widens an existing bound"
@@ -232,8 +232,6 @@
         (.close a)
         (is (thrown? js/Error (sort-ints (constantly cb) xs)))))
     (testing "a callback receives the declared types and returns through the coercion"
-      ;; bsearch hands the key pointer through unchanged, and takes a
-      ;; fractional and a boolean-free return through the :int coercion
       (ffi/with-open [a (ffi/confined-arena)]
         (let [seen (atom nil)
               cb (ffi/callback a (fn [k e] (reset! seen [(ffi/pointer? k) (ffi/size e)]) 0.4)
@@ -329,7 +327,7 @@
         (let [s (ffi/string->ptr arena "x")]
           (ffi/write p [:array :pointer 1] [s])
           (is (= [(js/BigInt (ffi/address s))] (vec (ffi/read-array p :pointer 1))))))
-      (testing "what a copy cannot do says where to go instead"
+      (testing "unsupported array types report alternatives"
         (is (thrown-with-msg? js/Error #"use read and write with \[:array"
                               (ffi/read-array p [:struct [[:x :int]]] 2)))
         (is (thrown-with-msg? js/Error #"pointers to bytes elsewhere"
@@ -381,7 +379,7 @@
                     (ffi/alignof [:union [[:c :char] [:d :double]]])]))
       (is (= [4 2] [(ffi/sizeof [:union [[:a [:array :char 3]] [:b :int16]]])
                     (ffi/alignof [:union [[:a [:array :char 3]] [:b :int16]]])])))
-    (testing "read gives the union's bytes as a pointer; the caller reads the member"
+    (testing "read returns union bytes as a pointer"
       (ffi/with-open [arena (ffi/confined-arena)]
         (let [p (ffi/alloc arena curl-msg)]
           (ffi/write p curl-msg {:msg 1 :easy nil :data [:result 7]})
@@ -471,7 +469,7 @@
         (testing "a place is checked against the size of the pointer"
           (is (thrown-with-msg? js/Error #"out of bounds"
                                 (ffi/read (ffi/slice p 0 32) parent))))
-        (testing "a path that names nothing is an error when the place is made, not nil"
+        (testing "an invalid path throws when the place is created"
           (is (thrown-with-msg? js/Error #"no member :z; the members are \[:name :parent\]"
                                 (ffi/place bone :z)))
           (is (thrown-with-msg? js/Error #"no member :z at \[:msgs 1\]"
@@ -480,7 +478,7 @@
                                 (ffi/place outer [:msgs 2 :msg])))
           (is (thrown-with-msg? js/Error #"continues past :int at \[:id\]"
                                 (ffi/place outer [:id :x]))))
-        (testing "a wrong value at the place says where"
+        (testing "an invalid value reports the place path"
           (is (thrown-with-msg? js/Error #"at \[:msgs 1 :data\], union value is a pair"
                                 (ffi/write q (ffi/place outer [:msgs 1 :data]) {:result 1})))
           (is (thrown-with-msg? js/Error #"at \[:msgs 1 :msg\], a :int field cannot take"

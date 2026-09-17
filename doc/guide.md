@@ -1014,30 +1014,28 @@ iteration before C runs.
 
 ### On Node.js
 
-`src/babashka/ffi.cljs` is the same namespace on Node.js, through
-[node:ffi](https://nodejs.org/api/ffi.html). It needs Node.js 26.1 or newer.
+Use `babashka.ffi` on Node.js 26.1 or newer through
+[node:ffi](https://nodejs.org/api/ffi.html).
 Run a script with [nbb](https://github.com/babashka/nbb):
 
 ```sh
-nbb --classpath src examples/sqlite.cljs
+nbb --classpath src examples/sqlite.cljc
 ```
 
-ClojureScript and shadow-cljs compile the namespace too, with any
-optimization level. The compiler takes `defcfn` and `with-open` from
+Compile with ClojureScript or shadow-cljs at any optimization level. The compiler takes `defcfn` and `with-open` from
 `ffi.clj`, so its JVM needs JDK 25 or newer. With ClojureScript, an
 `:advanced` build needs `:infer-externs true`.
 
 The binding metadata names the backend `:node`. These parts differ from the
 JVM:
 
-- Close an arena with `ffi/with-open`. The JVM namespace has the same
-  macro, so one script runs on every host. It closes the arena when the
-  body returns, so do not return a promise that still uses the arena.
+- Close an arena with `ffi/with-open`. It closes the arena when the body
+  returns. Do not return a promise that still uses the arena.
 - A pointer is a `Pointer`: an address, a size and the arena that owns it.
 - An allocation is a zeroed `Buffer`. An arena holds its buffers until it
   closes. `shared-arena` is the same as `confined-arena`.
-- A 64-bit integer comes back as a number when it is a safe integer, and as
-  a bigint when it is not. An argument takes either.
+- A 64-bit integer returns as a number when it is a safe integer, otherwise
+  as a bigint. Arguments accept either.
 - An unsigned 64-bit value reads as unsigned.
 - `read-array` returns a typed array and `write-array` takes one. The
   eight-byte types use a `BigInt64Array`.
@@ -1047,7 +1045,7 @@ JVM:
 - A binding with up to 4 arguments reports a wrong argument count as
   `got more than 1` or `got fewer than 2`, without the exact count.
 
-`cfn` throws for what node:ffi cannot call:
+`cfn` rejects these signatures when the binding is created:
 
 - A struct by value in a signature. Declare `:pointer` and pass the layout
   through memory.

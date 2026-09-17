@@ -2,8 +2,8 @@
 
 ## Status
 
-Proposed 2026-09-17. Experimental, as node:ffi itself is (stability 1,
-added in Node.js 26.1).
+Proposed 2026-09-17. Experimental. node:ffi has stability 1 and requires
+Node.js 26.1 or newer.
 
 ## Context
 
@@ -19,8 +19,8 @@ Probed on Node.js 26.9.0, macOS arm64:
 - An argument is not converted: `-0`, a fraction, an integer outside the
   width, and a number for a 64-bit type all throw.
 - `getFunction` takes a symbol name only. There is no call through an
-  address, and the node binary does not export libffi, so the
-  examples/libffi.clj route is closed too.
+  address. The Node.js binary does not export libffi for use by
+  examples/libffi.clj.
 - No struct by value, no variadic call.
 - No allocator.
 - `DynamicLibrary(null)` opens the process. The docs say Windows does not
@@ -52,8 +52,7 @@ embeds it. The layout code is duplicated, not shared through a `.cljc`.
 - An arena is `(deftype Arena [kind closed bufs cleanups close])`. `close`
   is a field that holds a function, because nbb's deftype takes no methods. An allocation is
   a zeroed `Buffer`, over-allocated for alignment, and its address comes
-  from `getRawPointer`. The arena holds its buffers until it closes. No
-  malloc, so no dependency on a C runtime by name.
+  from `getRawPointer`. The arena holds its buffers until it closes.
 - A 64-bit return is a number when it is a safe integer, else a bigint. An
   unsigned 64-bit value stays unsigned. Arguments take either.
 - One coercion function per type wraps, truncates or widens the value to
@@ -71,7 +70,7 @@ embeds it. The layout code is duplicated, not shared through a `.cljc`.
   both files. test-node/babashka/ffi_test.cljs follows ffi_test.clj case by
   case to catch drift.
 - Libraries that bind a function pointer, such as a vtable entry or a
-  callback round trip, do not port.
+  callback round trip, require changes to run on Node.js.
 - Measured under nbb 1.5.212: a scalar call costs about 150 ns, against
   about 12 ns from plain JavaScript and 25 to 100 ns for the raw node:ffi
   function called from SCI. A multi-arity function costs SCI about 250 ns
