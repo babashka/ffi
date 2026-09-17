@@ -42,3 +42,9 @@ The guide in [doc/guide.md](../doc/guide.md) explains the API these use.
 - `gtk4.clj` opens a native window that renders from an atom. A button counts
   clicks and a background thread updates a clock (`brew install gtk4`, or the
   GTK 4 package of your distribution).
+- `sdl3.clj` is a paint program on SDL3. Drag to paint, click a swatch or
+  press 1 to 6 to pick a color.
+  Every input is read out of the SDL_Event union (`brew install sdl3`, or the
+  SDL3 package of your distribution). On macOS the JVM run needs
+  `-XstartOnFirstThread` as well, because SDL uses thread 0 for the Cocoa
+  event loop.
