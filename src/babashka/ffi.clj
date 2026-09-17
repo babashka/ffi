@@ -478,6 +478,8 @@
         as-long (fn ^long [a] (cond (instance? Long a) (.longValue ^Long a)
                                     (nil? a) 0
                                     (native-segment? a) (.address ^MemorySegment a)
+                                    ;; an inferred variadic tail takes a boolean
+                                    (boolean? a) (if a 1 0)
                                     :else (long a)))
         as-addr (fn ^long [a] (cond (native-segment? a) (.address ^MemorySegment a)
                                     (nil? a) 0
@@ -874,9 +876,9 @@
 
 (defn- variadic-ffm-cfn
   "The JVM path: one generated class per distinct tail shape, cached. A
-  native image never gets here, it calls through libffi. The cache starts
-  over past 64 shapes, so a binding that sees ever new tails does not hold
-  classes without bound."
+  native image never gets here, it calls through libffi. The cache holds
+  64 shapes and then starts over, so a binding that sees ever new tails does
+  not hold classes without bound."
   [lib sym fixed rettype]
   (let [nf (count fixed)
         cache (atom {})
@@ -894,7 +896,7 @@
                         (jvm-cfn nil @address all-types rettype
                                  {:first-variadic nf :sym sym :argtypes shown})
                         (variadic-handle-cfn address sym all-types rettype nf))]
-                (swap! cache (fn [m] (assoc (if (> (count m) 64) {} m) k f)))
+                (swap! cache (fn [m] (assoc (if (>= (count m) 64) {} m) k f)))
                 f)))]
     (binding-with-meta
       (fn [& args]
@@ -1089,7 +1091,7 @@
                        (throw (ex-info (str "babashka.ffi: " sym " expects " n
                                             " args, got " got)
                                        {:symbol sym})))]
-     (if (and (not native-image?) (<= n 6))
+     (if (and (not native-image?) (<= n (long max-class-arity)))
        ;; the JVM: a generated class, its metadata and arity check included
        (jvm-cfn lib sym types rettype)
        (binding-with-meta

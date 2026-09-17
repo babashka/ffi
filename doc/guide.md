@@ -976,9 +976,9 @@ A primitive call costs about 3 to 6 nanoseconds after JVM warmup.
 Creating a binding takes about 70 microseconds. Create bindings once
 and reuse them.
 
-A variadic call with a declared tail costs the same as a fixed call. An
-inferred tail adds about 55 nanoseconds per call to find the shape of its
-values, and the first call with a new shape creates a binding for it.
+A declared variadic tail adds nothing to the cost of the call. An inferred
+tail adds about 55 nanoseconds per call to find the shape of its values,
+and the first call with a new shape creates a binding for it.
 
 Struct bindings support concurrent calls from multiple threads and
 reentrant calls.
