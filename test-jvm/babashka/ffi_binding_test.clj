@@ -123,15 +123,15 @@
         buf (ffi/alloc arena 256)
         declared (ffi/cfn "snprintf" [:pointer :size_t :string :& :int :string] :int)
         inferred (ffi/cfn "snprintf" [:pointer :size_t :string :&] :int)]
-    (testing "a declared tail prints its :& and reports its exact arity"
+    (testing "a declared binding prints :& and reports its exact arity"
       (is (= "snprintf [:pointer :size_t :string :& :int :string] -> :int" (str declared)))
       (is (= {:babashka.ffi/backend :ffm} (meta declared)))
       (is (thrown-with-msg? Exception #"snprintf expects 5 args, got 6"
                             (declared buf 256 "%d %s" 1 "a" 2))))
-    (testing "an inferred tail names the symbol, not its address, in an arity error"
+    (testing "an inferred binding reports the symbol in arity errors"
       (is (= "snprintf [:pointer :size_t :string :&] -> :int" (str inferred)))
       (is (thrown-with-msg? Exception #"snprintf expects at least 3 args" (inferred buf))))
-    (testing "more than 20 arguments take the handle path, declared and inferred"
+    (testing "declared and inferred bindings accept more than 20 arguments"
       (let [fmt (apply str (repeat 20 "%d"))
             ints (range 20)
             wide (ffi/cfn "snprintf" (into [:pointer :size_t :string :&] (repeat 20 :int)) :int)]
@@ -149,24 +149,24 @@
         fmt (fn [n] (ffi/string->ptr arena (apply str (repeat n "%d"))))
         text (fn [n] (apply str (range n)))
         sig (fn [n] (into [:pointer :size_t :pointer :&] (repeat n :int)))]
-    (testing "a declared tail of 17 makes 20 arguments, the last generated class"
+    (testing "20 arguments use a generated class"
       (let [f (ffi/cfn "snprintf" (sig 17) :int)]
         (is (re-find #"impl\.Binding20J" (class-name-of f)))
         (apply f buf 256 (fmt 17) (range 17))
         (is (= (text 17) (ffi/ptr->string buf 256)))
         (is (thrown-with-msg? Exception #"snprintf expects 20 args, got 19"
                               (apply f buf 256 (fmt 17) (range 16))))))
-    (testing "a declared tail of 18 makes 21 arguments, which takes the handle path"
+    (testing "21 arguments use the handle path"
       (let [f (ffi/cfn "snprintf" (sig 18) :int)]
         (is (not (re-find #"impl\.Binding" (class-name-of f))))
         (apply f buf 256 (fmt 18) (range 18))
         (is (= (text 18) (ffi/ptr->string buf 256)))))
-    (testing "an inferred tail crosses the same boundary"
+    (testing "inferred bindings accept 20 and 21 arguments"
       (let [f (ffi/cfn "snprintf" [:pointer :size_t :pointer :&] :int)]
         (doseq [n [17 18]]
           (apply f buf 256 (fmt n) (range n))
           (is (= (text n) (ffi/ptr->string buf 256))))))
-    (testing "a fixed signature of 8 arguments is a generated class"
+    (testing "8 fixed arguments use a generated class"
       (let [sum8 (ffi/callback arena (fn [& xs] (apply + xs)) (vec (repeat 8 :long)) :long)
             f (ffi/cfn sum8 (vec (repeat 8 :long)) :long)]
         (is (re-find #"impl\.Binding8J" (class-name-of f)))
@@ -178,14 +178,13 @@
         buf (ffi/alloc arena 256)
         f (ffi/cfn "snprintf" [:pointer :size_t :string :&] :int)
         out (fn [& args] (apply f buf 256 args) (ffi/ptr->string buf 256))]
-    (testing "a binding stays correct after its shape cache starts over"
-      ;; 7 slots of int or double give 128 shapes, the cache holds 64
+    (testing "a binding returns the expected values after its 64-shape cache resets"
       (let [shapes (for [i (range 70)] (mapv #(bit-test i %) (range 7)))
             call (fn [shape]
                    (apply out (apply str (map #(if % "%.0f" "%d") shape))
                           (map-indexed (fn [j d?] (if d? (double j) j)) shape)))]
         (is (every? #(= "0123456" (call %)) shapes))
         (is (= "0123456" (call (first shapes))))))
-    (testing "a boolean has no C variadic type, so the tail refuses it"
+    (testing "inferred tails reject booleans"
       (is (thrown-with-msg? Exception #"cannot infer variadic tail type of class java.lang.Boolean"
                             (out "%d" true))))))

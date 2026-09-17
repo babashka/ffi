@@ -433,10 +433,7 @@ For example, a `printf` format must match its values.
 (c-printf "%s: %.0f\n" "count" 42.0)
 ```
 
-Types after `:&` declare the tail once, so the binding resolves its call
-shape when it is made instead of inferring it from the values on every
-call. The arity is then exact, and on the JVM the call is about three
-times as fast:
+Declare types after `:&` to fix the tail types and require an exact arity:
 
 ```clojure
 (defcfn log-line "printf" [:string :& :int :string] :int)
@@ -976,9 +973,8 @@ A primitive call costs about 3 to 6 nanoseconds after JVM warmup.
 Creating a binding takes about 70 microseconds. Create bindings once
 and reuse them.
 
-A declared variadic tail adds nothing to the cost of the call. An inferred
-tail adds about 55 nanoseconds per call to find the shape of its values,
-and the first call with a new shape creates a binding for it.
+Declare variadic tail types to avoid about 55 nanoseconds of inference per
+call. An inferred tail creates a binding on the first call with each new shape.
 
 Struct bindings support concurrent calls from multiple threads and
 reentrant calls.

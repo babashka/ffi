@@ -687,7 +687,7 @@
           (is (= "42 and hello" (ffi/ptr->string buf 64)))
           (is (= (inferred buf 64 "%d and %s" 42 "hello") (declared buf 64 "%d and %s" 42 "hello")))
           (is (thrown-with-msg? Exception #"expects 5 args, got 4" (declared buf 64 "%d" 42))))
-        (testing "one inferred binding takes a new tail shape on each call"
+        (testing "an inferred binding accepts different tail shapes"
           (let [out (fn [& args] (apply inferred buf 64 args) (ffi/ptr->string buf 64))]
             (is (= ["7" "x" "7 x" "plain" "8"]
                    [(out "%d" 7) (out "%s" "x") (out "%d %s" 7 "x") (out "plain") (out "%d" 8)]))

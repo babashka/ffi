@@ -69,35 +69,30 @@ and the printed signature, which are only free because the type exists.
 
 ## Variadic calls, 2026-09-17
 
-Issue #44. Both variadic JVM paths called `invokeWithArguments`. They now
-use the generated class: a declared tail is one class whose downcall handle
-carries `firstVariadicArg`, an inferred tail is one class per tail shape.
-The shape is packed into a long, two bits per value, and the last shape is
-kept next to its binding, so a call that repeats a shape builds and hashes
-no vector. `snprintf(buf, 64, "%d", 42)` with the format as a pointer,
-criterium quick-bench, macOS arm64, JDK 25:
+Use generated classes for variadic JVM calls (#44). A declared tail uses
+one class with `firstVariadicArg`. An inferred tail caches one binding per
+shape. Pack the shape into a long with two bits per value and cache the
+last binding for repeated calls.
 
-    declared tail   196 ns -> 30 ns
-    inferred tail   371 ns -> 86 ns
+Measured with criterium quick-bench on macOS arm64, JDK 25,
+using `snprintf(buf, 64, "%d", 42)` with the format as a pointer:
 
-A signature of more than 20 arguments keeps `invokeWithArguments`, because
-`AFn` invokes with at most 20. A fixed signature now uses the generated
-class up to 20 arguments too, where it stopped at 6.
+| Tail | invokeWithArguments | Generated class |
+|---|---|---|
+| Declared | 196 ns | 30 ns |
+| Inferred | 371 ns | 86 ns |
 
-A boolean is no longer an inferred tail value. The guide listed it and
-`tail-type` mapped it to a 64-bit integer, but the integer coercer refused
-it, so `(f buf 64 "%d" true)` threw on the JVM and in babashka and no
-script can depend on it. Two fixes were weighed and dropped. Accepting a
-boolean in the integer coercer reaches every integer argument, struct field
-and callback return, so `(abs true)` would stop throwing. A shape code of
-its own for a boolean keeps the change in the tail on the JVM, but libffi
-then sees `:bool` in a tail and needs a promotion rule to `int`. C varargs
-have no boolean, and neither FFM nor coffi converts one, so the tail
-refuses it with the inference error.
+Use generated classes for fixed and variadic signatures up to 20 arguments.
+Use `invokeWithArguments` above the `AFn.invoke` limit of 20 arguments.
 
-Struct calls are unchanged. Issue #44 has the measurement of the codec
-against the invoke step: for a flat struct the invoke step is 40 to 55
-percent of the call and the codec 10 to 15 percent.
+Reject booleans during tail inference. Integer coercion already rejected
+them on the JVM and in babashka. Accepting booleans in the integer coercer
+would also affect fixed arguments, struct fields and callback returns.
+A separate boolean tail type would require promotion to `int` in libffi.
+
+Keep `invokeWithArguments` for struct calls. Measurements in #44 attribute
+40 to 55 percent of a flat struct call to invocation and 10 to 15 percent
+to the codec.
 
 ## Consequences
 

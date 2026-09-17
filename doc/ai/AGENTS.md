@@ -40,8 +40,8 @@ names it as :babashka.ffi/backend.
 |---|---|---|
 | fixed, scalars, up to 20 args | binding.clj generated class with the FFM handle as a constant, 3 to 6 ns, about 70 us to create | compiled trampoline when the shape is in the set, about 30 ns, else libffi, about 1 us |
 | struct by value | FFM handle with invokeWithArguments | libffi |
-| variadic, tail inferred per call | one generated class per tail shape, cached under the shape packed into a long, about 55 ns over the declared form | libffi |
-| variadic, tail declared | generated class like a fixed signature, with firstVariadicArg | libffi |
+| variadic, tail inferred per call | cached binding per tail shape, about 55 ns more than a declared tail | libffi |
+| variadic, tail declared | generated class with firstVariadicArg | libffi |
 | more than 20 args, fixed or variadic | FFM handle with invokeWithArguments | libffi |
 
 Every type keyword has a carrier: :long, :double, :float or :void. The

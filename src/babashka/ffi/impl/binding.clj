@@ -294,7 +294,7 @@
   [pd ^objects cs ret m sym argtypes rettype {:keys [arity-ex binding-string]}]
   (let [n (alength cs)
         void? (= :void rettype)
-        ;; argtypes can hold a :& for display, so the arity is its own key
+        ;; Displayed argtypes can include :&.
         info {:sym sym :argtypes argtypes :rettype rettype :arity n}
         data (object-array
               [(lazy-invoker (long-type n void?) #(force pd))
@@ -308,15 +308,14 @@
     (.newInstance ctor (object-array [cs ret info m]))))
 
 (defn jvm-cfn
-  "A JVM binding for a signature whose types are all known, arguments in
-  declared order. helpers holds the babashka.ffi fns :carrier,
+  "Creates a JVM binding with declared types for up to 20 arguments.
+  helpers holds the babashka.ffi fns :carrier,
   :arg-coercer, :narrow-ret, :with-string-args, :descriptor,
   :require-symbol, :linker, :arity-ex, :binding-string and
   :binding-with-meta.
 
-  opts describes a variadic call. :first-variadic is the number of fixed
-  parameters, for the linker. :sym and :argtypes name the binding in errors
-  and printing, where sym is an address and argtypes holds no :&."
+  opts accepts :first-variadic for the number of fixed parameters.
+  :sym and :argtypes override the symbol and signature in errors and printing."
   ([helpers lib sym argtypes rettype] (jvm-cfn helpers lib sym argtypes rettype nil))
   ([{:keys [carrier arg-coercer narrow-ret with-string-args descriptor require-symbol linker
             binding-with-meta]
@@ -345,8 +344,7 @@
        (let [n (count argtypes)
              arity-ex (:arity-ex helpers)]
          (binding-with-meta (fn [& args]
-                              ;; with-string-args pairs types with values and
-                              ;; would drop a surplus argument
+                              ;; Check arity before with-string-args truncates surplus arguments.
                               (when-not (= n (count args))
                                 (throw (arity-ex shown-sym n (count args))))
                               (with-string-args argtypes (vec args) #(apply fixed %)))

@@ -786,9 +786,8 @@
       {:babashka.ffi/backend :libffi} sym (conj fixed :&) rettype)))
 
 (defn- variadic-handle-cfn
-  "A variadic JVM binding through invokeWithArguments, for a signature of
-  more than 20 arguments, which a generated class cannot take. address is
-  a delay of the resolved symbol."
+  "Creates a variadic JVM binding for more than 20 arguments.
+  address is a delay containing the resolved symbol."
   [address sym all-types rettype nf]
   (let [n (count all-types)
         handle (delay (.downcallHandle
@@ -807,7 +806,7 @@
             (dotimes [i n] (aset arr i ((aget coercers i) (aget arr i))))
             (narrow-ret rettype (.invokeWithArguments ^MethodHandle @handle arr))))))))
 
-;; AFn invokes with up to 20 arguments, so a generated class does too
+;; AFn supports invoke methods with up to 20 arguments.
 (def ^:private max-class-arity 20)
 
 (defn- declared-variadic-cfn
@@ -833,8 +832,6 @@
                      (when-not (= n (count args)) (arity-error (count args)))
                      (apply call args))
           {:babashka.ffi/backend :libffi} sym (into (conj fixed :&) tail) rettype))
-      ;; a generated class, as for a fixed signature: only the linker
-      ;; option differs. Its arity is exact: fixed plus tail.
       (let [shown (into (conj fixed :&) tail)]
         (if (<= n max-class-arity)
           (jvm-cfn lib sym all-types rettype {:first-variadic nf :argtypes shown})
@@ -857,15 +854,12 @@
                                  "a variadic call in a native image goes through libffi, and this build has none"))))
 
 (defn- tail-shape-key
-  "The shape of variadic tail values as one long, two bits per value, so
-  that a call looks its binding up without building or hashing a vector.
-  Returns nil for a tail too long to pack."
+  "Returns the variadic tail shape as a long, or nil for more than 30 values."
   [tail]
   (loop [s (seq tail) k 1 n 0]
     (cond (nil? s) k
           (== n 30) nil
           :else (let [v (first s)
-                      ;; the common classes first, tail-type for the rest
                       code (cond (instance? Long v) 1
                                  (instance? Double v) 2
                                  (string? v) 3
@@ -873,18 +867,13 @@
                   (recur (next s) (+ (* 4 k) (long code)) (inc n))))))
 
 (defn- variadic-ffm-cfn
-  "The JVM path: one generated class per distinct tail shape, cached. A
-  native image never gets here, it calls through libffi. The cache holds
-  64 shapes and then starts over, so a binding that sees ever new tails does
-  not hold classes without bound."
+  "Creates a variadic JVM binding that infers tail types per call."
   [lib sym fixed rettype]
   (let [nf (count fixed)
         cache (atom {})
-        ;; the last shape and its binding: a call site rarely changes shape
         last-hit (volatile! nil)
         shown (conj fixed :&)
-        ;; resolved once per binding, on the first call, and shared by every
-        ;; tail shape: a :library function is asked for its library one time
+        ;; Resolve the symbol once for all tail shapes.
         address (delay (require-symbol lib sym))
         binding-for
         (fn [k tail]
