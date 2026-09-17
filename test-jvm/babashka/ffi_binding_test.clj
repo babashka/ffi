@@ -186,5 +186,6 @@
                           (map-indexed (fn [j d?] (if d? (double j) j)) shape)))]
         (is (every? #(= "0123456" (call %)) shapes))
         (is (= "0123456" (call (first shapes))))))
-    (testing "a boolean in the tail is 1 or 0"
-      (is (= "1 0" (out "%d %d" true false))))))
+    (testing "a boolean has no C variadic type, so the tail refuses it"
+      (is (thrown-with-msg? Exception #"cannot infer variadic tail type of class java.lang.Boolean"
+                            (out "%d" true))))))

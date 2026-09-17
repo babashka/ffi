@@ -421,7 +421,7 @@ The values after the fixed arguments determine the variadic types:
 
 | Clojure value | Variadic type |
 |---|---|
-| Integer, pointer, boolean, or `nil` | 64-bit integer |
+| Integer, pointer, or `nil` | 64-bit integer |
 | Floating-point number or ratio | `double` |
 | String | NUL-terminated C string |
 

@@ -81,7 +81,19 @@ criterium quick-bench, macOS arm64, JDK 25:
     inferred tail   371 ns -> 86 ns
 
 A signature of more than 20 arguments keeps `invokeWithArguments`, because
-`AFn` invokes with at most 20. Struct calls are unchanged and wait for a
+`AFn` invokes with at most 20. A fixed signature now uses the generated
+class up to 20 arguments too, where it stopped at 6.
+
+A boolean is no longer an inferred tail value. The guide listed it and
+`tail-type` mapped it to a 64-bit integer, but the integer coercer refused
+it, so `(f buf 64 "%d" true)` threw on the JVM and in babashka and no
+script can depend on it. Two fixes were weighed and dropped. Accepting a
+boolean in the integer coercer reaches every integer argument, struct field
+and callback return, so `(abs true)` would stop throwing. A shape code of
+its own for a boolean keeps the change in the tail on the JVM, but libffi
+then sees `:bool` in a tail and needs a promotion rule to `int`. C varargs
+have no boolean, and neither FFM nor coffi converts one, so the tail
+refuses it with the inference error. Struct calls are unchanged and wait for a
 measurement of the codec against the invoke step.
 
 ## Consequences

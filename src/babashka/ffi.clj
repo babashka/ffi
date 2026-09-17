@@ -234,7 +234,7 @@
   and pointer shares the 64-bit carrier."
   [v]
   (cond
-    (or (integer? v) (nil? v) (boolean? v) (instance? MemorySegment v)) :long
+    (or (integer? v) (nil? v) (instance? MemorySegment v)) :long
     (float? v) :double
     (ratio? v) :double
     (string? v) :string
@@ -478,8 +478,6 @@
         as-long (fn ^long [a] (cond (instance? Long a) (.longValue ^Long a)
                                     (nil? a) 0
                                     (native-segment? a) (.address ^MemorySegment a)
-                                    ;; an inferred variadic tail takes a boolean
-                                    (boolean? a) (if a 1 0)
                                     :else (long a)))
         as-addr (fn ^long [a] (cond (native-segment? a) (.address ^MemorySegment a)
                                     (nil? a) 0
