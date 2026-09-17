@@ -32,6 +32,7 @@ calls without these settings.
 - [Performance and limits](#performance-and-limits)
   - [On the JVM](#on-the-jvm)
   - [In a babashka native binary](#in-a-babashka-native-binary)
+  - [On Node.js](#on-nodejs)
   - [String arguments](#string-arguments)
   - [Callbacks](#callbacks)
 - [Examples](#examples)
@@ -1010,6 +1011,47 @@ Variadic calls use the FFM fallback with these limits:
 These figures include only the call itself. In babashka, the interpreter
 usually costs more. A `loop` with `recur` adds roughly 30 nanoseconds per
 iteration before C runs.
+
+### On Node.js
+
+Run scripts on Node.js 26.1 or newer with [nbb](https://github.com/babashka/nbb):
+
+```sh
+nbb --classpath src examples/sqlite.cljc
+```
+
+To compile with ClojureScript or shadow-cljs, use JDK 25 or newer.
+For ClojureScript `:advanced` builds, set `:infer-externs true`.
+
+The binding metadata names the backend `:node`. These parts differ from the
+JVM:
+
+- Close an arena with `ffi/with-open`. It closes the arena when the body
+  returns. Do not return a promise that still uses the arena.
+- A pointer is a `Pointer`: an address, a size and the arena that owns it.
+- An allocation is a zeroed `Buffer`. An arena holds its buffers until it
+  closes. `shared-arena` is the same as `confined-arena`.
+- A 64-bit integer returns as a number when it is a safe integer, otherwise
+  as a bigint. Arguments accept either.
+- An unsigned 64-bit value reads as unsigned.
+- `read-array` returns a typed array and `write-array` takes one. The
+  eight-byte types use a `BigInt64Array`.
+- `byte-buffer` returns a `Buffer` view.
+- C must call a callback on the JavaScript thread. The function must not
+  throw and must not return a promise.
+- A binding with up to 4 arguments reports a wrong argument count as
+  `got more than 1` or `got fewer than 2`, without the exact count.
+
+`cfn` rejects these signatures when the binding is created:
+
+- A struct by value in a signature. Declare `:pointer` and pass the layout
+  through memory.
+- A variadic signature.
+- A function pointer as the symbol. Bind a function by name.
+
+On an Apple M-series machine, under nbb, a scalar call costs about 150
+nanoseconds and a scalar `read` about 550. A call from plain JavaScript
+costs about 12 nanoseconds.
 
 ### String arguments
 

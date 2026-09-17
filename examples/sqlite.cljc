@@ -13,7 +13,7 @@
 (println "sqlite version:" (sqlite3-libversion))
 
 (def db
-  (with-open [arena (ffi/confined-arena)]
+  (#?(:clj with-open :cljs ffi/with-open) [arena (ffi/confined-arena)]
     (let [pp (ffi/alloc arena :pointer)
           rc (sqlite3-open ":memory:" pp)]
       (assert (zero? rc) (str "open failed: " rc))

@@ -6,17 +6,21 @@ Each of these uses `babashka.ffi` and nothing else, so it runs on either host.
 
 In babashka the namespace is built in:
 
-    bb sqlite.clj
+    bb sqlite.cljc
 
 On the JVM, add this library as a dependency and start with native access
 enabled:
 
     clojure -Sdeps '{:deps {io.github.babashka/ffi {:git/url "https://github.com/babashka/ffi" :git/sha "..."}}}' \
-            -J--enable-native-access=ALL-UNNAMED -M sqlite.clj
+            -J--enable-native-access=ALL-UNNAMED -M sqlite.cljc
+
+The `.cljc` examples also run on Node.js 26.1 or newer with nbb:
+
+    nbb --classpath ../src sqlite.cljc
 
 The guide in [doc/guide.md](../doc/guide.md) explains the API these use.
 
-- `sqlite.clj` queries an in-memory sqlite database. It needs the sqlite3
+- `sqlite.cljc` queries an in-memory sqlite database. It needs the sqlite3
   shared library, which macOS and most Linux systems already have.
 - `structs.clj` returns a struct by value and compares its speed with a
   primitive call.
@@ -27,14 +31,14 @@ The guide in [doc/guide.md](../doc/guide.md) explains the API these use.
   and the engine evaluates it, without Node.js. JavaScript calls a registered
   bb function back. macOS ships the library. On Linux it is in the
   libjavascriptcoregtk-4.1-0 package.
-- `python.clj` embeds CPython: it evaluates Python expressions and registers
+- `python.cljc` embeds CPython: it evaluates Python expressions and registers
   a Clojure function as a Python callable. It needs libpython3.
 - `helitorus.clj` draws a helix around a torus with raylib
   (`brew install raylib`, or the raylib package of your distribution).
 - `doom.clj` is a raycaster with textures and sprites, also through raylib.
 - `pacman.clj` is pac-man with the classic ghost personalities, also through
   raylib. An optional argument limits the run to that many seconds.
-- `pinball.clj` is TheGeez's scittle pinball on raylib: two balls, bumpers,
+- `pinball.cljc` is TheGeez's scittle pinball on raylib: two balls, bumpers,
   a lambda and two flippers. Same optional argument.
 - `portaudio.clj` plays an arpeggio through a realtime audio callback and
   reports whether the stream underran (`brew install portaudio`, or the
@@ -42,7 +46,7 @@ The guide in [doc/guide.md](../doc/guide.md) explains the API these use.
 - `gtk4.clj` opens a native window that renders from an atom. A button counts
   clicks and a background thread updates a clock (`brew install gtk4`, or the
   GTK 4 package of your distribution).
-- `sdl3.clj` is a paint program on SDL3. Drag to paint, click a swatch or
+- `sdl3.cljc` is a paint program on SDL3. Drag to paint, click a swatch or
   press 1 to 6 to pick a color.
   Every input is read out of the SDL_Event union (`brew install sdl3`, or the
   SDL3 package of your distribution). On macOS the JVM run needs

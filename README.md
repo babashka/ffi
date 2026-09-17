@@ -19,6 +19,12 @@ On the JVM:
 
 In babashka the namespace is built in: `(require '[babashka.ffi :as ffi])`.
 
+On Node.js, experimental:
+
+- Node.js 26.1 or newer. The library uses `node:ffi`.
+- [nbb](https://github.com/babashka/nbb), ClojureScript or shadow-cljs. See
+  [On Node.js](doc/guide.md#on-nodejs) for differences from the JVM.
+
 ## Libraries built on it
 
 - [babashka.sqlite](https://github.com/babashka/babashka.sqlite): SQLite

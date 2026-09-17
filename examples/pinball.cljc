@@ -1,6 +1,7 @@
 ;; Pinball in babashka, drawn with raylib through babashka.ffi.
 ;;
-;;   bb pinball.clj [seconds]
+;;   bb pinball.cljc [seconds]
+;;   nbb --classpath ../src pinball.cljc [seconds]
 ;;
 ;; Z or LEFT flips left, X or RIGHT flips right, R restarts.
 ;;
@@ -10,6 +11,9 @@
 (require '[babashka.ffi :as ffi :refer [defcfn]])
 
 (ffi/load-system-library "raylib")
+
+(defn now-ms [] #?(:clj (System/currentTimeMillis) :cljs (js/Date.now)))
+(defn getenv [k] #?(:clj (System/getenv k) :cljs (unchecked-get js/process.env k)))
 
 (defcfn init-window "InitWindow" [:int :int :string] :void)
 (defcfn close-window "CloseWindow" [] :void)
@@ -329,7 +333,7 @@
 
 (def deadline
   (when-let [s (first *command-line-args*)]
-    (+ (System/currentTimeMillis) (* 1000 (parse-long s)))))
+    (+ (now-ms) (* 1000 (parse-long s)))))
 
 (def frame (atom 0))
 
@@ -338,17 +342,17 @@
   (set-target-fps 60)
   (rl-disable-backface-culling)
   (while (and (zero? (window-should-close))
-              (or (nil? deadline) (< (System/currentTimeMillis) deadline)))
+              (or (nil? deadline) (< (now-ms) deadline)))
     (read-input!)
     (swap! scene step)
     (begin-drawing)
     (draw! @scene)
     (end-drawing)
     (swap! frame inc)
-    (when (and (System/getenv "SHOT")
-               (= (parse-long (System/getenv "SHOT")) @frame))
+    (when (and (getenv "SHOT")
+               (= (parse-long (getenv "SHOT")) @frame))
       (screenshot "pinball.png")))
   (close-window)
   (println "final score:" (:score @scene)))
 
-(when-not (System/getenv "HEADLESS") (-main))
+(when-not (getenv "HEADLESS") (-main))

@@ -13,9 +13,17 @@ API listing is API.md, and the decisions are in doc/ai/adr/.
   that way: a static require would pull it into the babashka binary. It
   receives the ffi.clj helpers it needs in a map, so it has no requires and
   loads in any order.
+- src/babashka/ffi.cljs: the same API on Node.js through node:ffi, for nbb,
+  ClojureScript and shadow-cljs. A separate file, so ffi.clj stays JDK only.
+  It shares no code with ffi.clj: a change to a layout rule, a type keyword
+  or an error message goes in both. The ClojureScript compiler takes defcfn
+  and with-open from ffi.clj, and nbb takes them from the defmacros in
+  ffi.cljs, so a macro change goes in both as well. See ADR 0008.
 - resources/clj-kondo.exports: the defcfn hook.
 - test/babashka/ffi_test.clj: one suite for both hosts.
 - test-jvm/babashka/ffi_binding_test.clj: the generated class, JVM only.
+- test-node/babashka/ffi_test.cljs: the Node.js suite. It follows
+  ffi_test.clj case by case, without what node:ffi cannot call.
 - test-resources/struct_lib.c: fixture for struct-by-value tests, compiled
   into target/ when cc or cl is on PATH.
 - examples/: runnable scripts, each on both hosts.
@@ -73,6 +81,20 @@ Babashka, through its built-in copy of this namespace:
 bb test:bb
 ```
 
+Node.js, needs Node.js 26.1 or newer on PATH. The three commands run
+test-node under nbb, ClojureScript and shadow-cljs. The last two need JDK 25
+or newer:
+
+```sh
+bb test:node
+bb test:cljs
+bb test:shadow
+```
+
+In ffi.cljs, hint a Pointer, an Arena and a node:ffi object at every field
+or method access. shadow-cljs warns where it cannot infer the type, and an
+advanced build renames what has no hint.
+
 The babashka run only sees the code that its binary was built with. A test
 for new code fails there until babashka updates the submodule. Guard such a
 test with:
@@ -104,7 +126,7 @@ Test conventions:
 ## Lint
 
 ```sh
-clj-kondo --lint src test test-jvm
+clj-kondo --lint src test test-jvm test-node
 ```
 
 One pre-existing info about a redundant long coercion in ffi.clj is known.

@@ -60,3 +60,57 @@ jobs:
 
       - name: Run tests
         run: clojure -M:test
+
+  node:
+    name: Node.js ${{ matrix.node }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-2022]
+        node: ['26']
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # The same command as bb test:node.
+      - name: Run tests
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then sep=';'; else sep=':'; fi
+          npx --yes nbb@1.5.212 --classpath "src${sep}test-node" -m babashka.ffi-test
+
+  cljs:
+    name: ClojureScript and shadow-cljs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # the ClojureScript compiler loads the macros from ffi.clj
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: DeLaGuardo/setup-clojure@13.4
+        with:
+          cli: latest
+          bb: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+
+      - name: ClojureScript
+        run: bb test:cljs
+
+      - name: ClojureScript, advanced
+        run: bb test:cljs advanced
+
+      - name: shadow-cljs
+        run: bb test:shadow

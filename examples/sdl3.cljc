@@ -1,6 +1,7 @@
 ;; A paint program in babashka, drawn with SDL3 through babashka.ffi.
 ;;
-;;   bb examples/sdl3.clj [seconds]
+;;   bb examples/sdl3.cljc [seconds]
+;;   nbb --classpath src examples/sdl3.cljc [seconds]
 ;;
 ;; Drag to paint. Click a swatch or press 1 to 6 to pick a color, C clears,
 ;; ESC or the window button quits. An optional argument limits the run to
@@ -242,7 +243,7 @@
                    (+ (get-ticks) (* 1000 (parse-long s))))]
     (set-window-minimum-size win MIN-W MIN-H)
     (set-render-vsync ren 1)
-    (with-open [arena (ffi/confined-arena)]
+    (#?(:clj with-open :cljs ffi/with-open) [arena (ffi/confined-arena)]
       (let [ev (ffi/alloc arena sdl-event)
             rect (ffi/alloc arena frect)]
         (while (and (not (:quit @state))
@@ -255,4 +256,5 @@
     (sdl-quit)
     (println "strokes:" (count (:strokes @state)))))
 
-(when-not (System/getenv "HEADLESS") (-main))
+(when-not #?(:clj (System/getenv "HEADLESS") :cljs (unchecked-get js/process.env "HEADLESS"))
+  (-main))
