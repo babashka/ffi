@@ -117,3 +117,26 @@
           (.remove queue 250)
           (recur (inc attempt))))
       (is (every? #(nil? (.get ^WeakReference %)) refs)))))
+
+(deftest variadic-bindings-are-generated-classes
+  (let [arena (ffi/global-arena)
+        buf (ffi/alloc arena 256)
+        declared (ffi/cfn "snprintf" [:pointer :size_t :string :& :int :string] :int)
+        inferred (ffi/cfn "snprintf" [:pointer :size_t :string :&] :int)]
+    (testing "a declared tail prints its :& and reports its exact arity"
+      (is (= "snprintf [:pointer :size_t :string :& :int :string] -> :int" (str declared)))
+      (is (= {:babashka.ffi/backend :ffm} (meta declared)))
+      (is (thrown-with-msg? Exception #"snprintf expects 5 args, got 6"
+                            (declared buf 256 "%d %s" 1 "a" 2))))
+    (testing "an inferred tail names the symbol, not its address, in an arity error"
+      (is (= "snprintf [:pointer :size_t :string :&] -> :int" (str inferred)))
+      (is (thrown-with-msg? Exception #"snprintf expects at least 3 args" (inferred buf))))
+    (testing "more than 20 arguments take the handle path, declared and inferred"
+      (let [fmt (apply str (repeat 20 "%d"))
+            ints (range 20)
+            wide (ffi/cfn "snprintf" (into [:pointer :size_t :string :&] (repeat 20 :int)) :int)]
+        (is (= 30 (apply wide buf 256 fmt ints)))
+        (is (= (apply str ints) (ffi/ptr->string buf 256)))
+        (is (= 30 (apply inferred buf 256 fmt ints)))
+        (is (thrown-with-msg? Exception #"snprintf expects 23 args, got 22"
+                              (apply wide buf 256 fmt (rest ints))))))))

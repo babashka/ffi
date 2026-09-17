@@ -67,6 +67,23 @@ Rejected: dropping the metadata and recomputing the backend from the
 signature. It saves 48 bytes and about 1 ns, and loses the arity message
 and the printed signature, which are only free because the type exists.
 
+## Variadic calls, 2026-09-17
+
+Issue #44. Both variadic JVM paths called `invokeWithArguments`. They now
+use the generated class: a declared tail is one class whose downcall handle
+carries `firstVariadicArg`, an inferred tail is one class per tail shape.
+The shape is packed into a long, two bits per value, and the last shape is
+kept next to its binding, so a call that repeats a shape builds and hashes
+no vector. `snprintf(buf, 64, "%d", 42)` with the format as a pointer,
+criterium quick-bench, macOS arm64, JDK 25:
+
+    declared tail   196 ns -> 30 ns
+    inferred tail   371 ns -> 86 ns
+
+A signature of more than 20 arguments keeps `invokeWithArguments`, because
+`AFn` invokes with at most 20. Struct calls are unchanged and wait for a
+measurement of the codec against the invoke step.
+
 ## Consequences
 
 - A native image is unchanged in mechanism: trampolines when the shape has
