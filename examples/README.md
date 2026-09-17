@@ -18,6 +18,8 @@ The guide in [doc/guide.md](../doc/guide.md) explains the API these use.
 
 - `sqlite.clj` queries an in-memory sqlite database. It needs the sqlite3
   shared library, which macOS and most Linux systems already have.
+  `sqlite.cljs` is the same script for Node.js 26.1 or newer:
+  `nbb --classpath ../src sqlite.cljs`.
 - `structs.clj` returns a struct by value and compares its speed with a
   primitive call.
 - `libffi.clj` binds libffi through `babashka.ffi` itself, then calls a

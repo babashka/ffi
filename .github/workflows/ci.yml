@@ -60,3 +60,25 @@ jobs:
 
       - name: Run tests
         run: clojure -M:test
+
+  node:
+    name: Node.js ${{ matrix.node }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-2022]
+        node: ['26']
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # The same command as bb test:node.
+      - name: Run tests
+        run: npx --yes nbb@1.5.212 --classpath src:test-node -m babashka.ffi-test
