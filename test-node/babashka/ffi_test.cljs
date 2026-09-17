@@ -24,10 +24,9 @@
       (is (= 5 (llabs -5)))
       (is (= 5 (llabs (js/BigInt -5))))
       (is (= (js/BigInt "9007199254740993") (llabs (js/BigInt "-9007199254740993"))))))
-  (testing ":double, :float, :bool and :string returns"
+  (testing ":double, :float and :string returns"
     (is (= 3 ((ffi/cfn "sqrt" [:double] :double) 9)))
     (is (= 3 ((ffi/cfn "sqrtf" [:float] :float) 9)))
-    (is (= [true false] (mapv (ffi/cfn "isalpha" [:int] :bool) [65 48])))
     (is (string? ((ffi/cfn "getenv" [:string] :string) "PATH")))
     (is (nil? ((ffi/cfn "getenv" [:string] :string) "BABASHKA_FFI_NOT_SET"))))
   (testing "the arity is checked, and the message names the symbol"

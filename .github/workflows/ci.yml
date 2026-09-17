@@ -81,4 +81,6 @@ jobs:
 
       # The same command as bb test:node.
       - name: Run tests
-        run: npx --yes nbb@1.5.212 --classpath src:test-node -m babashka.ffi-test
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then sep=';'; else sep=':'; fi
+          npx --yes nbb@1.5.212 --classpath "src${sep}test-node" -m babashka.ffi-test

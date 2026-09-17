@@ -14,7 +14,10 @@
   test:jvm {:doc "Run the tests on the JVM."
             :task (shell "clojure -M:test")}
   test:node {:doc "Run the Node.js tests with nbb. Needs Node.js 26.1 or newer on PATH."
-             :task (shell "npx --yes nbb@1.5.212 --classpath src:test-node -m babashka.ffi-test")}
+             :requires ([babashka.fs :as fs])
+             :task (shell "npx" "--yes" "nbb@1.5.212"
+                          "--classpath" (str "src" fs/path-separator "test-node")
+                          "-m" "babashka.ffi-test")}
   quickdoc
   {:doc "Invoke quickdoc"
    :requires ([quickdoc.api :as api])
