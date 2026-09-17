@@ -18,6 +18,18 @@
              :task (shell "npx" "--yes" "nbb@1.5.212"
                           "--classpath" (str "src" fs/path-separator "test-node")
                           "-m" "babashka.ffi-test")}
+  test:cljs {:doc "Run the Node.js tests compiled with ClojureScript. Pass advanced for an :advanced build."
+             :requires ([babashka.fs :as fs])
+             :task (if (= "advanced" (first *command-line-args*))
+                     (let [opts (str (fs/create-temp-file {:suffix ".edn"}))]
+                       (spit opts "{:optimizations :advanced :infer-externs true}")
+                       (clojure "-M:cljs-test" "-c" opts))
+                     (clojure "-M:cljs-test"))}
+  test:shadow {:doc "Run the Node.js tests compiled with shadow-cljs, plain and :advanced."
+               :task (do (shell "npm" "install")
+                         (shell "npx" "shadow-cljs" "compile" "node-test" "node-test-advanced")
+                         (shell "node" "target/shadow/node-tests.js")
+                         (shell "node" "target/shadow/node-tests-advanced.js"))}
   quickdoc
   {:doc "Invoke quickdoc"
    :requires ([quickdoc.api :as api])

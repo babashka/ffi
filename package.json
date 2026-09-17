@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "devDependencies": {
+    "nbb": "1.5.212",
+    "shadow-cljs": "3.5.3"
+  }
+}

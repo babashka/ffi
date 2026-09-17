@@ -81,7 +81,7 @@
       (ffi/defcfn c-open \"open\" [:string :int :&] :int)
       (c-open path O_RDONLY)         ; empty tail
       (c-open path flags 0644)       ; one-int tail, same binding"
-  (:refer-clojure :exclude [read])
+  (:refer-clojure :exclude [read with-open])
   (:require [clojure.string :as str])
   (:import [java.lang.foreign Arena FunctionDescriptor Linker
             MemoryLayout MemorySegment SymbolLookup ValueLayout]
@@ -463,7 +463,7 @@
   freed after the call. Strings passed to C must not be retained by it."
   [argtypes args f]
   (if (some #(= :string %) argtypes)
-    (with-open [arena (Arena/ofConfined)]
+    (clojure.core/with-open [arena (Arena/ofConfined)]
       (f (mapv (fn [t a]
                  (if (and (= :string t) (string? a))
                    (.address (.allocateFrom ^Arena arena ^String a))
@@ -1249,6 +1249,22 @@
   ^Arena []
   (Arena/global))
 
+(defmacro with-open
+  "Evaluates body with each name bound to its value. Calls .close on each
+  value in reverse order when body returns or throws.
+
+  CAUTION: On Node.js the arena closes when body returns. Do not return a
+  promise that still uses it."
+  [bindings & body]
+  (cond
+    ;; a ClojureScript compile expands this macro from the JVM
+    (not (:ns &env)) `(clojure.core/with-open ~bindings ~@body)
+    (zero? (count bindings)) `(do ~@body)
+    :else `(let [~(nth bindings 0) ~(nth bindings 1)]
+             (try
+               (with-open ~(subvec bindings 2) ~@body)
+               (finally (.close ~(nth bindings 0)))))))
+
 (defn- size-and-alignment
   "Returns the requested size and alignment.
   A type or layout uses natural alignment. An integer byte count uses
@@ -1474,15 +1490,15 @@
 
 (defn copy
   "Copies bytes from pointer src to pointer dst. Without n, copies the byte
-  size of src; dst must be at least that large. With n, copies n bytes.
+  size of src. dst must be at least that large. With n, copies n bytes.
   Returns nil.
 
-  Both pointers need a size. A pointer from C has none: give it one with
-  reinterpret. To copy into the middle of dst, slice it first:
+  Use reinterpret to specify a size for pointers from C. To copy into the
+  middle of dst, slice it first:
 
       (ffi/copy src (ffi/slice dst 16) n)
 
-  The regions may overlap; the copy behaves as memmove."
+  Supports overlapping regions, as with memmove."
   ([src dst]
    (let [^MemorySegment s (accessible src)]
      (copy s dst (.byteSize s))))
@@ -1493,9 +1509,8 @@
      nil)))
 
 (defn clone
-  "Allocates a copy of pointer src in arena, with the same size, and returns
-  the new pointer. src needs a size; give a pointer from C one with
-  reinterpret."
+  "Allocates a copy of pointer src in arena with the same size and returns
+  the new pointer. Use reinterpret to specify a size for pointers from C."
   ^MemorySegment [arena src]
   (let [^MemorySegment s (accessible src)
         d (alloc arena (.byteSize s))]
@@ -1558,25 +1573,21 @@
           v))))
 
 (defn place
-  "Returns a place: one member of layout t, resolved once, for read and
-  write to use where they take a type. path is a member name, or a vector
-  of member names and array indices that reaches into nested layouts.
-  Without a path the place is the whole layout.
+  "Returns a place for read and write in layout t. path is a member name
+  or a vector of member names and array indices. Without a path, returns
+  a place for the whole layout.
 
       (def parent (place bone :parent))
       (read p parent)                          ;=> 7
       (write p parent 3)
       (read p (place outer [:msgs 1 :data :result]))
-      (read p (place point))                   ; the whole layout, its lookup done once
+      (read p (place point))
 
-  The member is decoded and encoded as its type, the way read and write do
-  it: a struct as a map, an array as a vector, a union as a pointer on
-  read and a pair on write. Through a union the path names the member, so
-  a write needs no pair.
+  Uses the member's type for reads and writes: a struct as a map, an array
+  as a vector, a union as a pointer on read and a pair on write. A path to
+  a union member accepts the member's value directly on write.
 
-  A path that names nothing is an error here, not nil: a layout is closed,
-  so a member that is not there is a mistake in the program. Make a place
-  once and keep it, as with cfn."
+  Throws for an invalid path. Create a place once and reuse it."
   ([t] (place t []))
   ([t path]
    (let [path (if (vector? path) path [path])
@@ -1628,10 +1639,9 @@
 (declare ^:private layout-of*)
 
 (defn- layout-of
-  "Resolves a type keyword or struct layout. Returns a map with :type, :size,
-  and :align. A struct also has :fields. Each field has a :name and :offset.
-  The fields keep the order of the layout, the order of the C declaration,
-  and the offsets use natural C alignment.
+  "Resolves a type keyword or layout. Returns a map with :type, :size,
+  and :align. A struct or union also has :fields. Each field has a :name
+  and :offset. Fields keep declaration order and use natural C alignment.
 
   A layout is a vector that starts with its kind, such as [:struct fields].
   A keyword is a primitive type."
@@ -2176,7 +2186,7 @@
       (fn [& args]
         (let [args (vec args)]
           (when-not (= n (count args)) (arity-error (count args)))
-          (with-open [a (Arena/ofConfined)]
+          (clojure.core/with-open [a (Arena/ofConfined)]
             (let [^objects arr (object-array (+ base n))]
               (when struct-ret? (aset arr 0 a))
               (dotimes [i n]
@@ -2256,7 +2266,7 @@
         (fn [& args]
           (let [args (vec args)]
             (when-not (= n (count args)) (arity-error (count args)))
-            (with-open [a (Arena/ofConfined)]
+            (clojure.core/with-open [a (Arena/ofConfined)]
               (let [scratch (.allocate a total 16)
                     base (.address scratch)]
                 (dotimes [i n]
@@ -2307,8 +2317,7 @@
   unreachable. The garbage collector cannot see the copy that C holds. Use an
   automatic arena only when your reference outlives every call that C can make.
 
-  CAUTION: C can call the pointer until its arena releases it, and not one
-  instruction longer. Unregister the callback first."
+  CAUTION: Unregister the callback before its arena releases the pointer."
   [arena f argtypes rettype]
   (doseq [t argtypes] (carrier t))
   (carrier rettype)

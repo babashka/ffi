@@ -1,9 +1,7 @@
 (ns babashka.ffi
   "Call functions in native shared libraries from Node.js, through node:ffi.
 
-  This is the JavaScript host of babashka.ffi. It has the same names and
-  argument order as the JVM namespace, so a script that uses scalars,
-  pointers, layouts and callbacks runs on both:
+  Use the same names and argument order as the JVM namespace:
 
       (require '[babashka.ffi :as ffi])
       (ffi/load-system-library \"sqlite3\")
@@ -13,7 +11,9 @@
           (sqlite3-open \"x.db\" pp)
           (ffi/read pp :pointer)))
 
-  Needs Node.js 26.1 or newer. Tested with nbb.
+  Needs Node.js 26.1 or newer. Runs under nbb, ClojureScript and
+  shadow-cljs. A ClojureScript compile needs JDK 25 or newer, because the
+  macros come from ffi.clj.
 
   Use these type keywords:
 
@@ -29,8 +29,7 @@
   A 64-bit integer comes back as a number when it is a safe integer and as a
   bigint when it is not. An argument takes either.
 
-  Every allocation belongs to an arena. Use the with-open of this namespace
-  to close one. It closes the arena when the body returns, so do not return
+  Use ffi/with-open to close an arena. It closes the arena when the body returns, so do not return
   a promise that still uses the arena.
 
   Layouts, place, read-array, write-array, copy and clone work as on the
@@ -42,17 +41,23 @@
   - a variadic signature, :&
   - a function pointer as the symbol. Bind a function by name."
   (:refer-clojure :exclude [clone])
-  (:require ["node:ffi" :as nffi]
-            ["node:fs" :as fs]
-            ["node:process" :as process]
-            [clojure.string :as str]))
+  ;; The ClojureScript compiler takes defcfn and with-open from ffi.clj, so
+  ;; its JVM needs JDK 25 or newer. nbb uses the defmacros in this file.
+  (:require-macros [babashka.ffi])
+  (:require [clojure.string :as str]))
+
+;; getBuiltinModule loads node:ffi in both CommonJS and ESM.
+(def ^:private ^js nffi (js/process.getBuiltinModule "node:ffi"))
+(def ^:private ^js node-fs (js/process.getBuiltinModule "node:fs"))
+
+;; An arena is a type with a close field, so that (.close arena) and with-open
+;; work. nbb's deftype takes no methods, and a field keeps its name in an
+;; advanced build because close is in the default externs.
+(deftype Arena [kind ^:mutable closed ^:mutable bufs ^:mutable cleanups ^:mutable close])
 
 ;; -- pointers -----------------------------------------------------------------
 
-;; addr is a bigint, as node:ffi takes and returns addresses. scope is the
-;; arena that owns the memory, nil for memory that C owns. keep holds what
-;; the garbage collector must not release while this pointer is reachable:
-;; the Buffer behind an allocation, or the function behind a callback.
+;; keep retains the allocation Buffer or callback function.
 (deftype Pointer [addr size scope keep]
   Object
   (toString [_] (str "pointer " addr " size " size)))
@@ -63,17 +68,17 @@
   (identical? js/BigInt (type x)))
 
 (defn- from-big
-  "A bigint as a number when that loses nothing, else the bigint."
+  "Returns a number for a safe integer, otherwise the bigint."
   [b]
   (if (and (<= b js/Number.MAX_SAFE_INTEGER) (>= b js/Number.MIN_SAFE_INTEGER))
     (js/Number b)
     b))
 
 (defn- live? [^Pointer p]
-  (let [scope (.-scope p)]
+  (let [^Arena scope (.-scope p)]
     (not (and scope (.-closed scope)))))
 
-(defn- pointer-ex [p]
+(defn- pointer-ex [^Pointer p]
   (ex-info (if (instance? Pointer p)
              ;; C can access released memory through a closed arena's pointer.
              (str "babashka.ffi: the pointer at address " (.-addr p)
@@ -82,7 +87,7 @@
                   ". Wrap a raw address with (ffi/segment addr)"))
            {:value p}))
 
-(defn- as-pointer [p]
+(defn- ^Pointer as-pointer [p]
   (if (and (instance? Pointer p) (live? p)) p (throw (pointer-ex p))))
 
 (defn- pointer-address
@@ -90,7 +95,7 @@
   [p]
   (if (nil? p) big-zero (.-addr (as-pointer p))))
 
-(defn- accessible
+(defn- ^Pointer accessible
   "Returns p when it is a live pointer with a nonzero size."
   [p]
   (let [p (as-pointer p)]
@@ -107,7 +112,7 @@
                     {:pointer p :offset off :bytes n}))))
 
 (defn- to-big
-  "An integer argument as a bigint: a number, a bigint, nil or a pointer."
+  "Converts a number, bigint, nil or pointer to a bigint."
   [a]
   (cond (bigint? a) a
         (number? a) (js/BigInt (js/Math.trunc a))
@@ -125,7 +130,7 @@
   ([addr] (segment addr 0))
   ([addr size] (Pointer. (js/BigInt.asUintN 64 (to-big addr)) size nil nil)))
 
-(defn- on-close [arena f]
+(defn- on-close [^Arena arena f]
   (when (.-closed arena)
     (throw (ex-info "babashka.ffi: the arena is closed" {:arena arena})))
   (.push (.-cleanups arena) f))
@@ -202,7 +207,7 @@
   (= big-zero (.-addr (as-pointer p))))
 
 (defn- string-at [addr]
-  (nffi/toString addr))
+  (.toString nffi addr))
 
 (defn ptr->string
   "Returns the NUL-terminated UTF-8 string at p. Returns nil for a NULL
@@ -227,7 +232,7 @@
          ;; a limit narrows, it never widens
          limit (if (zero? size) limit (min limit size))]
      (when-not (= big-zero (.-addr p))
-       (let [buf (nffi/toBuffer (.-addr p) limit false)
+       (let [buf (.toBuffer nffi (.-addr p) limit false)
              n (.indexOf buf 0)]
          (when (neg? n)
            (throw (ex-info (str "babashka.ffi: no NUL byte in the first " limit
@@ -237,9 +242,7 @@
 
 ;; -- argument and return conversion --------------------------------------------
 
-;; node:ffi rejects what C would convert: -0, a fraction, an integer outside
-;; the width, a number where it wants a bigint. One coercion function per
-;; type, looked up when a binding is created.
+;; Coerce arguments to the numeric types and ranges node:ffi accepts.
 
 (defn- to-number [a]
   (cond (number? a) a
@@ -304,7 +307,7 @@
 (def ^:private libraries (atom []))
 
 (defn- os-key []
-  (case process/platform
+  (case js/process.platform
     "darwin" :mac
     "win32" :windows
     :linux))
@@ -317,9 +320,9 @@
     :mac ["/opt/homebrew/lib" "/usr/local/lib" "/opt/local/lib" "/usr/lib"]
     :windows []
     (concat
-     (when-let [p (aget process/env "LD_LIBRARY_PATH")]
+     (when-let [p (unchecked-get js/process.env "LD_LIBRARY_PATH")]
        (remove str/blank? (str/split p #":")))
-     (let [multiarch (if (= "arm64" process/arch)
+     (let [multiarch (if (= "arm64" js/process.arch)
                        "aarch64-linux-gnu"
                        "x86_64-linux-gnu")]
        ["/usr/local/lib"
@@ -333,14 +336,14 @@
 (def ^:private last-lookup-error (volatile! nil))
 
 (defn- try-open [path]
-  (try (nffi/DynamicLibrary. path)
+  (try (new (.-DynamicLibrary nffi) path)
        (catch :default e
          (vreset! last-lookup-error e)
          nil)))
 
 (defn- lookup-one
-  "One path through the full search: as given, then, for a bare name, the
-  common install directories. A {:path :lookup} map, nil when not found."
+  "Tries path, then common installation directories for a bare name.
+  Returns a map with :path and :lookup, or nil when not found."
   [path]
   (or (when-let [lk (try-open path)]
         {:path path :lookup lk})
@@ -358,11 +361,17 @@
 
   lib can be a path, a vector of candidates, or a map of operating systems to
   candidates. The function tries vector entries in order. An operating-system
-  map uses the keys :mac, :linux, and :windows. :darwin is an alias for :mac.
-  For a bare name, the function also searches common installation
-  directories. Returns a library map whose :path value identifies the loaded
-  candidate. The map can be the first argument to cfn. In that form, cfn
-  searches only this library."
+  map uses the keys :mac, :linux, and :windows:
+
+      (ffi/load-library
+        {:mac [\"/opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib\"
+               \"/usr/local/opt/openssl@3/lib/libcrypto.3.dylib\"]
+         :linux \"libcrypto.so.3\"})
+
+  :darwin is an alias for :mac. For a bare name, the function also searches
+  common installation directories. Returns a library map whose :path value
+  identifies the loaded candidate. The map can be the first argument to cfn.
+  In that form, cfn searches only this library."
   [lib]
   (let [paths (cond
                 (map? lib)
@@ -405,8 +414,8 @@
                                                           n (max (count a) (count b))
                                                           pad #(into % (repeat (- n (count %)) -1))]
                                                       (compare (pad b) (pad a))))
-                                     cands (when (fs/existsSync dir)
-                                             (->> (fs/readdirSync dir)
+                                     cands (when (.existsSync node-fs dir)
+                                             (->> (.readdirSync node-fs dir)
                                                   (filter #(str/starts-with? % (str base ".")))
                                                   (sort newest-first)))]
                                  (some (fn [c]
@@ -426,7 +435,7 @@
 ;; The process itself: every library the process has loaded. On Windows
 ;; node:ffi cannot open the process, so there the C runtime stands in.
 (def ^:private default-library
-  (delay (nffi/DynamicLibrary. (when (= :windows (os-key)) "ucrtbase.dll"))))
+  (delay (new (.-DynamicLibrary nffi) (when (= :windows (os-key)) "ucrtbase.dll"))))
 
 (defn- resolve-library
   "Returns the DynamicLibrary for a :library value. The value can be a library
@@ -438,7 +447,7 @@
                   (or (delay? lib) (var? lib) (instance? Atom lib)) @lib
                   :else lib)
         lookup (when (map? lib) (:lookup lib))]
-    (if (instance? nffi/DynamicLibrary lookup)
+    (if (instance? (.-DynamicLibrary nffi) lookup)
       lookup
       (throw (ex-info (str "babashka.ffi: :library must be a library map, a function that returns one, or a delay, atom or var that holds one, got "
                            (pr-str lib))
@@ -457,7 +466,7 @@
   searches the default system lookup."
   ([sym] (find-symbol nil sym))
   ([lib sym]
-   (some (fn [l]
+   (some (fn [^js l]
            (try (Pointer. (.getSymbol l (str sym)) 0 nil nil)
                 (catch :default _ nil)))
          (lookups lib))))
@@ -476,7 +485,7 @@
 
 (defn- native-function [lib sym argtypes rettype]
   (let [sig (signature argtypes rettype)]
-    (or (some (fn [l]
+    (or (some (fn [^js l]
                 (when (try (.getSymbol l sym) (catch :default _ nil))
                   (.getFunction l sym sig)))
               (lookups lib))
@@ -542,10 +551,7 @@
                        (aset arr i ((aget coercers i) (aget arr i))))
                      (convert (.apply (native) nil arr))))]
      (with-meta
-       ;; One fixed arity for the common sizes, so a call allocates no
-       ;; argument array. A JavaScript function does not check its argument
-       ;; count: a missing argument is undefined, which no caller passes on
-       ;; purpose, and the parameter after the last catches one too many.
+       ;; Fixed arities avoid argument arrays. The extra parameter detects excess arguments.
        (case n
          0 (fn [x]
              (if (undefined? x) (convert ((native))) (arity-error "more than 0")))
@@ -573,9 +579,26 @@
 
       (defcfn sqlite3-open \"sqlite3_open\" [:string :pointer] :int)
 
+      (defcfn sqlite3-open
+        \"Opens the database at path, storing the handle in out-param pp.\"
+        \"sqlite3_open\" [:string :pointer] :int)
+
   An optional docstring and attribute map can precede the C symbol. The final
-  three arguments are the C symbol, argument types, and return type. The
-  :library key in the attribute map selects a library for cfn.
+  three arguments are the C symbol, argument types, and return type. defcfn
+  preserves all metadata on name. This metadata includes ^:private.
+
+  The :library key in the attribute map selects a library for cfn:
+
+      (def sqlite (delay (ffi/load-library (extract-bundled-library!))))
+      (defcfn sqlite3-open {:library sqlite} \"sqlite3_open\"
+        [:string :pointer] :int)
+
+  The value can be a library map or a function that returns one. It can also
+  be an IDeref object that holds a library map.
+
+  Without :library, a binding searches all loaded libraries. Then it searches
+  the default system lookup. A system library with the same name can supply
+  the symbol.
 
   The wrapper form binds the raw C function to a local name and defines name
   as the wrapper:
@@ -585,10 +608,18 @@
         open-native
         [filename flags]
         (ffi/with-open [arena (ffi/confined-arena)]
-          ...))
+          (let [pdb (ffi/alloc arena :pointer)
+                code (open-native filename pdb flags nil)]
+            (if (zero? code)
+              (ffi/read pdb :pointer)
+              (throw (ex-info \"open failed\" {:code code}))))))
 
-  The symbol after the return type names the raw binding. The forms after
-  the raw name are a normal fn tail."
+  The symbol after the return type names the raw binding. Only the wrapper
+  body can use this name. The forms after the raw name are a normal fn tail.
+  The wrapper can have multiple arities. Its argument lists can differ from
+  the C function. The raw name does not enter the namespace. The wrapper
+  form needs a literal argtypes vector. Only the plain form accepts an
+  argtypes expression."
   [name & args]
   (when (< (count args) 3)
     (throw (ex-info "babashka.ffi: defcfn needs a C symbol, argtypes and a return type"
@@ -642,14 +673,10 @@
 
 ;; -- arenas -------------------------------------------------------------------
 
-;; node:ffi does not allocate. An allocation is a zeroed Buffer, whose bytes
-;; stay at one address, and the pointer holds the Buffer. An arena holds its
-;; Buffers until it closes, so memory that only C points at stays allocated.
-;; After the close the garbage collector releases a Buffer once no pointer
-;; to it is left.
+;; Arenas retain allocation Buffers until close.
 
 (defn- arena [kind closeable?]
-  (let [a #js {:kind (name kind) :closed false :bufs #js [] :cleanups #js []}]
+  (let [a (Arena. (name kind) false #js [] #js [] nil)]
     (set! (.-close a)
           (fn []
             (when-not closeable?
@@ -665,13 +692,14 @@
     a))
 
 (defn confined-arena
-  "Returns an arena. Create this arena in ffi/with-open to release its memory."
+  "Returns an arena for one thread.
+  Create this arena in ffi/with-open to release its memory."
   []
   (arena :confined true))
 
 (defn shared-arena
-  "Returns an arena. JavaScript calls C on one thread, so this is the same as
-  confined-arena. It exists so that code written for the JVM loads."
+  "Returns an arena. On Node.js, behaves like confined-arena.
+  Create this arena in ffi/with-open to release its memory."
   []
   (arena :shared true))
 
@@ -690,11 +718,11 @@
   @the-global-arena)
 
 (defmacro with-open
-  "Evaluates body with each name bound to its value, and calls .close on
-  each in reverse order when body returns or throws.
+  "Evaluates body with each name bound to its value. Calls .close on each
+  value in reverse order when body returns or throws.
 
-  CAUTION: The arena closes when body returns. Do not return a promise that
-  still uses it."
+  CAUTION: On Node.js the arena closes when body returns. Do not return a
+  promise that still uses it."
   [bindings & body]
   (if (zero? (count bindings))
     `(do ~@body)
@@ -704,7 +732,7 @@
          (finally (.close ~(nth bindings 0)))))))
 
 (defn- arena? [x]
-  (and (some? x) (array? (.-cleanups x))))
+  (instance? Arena x))
 
 (defn- size-and-alignment [n]
   (cond (integer? n) [n 16]
@@ -727,7 +755,7 @@
   ([arena n]
    (let [[size align] (size-and-alignment n)]
      (alloc arena size align)))
-  ([arena n alignment]
+  ([^Arena arena n alignment]
    (when-not (arena? arena)
      (throw (ex-info (str "babashka.ffi: alloc takes an arena first, got " (pr-str arena))
                      {:arena arena})))
@@ -739,7 +767,7 @@
                      {:alignment alignment})))
    (let [size (first (size-and-alignment n))
          buf (js/Buffer.alloc (+ (max 1 size) alignment))
-         base (nffi/getRawPointer buf)
+         base (.getRawPointer nffi buf)
          low (js/Number (js/BigInt.asUintN 30 base))
          pad (bit-and (- alignment (bit-and low (dec alignment))) (dec alignment))]
      (when-not (= "auto" (.-kind arena))
@@ -752,7 +780,7 @@
   [arena s]
   (let [n (inc (js/Buffer.byteLength s "utf8"))
         p (alloc arena n 1)]
-    (nffi/exportString s (.-addr p) n)
+    (.exportString nffi s (.-addr p) n)
     p))
 
 ;; -- layouts ------------------------------------------------------------------
@@ -840,8 +868,12 @@
                     {:layout t}))))
 
 (defn- layout-of
-  "Resolves a type keyword or layout to a map with :type, :size and :align.
-  A struct or union also has :fields, each with a :name and an :offset."
+  "Resolves a type keyword or layout. Returns a map with :type, :size,
+  and :align. A struct or union also has :fields. Each field has a :name
+  and :offset. Fields keep declaration order and use natural C alignment.
+
+  A layout is a vector that starts with its kind, such as [:struct fields].
+  A keyword is a primitive type."
   [t]
   (if (keyword? t)
     (layout-of* t)
@@ -867,30 +899,30 @@
 ;; A getter takes an address and a byte offset. A setter takes a value that
 ;; arg-coercer already converted for the type.
 (def ^:private scalar-get
-  (let [i64 (fn [a o] (from-big (nffi/getInt64 a o)))
-        u64 (fn [a o] (from-big (nffi/getUint64 a o)))
-        i8 (fn [a o] (nffi/getInt8 a o))]
-    {:int nffi/getInt32 :int32 nffi/getInt32
-     :uint nffi/getUint32 :uint32 nffi/getUint32
-     :int16 nffi/getInt16 :uint16 nffi/getUint16
-     :int8 i8 :byte i8 :char i8 :uint8 nffi/getUint8
-     :bool (fn [a o] (not (zero? (nffi/getUint8 a o))))
+  (let [i64 (fn [a o] (from-big (.getInt64 nffi a o)))
+        u64 (fn [a o] (from-big (.getUint64 nffi a o)))
+        i8 (fn [a o] (.getInt8 nffi a o))]
+    {:int (.-getInt32 nffi) :int32 (.-getInt32 nffi)
+     :uint (.-getUint32 nffi) :uint32 (.-getUint32 nffi)
+     :int16 (.-getInt16 nffi) :uint16 (.-getUint16 nffi)
+     :int8 i8 :byte i8 :char i8 :uint8 (.-getUint8 nffi)
+     :bool (fn [a o] (not (zero? (.getUint8 nffi a o))))
      :long i64 :int64 i64 :ssize_t i64
      :ulong u64 :uint64 u64 :size_t u64
-     :double nffi/getFloat64 :float nffi/getFloat32
-     :pointer (fn [a o] (Pointer. (nffi/getUint64 a o) 0 nil nil))
-     :string (fn [a o] (string-at (nffi/getUint64 a o)))}))
+     :double (.-getFloat64 nffi) :float (.-getFloat32 nffi)
+     :pointer (fn [a o] (Pointer. (.getUint64 nffi a o) 0 nil nil))
+     :string (fn [a o] (string-at (.getUint64 nffi a o)))}))
 
 (def ^:private scalar-set
-  {:int nffi/setInt32 :int32 nffi/setInt32
-   :uint nffi/setUint32 :uint32 nffi/setUint32
-   :int16 nffi/setInt16 :uint16 nffi/setUint16
-   :int8 nffi/setInt8 :byte nffi/setInt8 :char nffi/setInt8
-   :uint8 nffi/setUint8 :bool nffi/setUint8
-   :long nffi/setInt64 :int64 nffi/setInt64 :ssize_t nffi/setInt64
-   :ulong nffi/setUint64 :uint64 nffi/setUint64 :size_t nffi/setUint64
-   :double nffi/setFloat64 :float nffi/setFloat32
-   :pointer nffi/setUint64})
+  {:int (.-setInt32 nffi) :int32 (.-setInt32 nffi)
+   :uint (.-setUint32 nffi) :uint32 (.-setUint32 nffi)
+   :int16 (.-setInt16 nffi) :uint16 (.-setUint16 nffi)
+   :int8 (.-setInt8 nffi) :byte (.-setInt8 nffi) :char (.-setInt8 nffi)
+   :uint8 (.-setUint8 nffi) :bool (.-setUint8 nffi)
+   :long (.-setInt64 nffi) :int64 (.-setInt64 nffi) :ssize_t (.-setInt64 nffi)
+   :ulong (.-setUint64 nffi) :uint64 (.-setUint64 nffi) :size_t (.-setUint64 nffi)
+   :double (.-setFloat64 nffi) :float (.-setFloat32 nffi)
+   :pointer (.-setUint64 nffi)})
 
 ;; -- codecs -------------------------------------------------------------------
 
@@ -939,7 +971,7 @@
                                 " that outlive this write, so their lifetime is yours"
                                 " to choose: (string->ptr arena " (pr-str v) ")")
                            {:value v :path path})))
-         (nffi/setUint64 base offset (pointer-address v)))
+         (.setUint64 nffi base offset (pointer-address v)))
 
        :union
        ;; a union value is a tagged pair, [member value]. See ADR 0005.
@@ -996,8 +1028,7 @@
 
 (defn- decoder [lay offset]
   (case (:type lay)
-    ;; a union has no tag of its own, so it decodes to its bytes and the
-    ;; caller reads the member it knows applies; see ADR 0005
+    ;; Return union bytes for the caller to read as a member. See ADR 0005.
     :union
     (let [size (:size lay)]
       (fn [^Pointer p base]
@@ -1033,9 +1064,7 @@
                  (fn [m] (if (<= cache-limit (count m)) m (assoc m k v))))
           v))))
 
-;; A place is a location in a layout, resolved once: the codecs for it,
-;; built at its offset. extent is the offset of its end in the layout, for
-;; the bounds check. See ADR 0006.
+;; extent is the end offset used for bounds checks. See ADR 0006.
 (deftype Place [layout path decode encode extent]
   Object
   (toString [_] (str "place " (pr-str path) " in " (pr-str layout))))
@@ -1043,7 +1072,8 @@
 (defn read
   "Reads a value of type t from p. The default byte offset is zero.
 
-  t is a type keyword, a layout, or a place from `place`.
+  t is a type keyword, a layout, or a place from `place`. A place is a
+  member of a layout resolved once, so reading through it does no lookup.
 
   Checks the access against the size of p. Rejects a zero-size pointer.
   reinterpret specifies a valid size."
@@ -1136,7 +1166,7 @@
      (check-bounds p offset bytes)
      (if (zero? n)
        (new ctor 0)
-       (new ctor (nffi/toArrayBuffer (+ (.-addr p) (js/BigInt offset)) bytes true))))))
+       (new ctor (.toArrayBuffer nffi (+ (.-addr p) (js/BigInt offset)) bytes true))))))
 
 (defn write-array
   "Copies typed array arr into memory at pointer p, at byte offset (default
@@ -1155,20 +1185,20 @@
                        {:type t :array arr})))
      (check-bounds p offset (.-byteLength arr))
      (when (pos? (.-byteLength arr))
-       (nffi/exportArrayBufferView arr (+ (.-addr p) (js/BigInt offset)) (.-byteLength arr)))
+       (.exportArrayBufferView nffi arr (+ (.-addr p) (js/BigInt offset)) (.-byteLength arr)))
      nil)))
 
 (defn copy
   "Copies bytes from pointer src to pointer dst. Without n, copies the byte
-  size of src; dst must be at least that large. With n, copies n bytes.
+  size of src. dst must be at least that large. With n, copies n bytes.
   Returns nil.
 
-  Both pointers need a size. A pointer from C has none: give it one with
-  reinterpret. To copy into the middle of dst, slice it first:
+  Use reinterpret to specify a size for pointers from C. To copy into the
+  middle of dst, slice it first:
 
       (ffi/copy src (ffi/slice dst 16) n)
 
-  The regions may overlap; the copy behaves as memmove."
+  Supports overlapping regions, as with memmove."
   ([src dst] (copy src dst (.-size (accessible src))))
   ([src dst n]
    (let [s (accessible src)
@@ -1177,13 +1207,12 @@
      (check-bounds d 0 n)
      (when (pos? n)
        ;; through a copy of the source, so that overlapping regions are safe
-       (nffi/exportBuffer (nffi/toBuffer (.-addr s) n true) (.-addr d) n))
+       (.exportBuffer nffi (.toBuffer nffi (.-addr s) n true) (.-addr d) n))
      nil)))
 
 (defn clone
-  "Allocates a copy of pointer src in arena, with the same size, and returns
-  the new pointer. src needs a size; give a pointer from C one with
-  reinterpret."
+  "Allocates a copy of pointer src in arena with the same size and returns
+  the new pointer. Use reinterpret to specify a size for pointers from C."
   [arena src]
   (let [s (accessible src)
         d (alloc arena (.-size s))]
@@ -1199,7 +1228,7 @@
   [p n]
   (let [p (accessible p)]
     (check-bounds p 0 n)
-    (nffi/toBuffer (.-addr p) n false)))
+    (.toBuffer nffi (.-addr p) n false)))
 
 ;; -- one member of a layout ---------------------------------------------------
 
@@ -1237,21 +1266,21 @@
 (def ^:private place-cache (atom {}))
 
 (defn place
-  "Returns a place: one member of layout t, resolved once, for read and
-  write to use where they take a type. path is a member name, or a vector
-  of member names and array indices that reaches into nested layouts.
-  Without a path the place is the whole layout.
+  "Returns a place for read and write in layout t. path is a member name
+  or a vector of member names and array indices. Without a path, returns
+  a place for the whole layout.
 
       (def parent (place bone :parent))
       (read p parent)                          ;=> 7
       (write p parent 3)
       (read p (place outer [:msgs 1 :data :result]))
+      (read p (place point))
 
-  The member is decoded and encoded as its type, the way read and write do
-  it. Through a union the path names the member, so a write needs no pair.
+  Uses the member's type for reads and writes: a struct as a map, an array
+  as a vector, a union as a pointer on read and a pair on write. A path to
+  a union member accepts the member's value directly on write.
 
-  A path that names nothing is an error here, not nil. Make a place once and
-  keep it, as with cfn."
+  Throws for an invalid path. Create a place once and reuse it."
   ([t] (place t []))
   ([t path]
    (let [path (if (vector? path) path [path])
@@ -1266,7 +1295,7 @@
 
 (defn callback
   "Creates a C function pointer that invokes f. arena owns the pointer, which
-  is valid until the arena closes. There is no separate release function.
+  is valid until the arena releases it. There is no separate release function.
   argtypes and rettype use the cfn type keywords. f receives :pointer
   arguments as zero-size pointers and :bool arguments as booleans. For a
   :pointer return f returns a pointer, or nil for null.
@@ -1278,9 +1307,8 @@
   it once the pointer itself becomes unreachable. The garbage collector
   cannot see the copy that C holds.
 
-  CAUTION: C can call the pointer until its arena releases it, and not one
-  instruction longer. Unregister the callback first."
-  [arena f argtypes rettype]
+  CAUTION: Unregister the callback before its arena releases the pointer."
+  [^Arena arena f argtypes rettype]
   (run! check-type argtypes)
   (check-type rettype)
   (when (some #(= :void %) argtypes)
@@ -1304,7 +1332,7 @@
                         (aset arr i (c (aget arr i)))))
                     (let [r (.apply f nil arr)]
                       (if out (out r) js/undefined))))
-        lib @default-library
+        ^js lib @default-library
         addr (.registerCallback lib (signature argtypes rettype) wrapper)]
     (case (.-kind arena)
       "global" nil

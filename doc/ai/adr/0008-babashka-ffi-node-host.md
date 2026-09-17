@@ -27,6 +27,9 @@ Probed on Node.js 26.9.0, macOS arm64:
   support it.
 - nbb has no `with-open`, and its `deftype` takes only `toString` under
   `Object`.
+- ClojureScript resolves a fixed list of Node.js modules. `"node:ffi"` in
+  an ns require fails with `No such namespace: node:ffi`, and the module
+  has no name without the prefix.
 
 ## Decision
 
@@ -38,11 +41,19 @@ embeds it. The layout code is duplicated, not shared through a `.cljc`.
   arena, and a closed arena makes every access throw, as a closed FFM arena
   does. `keep` holds the Buffer or the callback function for the garbage
   collector.
-- An arena is a JavaScript object with a `close` function. An allocation is
+- The namespace reaches node:ffi through `process.getBuiltinModule`, one
+  path for nbb, ClojureScript, shadow-cljs, CommonJS and ESM.
+- `ffi.cljs` requires its macros from `babashka.ffi`, as babashka.fs does.
+  The ClojureScript compiler resolves that to `ffi.clj`, so `ffi.clj` has
+  `with-open` too: clojure.core's on the JVM, a try and finally around
+  `.close` when it expands for ClojureScript. One script closes arenas the
+  same way on every host. The compiler's JVM loads `ffi.clj` and needs JDK
+  25 or newer. nbb uses the defmacros in `ffi.cljs`.
+- An arena is `(deftype Arena [kind closed bufs cleanups close])`. `close`
+  is a field that holds a function, because nbb's deftype takes no methods. An allocation is
   a zeroed `Buffer`, over-allocated for alignment, and its address comes
   from `getRawPointer`. The arena holds its buffers until it closes. No
   malloc, so no dependency on a C runtime by name.
-- `babashka.ffi/with-open` stands in for the missing core macro.
 - A 64-bit return is a number when it is a safe integer, else a bigint. An
   unsigned 64-bit value stays unsigned. Arguments take either.
 - One coercion function per type wraps, truncates or widens the value to
@@ -67,6 +78,14 @@ embeds it. The layout code is duplicated, not shared through a `.cljc`.
   per call, so a binding with up to 4 arguments is a single-arity function
   with a sentinel parameter, which cost 530 ns as a multi-arity one. `read`
   and `write` are multi-arity and cost 550 to 900 ns.
-- Not validated: a compiled ClojureScript build. `defcfn` and `with-open`
-  are macros in the `.cljs` file, which works in nbb and not in the
-  ClojureScript compiler.
+- The same 14 tests pass under nbb, ClojureScript `:none` and `:advanced`,
+  and shadow-cljs plain and `:advanced`. A ClojureScript `:advanced` build
+  needs `:infer-externs true`. Every Pointer, Arena and node:ffi access
+  carries a type hint, so shadow-cljs compiles without infer warnings.
+- The multi-arity cost is SCI's. 2 million calls each, ns per call:
+
+      fn shape          planck   nbb 1.5.212   compiled, node 26
+      one arity             40            11                 4.3
+      multi fixed           75           273                 4.3
+      multi + variadic     109           267                 4.3
+      variadic only        225            16                  15

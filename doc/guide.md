@@ -1015,18 +1015,24 @@ iteration before C runs.
 ### On Node.js
 
 `src/babashka/ffi.cljs` is the same namespace on Node.js, through
-[node:ffi](https://nodejs.org/api/ffi.html). It needs Node.js 26.1 or newer
-and is tested with [nbb](https://github.com/babashka/nbb):
+[node:ffi](https://nodejs.org/api/ffi.html). It needs Node.js 26.1 or newer.
+Run a script with [nbb](https://github.com/babashka/nbb):
 
 ```sh
 nbb --classpath src examples/sqlite.cljs
 ```
 
+ClojureScript and shadow-cljs compile the namespace too, with any
+optimization level. The compiler takes `defcfn` and `with-open` from
+`ffi.clj`, so its JVM needs JDK 25 or newer. With ClojureScript, an
+`:advanced` build needs `:infer-externs true`.
+
 The binding metadata names the backend `:node`. These parts differ from the
 JVM:
 
-- Close an arena with `ffi/with-open`. It closes the arena when the body
-  returns, so do not return a promise that still uses the arena.
+- Close an arena with `ffi/with-open`. The JVM namespace has the same
+  macro, so one script runs on every host. It closes the arena when the
+  body returns, so do not return a promise that still uses the arena.
 - A pointer is a `Pointer`: an address, a size and the arena that owns it.
 - An allocation is a zeroed `Buffer`. An arena holds its buffers until it
   closes. `shared-arena` is the same as `confined-arena`.
