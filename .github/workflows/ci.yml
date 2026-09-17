@@ -20,9 +20,15 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
+      # The download from objects.githubusercontent.com fails now and then
+      # with curl exit 8, a reply curl cannot parse. Retrying clears it.
       - name: Install babashka dev build
         run: |
-          bash <(curl -s https://raw.githubusercontent.com/babashka/babashka/master/install) --dev-build --dir . --dynamic
+          for i in 1 2 3; do
+            bash <(curl -fsS https://raw.githubusercontent.com/babashka/babashka/master/install) --dev-build --dir . --dynamic && exit 0
+            sleep 5
+          done
+          exit 1
 
       # Runs the suite through babashka's built-in babashka.ffi, so the calls
       # go through the compiled trampolines instead of FFM handles.

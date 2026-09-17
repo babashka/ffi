@@ -38,10 +38,11 @@ names it as :babashka.ffi/backend.
 
 | Signature | JVM | Native image |
 |---|---|---|
-| fixed, scalars, up to 6 args | binding.clj generated class with the FFM handle as a constant, 3 to 6 ns, about 70 us to create | compiled trampoline when the shape is in the set, about 30 ns, else libffi, about 1 us |
+| fixed, scalars, up to 20 args | binding.clj generated class with the FFM handle as a constant, 3 to 6 ns, about 70 us to create | compiled trampoline when the shape is in the set, about 30 ns, else libffi, about 1 us |
 | struct by value | FFM handle with invokeWithArguments | libffi |
-| variadic, tail inferred per call | one FFM handle per tail shape | libffi |
-| variadic, tail declared | resolved once like a fixed signature | libffi |
+| variadic, tail inferred per call | cached binding per tail shape, about 55 ns more than a declared tail | libffi |
+| variadic, tail declared | generated class with firstVariadicArg | libffi |
+| more than 20 args, fixed or variadic | FFM handle with invokeWithArguments | libffi |
 
 Every type keyword has a carrier: :long, :double, :float or :void. The
 trampoline set and the generated class bytes are keyed on carriers, not

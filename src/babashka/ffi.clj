@@ -234,7 +234,7 @@
   and pointer shares the 64-bit carrier."
   [v]
   (cond
-    (or (integer? v) (nil? v) (boolean? v) (instance? MemorySegment v)) :long
+    (or (integer? v) (nil? v) (instance? MemorySegment v)) :long
     (float? v) :double
     (ratio? v) :double
     (string? v) :string
@@ -486,8 +486,6 @@
     (into {:double double :float float :bool as-bool :pointer as-addr}
           (map (fn [t] [t as-long]))
           (disj long-carrier? :bool :pointer))))
-
-(defn- coerce-arg [t a] ((arg-coercer t) a))
 
 (defn- narrow-ret [t raw]
   (case t
@@ -749,7 +747,8 @@
     false))
 
 (declare ^:private fixed-cfn ^:private fixed-ffm-cfn ^:private variadic-ffm-cfn
-         ^:private libffi-cfn ^:private libffi-available? ^:private struct-ffm-cfn)
+         ^:private libffi-cfn ^:private libffi-available? ^:private struct-ffm-cfn
+         ^:private jvm-cfn)
 
 (defn- variadic-libffi-cfn
   "A variadic binding through libffi: one cif per distinct tail shape,
@@ -786,6 +785,30 @@
           (apply f args)))
       {:babashka.ffi/backend :libffi} sym (conj fixed :&) rettype)))
 
+(defn- variadic-handle-cfn
+  "Creates a variadic JVM binding for more than 20 arguments.
+  address is a delay containing the resolved symbol."
+  [address sym all-types rettype nf]
+  (let [n (count all-types)
+        handle (delay (.downcallHandle
+                       ^Linker @linker*
+                       ^MemorySegment @address
+                       (descriptor all-types rettype)
+                       (into-array java.lang.foreign.Linker$Option
+                                   [(java.lang.foreign.Linker$Option/firstVariadicArg nf)])))
+        coercers ^objects (object-array (map arg-coercer all-types))]
+    (fn [& args]
+      (when-not (= n (count args))
+        (throw (arity-ex sym n (count args))))
+      (with-string-args all-types (vec args)
+        (fn [args]
+          (let [^objects arr (object-array args)]
+            (dotimes [i n] (aset arr i ((aget coercers i) (aget arr i))))
+            (narrow-ret rettype (.invokeWithArguments ^MethodHandle @handle arr))))))))
+
+;; AFn supports invoke methods with up to 20 arguments.
+(def ^:private max-class-arity 20)
+
 (defn- declared-variadic-cfn
   "A variadic binding whose tail shape is declared in the signature, so it
   is resolved once here and the call infers nothing. In a native image the
@@ -809,23 +832,12 @@
                      (when-not (= n (count args)) (arity-error (count args)))
                      (apply call args))
           {:babashka.ffi/backend :libffi} sym (into (conj fixed :&) tail) rettype))
-      (let [address (delay (require-symbol lib sym))
-              handle (delay (.downcallHandle
-                             ^Linker @linker*
-                             ^MemorySegment @address
-                             (descriptor all-types rettype)
-                             (into-array java.lang.foreign.Linker$Option
-                                         [(java.lang.foreign.Linker$Option/firstVariadicArg nf)])))
-              coercers ^objects (object-array (map arg-coercer all-types))]
+      (let [shown (into (conj fixed :&) tail)]
+        (if (<= n max-class-arity)
+          (jvm-cfn lib sym all-types rettype {:first-variadic nf :argtypes shown})
           (binding-with-meta
-            (fn [& args]
-              (when-not (= n (count args)) (arity-error (count args)))
-              (with-string-args all-types (vec args)
-                (fn [args]
-                  (let [^objects arr (object-array args)]
-                    (dotimes [i n] (aset arr i ((aget coercers i) (aget arr i))))
-                    (narrow-ret rettype (.invokeWithArguments ^MethodHandle @handle arr))))))
-          {:babashka.ffi/backend :ffm} sym (into (conj fixed :&) tail) rettype)))))
+            (variadic-handle-cfn (delay (require-symbol lib sym)) sym all-types rettype nf)
+            {:babashka.ffi/backend :ffm} sym shown rettype))))))
 
 (defn- variadic-cfn
   "A variadic binding: fixed types declared, tail inferred per call. In a
@@ -841,46 +853,60 @@
     :else (throw (unsupported-ex sym argtypes rettype
                                  "a variadic call in a native image goes through libffi, and this build has none"))))
 
+(defn- tail-shape-key
+  "Returns the variadic tail shape as a long, or nil for more than 30 values."
+  [tail]
+  (loop [s (seq tail) k 1 n 0]
+    (cond (nil? s) k
+          (== n 30) nil
+          :else (let [v (first s)
+                      code (cond (instance? Long v) 1
+                                 (instance? Double v) 2
+                                 (string? v) 3
+                                 :else (case (tail-type v) :long 1 :double 2 :string 3))]
+                  (recur (next s) (+ (* 4 k) (long code)) (inc n))))))
+
 (defn- variadic-ffm-cfn
-  "The JVM path: one FFM handle per distinct tail shape, cached. A native
-  image never gets here, it calls through libffi."
+  "Creates a variadic JVM binding that infers tail types per call."
   [lib sym fixed rettype]
   (let [nf (count fixed)
         cache (atom {})
-        ;; resolved once per binding, on the first call, and shared by every
-        ;; tail shape: a :library function is asked for its library one time
+        last-hit (volatile! nil)
+        shown (conj fixed :&)
+        ;; Resolve the symbol once for all tail shapes.
         address (delay (require-symbol lib sym))
-        caller-for
-        (fn [tail-types]
-          (or (get @cache tail-types)
-              (let [all-types (into fixed tail-types)
-                    handle (.downcallHandle
-                            ^Linker @linker*
-                            ^MemorySegment @address
-                            (descriptor all-types rettype)
-                            (into-array java.lang.foreign.Linker$Option
-                                        [(java.lang.foreign.Linker$Option/firstVariadicArg nf)]))
-                    caller (fn [^objects arr]
-                             (.invokeWithArguments ^MethodHandle handle arr))]
-                (swap! cache assoc tail-types caller)
-                caller)))]
+        binding-for
+        (fn [k tail]
+          (or (get @cache k)
+              (let [all-types (into fixed (map tail-type) tail)
+                    f (if (<= (count all-types) max-class-arity)
+                        (jvm-cfn nil @address all-types rettype
+                                 {:first-variadic nf :sym sym :argtypes shown})
+                        (variadic-handle-cfn address sym all-types rettype nf))]
+                (swap! cache (fn [m] (assoc (if (>= (count m) 64) {} m) k f)))
+                f)))]
     (binding-with-meta
       (fn [& args]
-        (when (< (count args) nf)
-          (throw (ex-info (str "babashka.ffi: " sym " expects at least " nf
-                               " args, got " (count args))
-                          {:symbol sym})))
-        (let [args (vec args)
-              tail-types (mapv tail-type (subvec args nf))
-              all-types (into fixed tail-types)
-              caller (caller-for tail-types)]
-          (with-string-args all-types args
-            (fn [args]
-              (narrow-ret rettype
-                          (caller (object-array
-                                   (map-indexed (fn [i a] (coerce-arg (all-types i) a))
-                                                args))))))))
-      {:babashka.ffi/backend :ffm} sym (conj fixed :&) rettype)))
+        (let [n (count args)]
+          (when (< n nf)
+            (throw (ex-info (str "babashka.ffi: " sym " expects at least " nf
+                                 " args, got " n)
+                            {:symbol sym})))
+          (let [tail (nthnext args nf)
+                k (or (tail-shape-key tail) (mapv tail-type tail))
+                hit @last-hit
+                f (if (and hit (= k (aget ^objects hit 0)))
+                    (aget ^objects hit 1)
+                    (let [f (binding-for k tail)]
+                      (vreset! last-hit (object-array [k f]))
+                      f))]
+            (case n
+              1 (f (first args))
+              2 (f (first args) (second args))
+              3 (f (first args) (second args) (nth args 2))
+              4 (f (first args) (second args) (nth args 2) (nth args 3))
+              (apply f args)))))
+      {:babashka.ffi/backend :ffm} sym shown rettype)))
 
 (defn cfn
   "Creates a Clojure function that calls the C function sym. sym is a C symbol
@@ -989,7 +1015,9 @@
                    :arity-ex arity-ex
                    :binding-string binding-string
                    :binding-with-meta binding-with-meta}]
-      (fn [lib sym argtypes rettype] (f helpers lib sym argtypes rettype)))))
+      (fn
+        ([lib sym argtypes rettype] (f helpers lib sym argtypes rettype))
+        ([lib sym argtypes rettype opts] (f helpers lib sym argtypes rettype opts))))))
 
 (defn- fixed-ffm-cfn
   [lib sym argtypes rettype]
@@ -1050,7 +1078,7 @@
                        (throw (ex-info (str "babashka.ffi: " sym " expects " n
                                             " args, got " got)
                                        {:symbol sym})))]
-     (if (and (not native-image?) (<= n 6))
+     (if (and (not native-image?) (<= n (long max-class-arity)))
        ;; the JVM: a generated class, its metadata and arity check included
        (jvm-cfn lib sym types rettype)
        (binding-with-meta

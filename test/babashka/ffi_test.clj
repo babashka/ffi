@@ -687,6 +687,12 @@
           (is (= "42 and hello" (ffi/ptr->string buf 64)))
           (is (= (inferred buf 64 "%d and %s" 42 "hello") (declared buf 64 "%d and %s" 42 "hello")))
           (is (thrown-with-msg? Exception #"expects 5 args, got 4" (declared buf 64 "%d" 42))))
+        (testing "an inferred binding accepts different tail shapes"
+          (let [out (fn [& args] (apply inferred buf 64 args) (ffi/ptr->string buf 64))]
+            (is (= ["7" "x" "7 x" "plain" "8"]
+                   [(out "%d" 7) (out "%s" "x") (out "%d %s" 7 "x") (out "plain") (out "%d" 8)]))
+            (is (re-matches #"1[.,]50 9" (out "%.2f %d" 1.5 9)))
+            (is (thrown-with-msg? Exception #"expects at least 3 args, got 2" (inferred buf 64)))))
         (testing "a double in the tail"
           ((ffi/cfn "snprintf" [:pointer :size_t :string :& :double] :int) buf 64 "%.2f" 2.5)
           ;; the decimal separator follows the process locale

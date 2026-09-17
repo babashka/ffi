@@ -117,3 +117,74 @@
           (.remove queue 250)
           (recur (inc attempt))))
       (is (every? #(nil? (.get ^WeakReference %)) refs)))))
+
+(deftest variadic-bindings-are-generated-classes
+  (let [arena (ffi/global-arena)
+        buf (ffi/alloc arena 256)
+        declared (ffi/cfn "snprintf" [:pointer :size_t :string :& :int :string] :int)
+        inferred (ffi/cfn "snprintf" [:pointer :size_t :string :&] :int)]
+    (testing "a declared binding prints :& and reports its exact arity"
+      (is (= "snprintf [:pointer :size_t :string :& :int :string] -> :int" (str declared)))
+      (is (= {:babashka.ffi/backend :ffm} (meta declared)))
+      (is (thrown-with-msg? Exception #"snprintf expects 5 args, got 6"
+                            (declared buf 256 "%d %s" 1 "a" 2))))
+    (testing "an inferred binding reports the symbol in arity errors"
+      (is (= "snprintf [:pointer :size_t :string :&] -> :int" (str inferred)))
+      (is (thrown-with-msg? Exception #"snprintf expects at least 3 args" (inferred buf))))
+    (testing "declared and inferred bindings accept more than 20 arguments"
+      (let [fmt (apply str (repeat 20 "%d"))
+            ints (range 20)
+            wide (ffi/cfn "snprintf" (into [:pointer :size_t :string :&] (repeat 20 :int)) :int)]
+        (is (= 30 (apply wide buf 256 fmt ints)))
+        (is (= (apply str ints) (ffi/ptr->string buf 256)))
+        (is (= 30 (apply inferred buf 256 fmt ints)))
+        (is (thrown-with-msg? Exception #"snprintf expects 23 args, got 22"
+                              (apply wide buf 256 fmt (rest ints))))))))
+
+(defn- class-name-of [f] (.getName (class f)))
+
+(deftest generated-class-covers-up-to-20-arguments
+  (let [arena (ffi/global-arena)
+        buf (ffi/alloc arena 256)
+        fmt (fn [n] (ffi/string->ptr arena (apply str (repeat n "%d"))))
+        text (fn [n] (apply str (range n)))
+        sig (fn [n] (into [:pointer :size_t :pointer :&] (repeat n :int)))]
+    (testing "20 arguments use a generated class"
+      (let [f (ffi/cfn "snprintf" (sig 17) :int)]
+        (is (re-find #"impl\.Binding20J" (class-name-of f)))
+        (apply f buf 256 (fmt 17) (range 17))
+        (is (= (text 17) (ffi/ptr->string buf 256)))
+        (is (thrown-with-msg? Exception #"snprintf expects 20 args, got 19"
+                              (apply f buf 256 (fmt 17) (range 16))))))
+    (testing "21 arguments use the handle path"
+      (let [f (ffi/cfn "snprintf" (sig 18) :int)]
+        (is (not (re-find #"impl\.Binding" (class-name-of f))))
+        (apply f buf 256 (fmt 18) (range 18))
+        (is (= (text 18) (ffi/ptr->string buf 256)))))
+    (testing "inferred bindings accept 20 and 21 arguments"
+      (let [f (ffi/cfn "snprintf" [:pointer :size_t :pointer :&] :int)]
+        (doseq [n [17 18]]
+          (apply f buf 256 (fmt n) (range n))
+          (is (= (text n) (ffi/ptr->string buf 256))))))
+    (testing "8 fixed arguments use a generated class"
+      (let [sum8 (ffi/callback arena (fn [& xs] (apply + xs)) (vec (repeat 8 :long)) :long)
+            f (ffi/cfn sum8 (vec (repeat 8 :long)) :long)]
+        (is (re-find #"impl\.Binding8J" (class-name-of f)))
+        (is (= 36 (f 1 2 3 4 5 6 7 8)))
+        (is (thrown-with-msg? Exception #"expects 8 args, got 7" (f 1 2 3 4 5 6 7)))))))
+
+(deftest inferred-tail-shapes-and-values
+  (let [arena (ffi/global-arena)
+        buf (ffi/alloc arena 256)
+        f (ffi/cfn "snprintf" [:pointer :size_t :string :&] :int)
+        out (fn [& args] (apply f buf 256 args) (ffi/ptr->string buf 256))]
+    (testing "a binding returns the expected values after its 64-shape cache resets"
+      (let [shapes (for [i (range 70)] (mapv #(bit-test i %) (range 7)))
+            call (fn [shape]
+                   (apply out (apply str (map #(if % "%.0f" "%d") shape))
+                          (map-indexed (fn [j d?] (if d? (double j) j)) shape)))]
+        (is (every? #(= "0123456" (call %)) shapes))
+        (is (= "0123456" (call (first shapes))))))
+    (testing "inferred tails reject booleans"
+      (is (thrown-with-msg? Exception #"cannot infer variadic tail type of class java.lang.Boolean"
+                            (out "%d" true))))))

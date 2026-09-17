@@ -294,10 +294,11 @@
   [pd ^objects cs ret m sym argtypes rettype {:keys [arity-ex binding-string]}]
   (let [n (alength cs)
         void? (= :void rettype)
-        info {:sym sym :argtypes argtypes :rettype rettype}
+        ;; Displayed argtypes can include :&.
+        info {:sym sym :argtypes argtypes :rettype rettype :arity n}
         data (object-array
               [(lazy-invoker (long-type n void?) #(force pd))
-               (fn [info got] (throw (arity-ex (:sym info) (count (:argtypes info)) got)))
+               (fn [info got] (throw (arity-ex (:sym info) (:arity info) got)))
                (fn [info] (binding-string (:sym info) (:argtypes info) (:rettype info)))])
         cls (.lookupClass (.defineHiddenClassWithClassData (MethodHandles/lookup)
                                                            ^bytes (class-bytes n void?)
@@ -307,29 +308,45 @@
     (.newInstance ctor (object-array [cs ret info m]))))
 
 (defn jvm-cfn
-  "A JVM binding for a fixed signature of up to 6 arguments, arguments in
-  declared order. helpers holds the babashka.ffi fns :carrier,
+  "Creates a JVM binding with declared types for up to 20 arguments.
+  helpers holds the babashka.ffi fns :carrier,
   :arg-coercer, :narrow-ret, :with-string-args, :descriptor,
   :require-symbol, :linker, :arity-ex, :binding-string and
-  :binding-with-meta."
-  [{:keys [carrier arg-coercer narrow-ret with-string-args descriptor require-symbol linker
-           binding-with-meta]
-    :as helpers}
-   lib sym argtypes rettype]
-  (let [m {:babashka.ffi/backend :ffm}
-        pd (delay
-             (long-bits-handle carrier
-                               (.downcallHandle ^Linker (linker)
-                                                (require-symbol lib sym)
-                                                (descriptor argtypes rettype)
-                                                (make-array java.lang.foreign.Linker$Option 0))
-                               argtypes rettype))
-        fixed (make-binding pd
-                            (object-array (map #(bits-coercer carrier arg-coercer %) argtypes))
-                            (bits-ret-fn narrow-ret rettype)
-                            m sym argtypes rettype helpers)]
-    (if (some #(= :string %) argtypes)
-      ;; strings need a temporary arena that has to outlive the call
-      (binding-with-meta (fn [& args] (with-string-args argtypes (vec args) #(apply fixed %)))
-                         m sym argtypes rettype)
-      fixed)))
+  :binding-with-meta.
+
+  opts accepts :first-variadic for the number of fixed parameters.
+  :sym and :argtypes override the symbol and signature in errors and printing."
+  ([helpers lib sym argtypes rettype] (jvm-cfn helpers lib sym argtypes rettype nil))
+  ([{:keys [carrier arg-coercer narrow-ret with-string-args descriptor require-symbol linker
+            binding-with-meta]
+     :as helpers}
+    lib sym argtypes rettype {:keys [first-variadic] :as opts}]
+   (let [m {:babashka.ffi/backend :ffm}
+         shown-sym (:sym opts sym)
+         shown-argtypes (:argtypes opts argtypes)
+         options (if first-variadic
+                   (into-array java.lang.foreign.Linker$Option
+                               [(java.lang.foreign.Linker$Option/firstVariadicArg (int first-variadic))])
+                   (make-array java.lang.foreign.Linker$Option 0))
+         pd (delay
+              (long-bits-handle carrier
+                                (.downcallHandle ^Linker (linker)
+                                                 (require-symbol lib sym)
+                                                 (descriptor argtypes rettype)
+                                                 options)
+                                argtypes rettype))
+         fixed (make-binding pd
+                             (object-array (map #(bits-coercer carrier arg-coercer %) argtypes))
+                             (bits-ret-fn narrow-ret rettype)
+                             m shown-sym shown-argtypes rettype helpers)]
+     (if (some #(= :string %) argtypes)
+       ;; strings need a temporary arena that has to outlive the call
+       (let [n (count argtypes)
+             arity-ex (:arity-ex helpers)]
+         (binding-with-meta (fn [& args]
+                              ;; Check arity before with-string-args truncates surplus arguments.
+                              (when-not (= n (count args))
+                                (throw (arity-ex shown-sym n (count args))))
+                              (with-string-args argtypes (vec args) #(apply fixed %)))
+                            m shown-sym shown-argtypes rettype))
+       fixed))))

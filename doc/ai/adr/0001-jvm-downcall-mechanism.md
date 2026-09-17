@@ -67,6 +67,33 @@ Rejected: dropping the metadata and recomputing the backend from the
 signature. It saves 48 bytes and about 1 ns, and loses the arity message
 and the printed signature, which are only free because the type exists.
 
+## Variadic calls, 2026-09-17
+
+Use generated classes for variadic JVM calls (#44). A declared tail uses
+one class with `firstVariadicArg`. An inferred tail caches one binding per
+shape. Pack the shape into a long with two bits per value and cache the
+last binding for repeated calls.
+
+Measured with criterium quick-bench on macOS arm64, JDK 25,
+using `snprintf(buf, 64, "%d", 42)` with the format as a pointer:
+
+| Tail | invokeWithArguments | Generated class |
+|---|---|---|
+| Declared | 196 ns | 30 ns |
+| Inferred | 371 ns | 86 ns |
+
+Use generated classes for fixed and variadic signatures up to 20 arguments.
+Use `invokeWithArguments` above the `AFn.invoke` limit of 20 arguments.
+
+Reject booleans during tail inference. Integer coercion already rejected
+them on the JVM and in babashka. Accepting booleans in the integer coercer
+would also affect fixed arguments, struct fields and callback returns.
+A separate boolean tail type would require promotion to `int` in libffi.
+
+Keep `invokeWithArguments` for struct calls. Measurements in #44 attribute
+40 to 55 percent of a flat struct call to invocation and 10 to 15 percent
+to the codec.
+
 ## Consequences
 
 - A native image is unchanged in mechanism: trampolines when the shape has
