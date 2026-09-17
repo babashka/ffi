@@ -33,7 +33,7 @@ Probed on Node.js 26.9.0, macOS arm64:
 
 ## Decision
 
-`src/babashka/ffi.cljs` is a second implementation of the same namespace.
+`src/babashka/ffi.cljs` implements `babashka.ffi` for Node.js using `node:ffi`.
 `ffi.clj` stays one file that depends only on the JDK, because babashka
 embeds it. The layout code is duplicated, not shared through a `.cljc`.
 

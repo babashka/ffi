@@ -1014,17 +1014,14 @@ iteration before C runs.
 
 ### On Node.js
 
-Use `babashka.ffi` on Node.js 26.1 or newer through
-[node:ffi](https://nodejs.org/api/ffi.html).
-Run a script with [nbb](https://github.com/babashka/nbb):
+Run scripts on Node.js 26.1 or newer with [nbb](https://github.com/babashka/nbb):
 
 ```sh
 nbb --classpath src examples/sqlite.cljc
 ```
 
-Compile with ClojureScript or shadow-cljs at any optimization level. The compiler takes `defcfn` and `with-open` from
-`ffi.clj`, so its JVM needs JDK 25 or newer. With ClojureScript, an
-`:advanced` build needs `:infer-externs true`.
+To compile with ClojureScript or shadow-cljs, use JDK 25 or newer.
+For ClojureScript `:advanced` builds, set `:infer-externs true`.
 
 The binding metadata names the backend `:node`. These parts differ from the
 JVM:

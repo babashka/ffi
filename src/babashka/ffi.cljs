@@ -1,5 +1,5 @@
 (ns babashka.ffi
-  "Call functions in native shared libraries from Node.js, through node:ffi.
+  "Call functions in native shared libraries with node:ffi on Node.js.
 
   Use the same names and argument order as the JVM namespace:
 
