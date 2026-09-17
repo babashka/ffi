@@ -14,9 +14,10 @@
    "libpython3.12.so"
    "libpython3.so"])
 
-(when-not (some #(try (ffi/load-library %) (catch Exception _ nil)) lib-candidates)
+(when-not (some #(try (ffi/load-library %) (catch #?(:clj Exception :cljs :default) _ nil))
+                lib-candidates)
   (println "libpython not found - install python (brew install python@3.12)")
-  (System/exit 1))
+  #?(:clj (System/exit 1) :cljs (js/process.exit 1)))
 
 (defcfn py-initialize "Py_Initialize" [] :void)
 (defcfn py-finalize "Py_FinalizeEx" [] :int)

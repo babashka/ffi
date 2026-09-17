@@ -1,5 +1,4 @@
-(ns sqlite
-  "The Node.js version of sqlite.clj: nbb --classpath ../src sqlite.cljs")
+(ns sqlite)
 
 (require '[babashka.ffi :as ffi :refer [defcfn]])
 
@@ -14,7 +13,7 @@
 (println "sqlite version:" (sqlite3-libversion))
 
 (def db
-  (ffi/with-open [arena (ffi/confined-arena)]
+  (#?(:clj with-open :cljs ffi/with-open) [arena (ffi/confined-arena)]
     (let [pp (ffi/alloc arena :pointer)
           rc (sqlite3-open ":memory:" pp)]
       (assert (zero? rc) (str "open failed: " rc))
