@@ -93,8 +93,11 @@ and callback return, so `(abs true)` would stop throwing. A shape code of
 its own for a boolean keeps the change in the tail on the JVM, but libffi
 then sees `:bool` in a tail and needs a promotion rule to `int`. C varargs
 have no boolean, and neither FFM nor coffi converts one, so the tail
-refuses it with the inference error. Struct calls are unchanged and wait for a
-measurement of the codec against the invoke step.
+refuses it with the inference error.
+
+Struct calls are unchanged. Issue #44 has the measurement of the codec
+against the invoke step: for a flat struct the invoke step is 40 to 55
+percent of the call and the codec 10 to 15 percent.
 
 ## Consequences
 
