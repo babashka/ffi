@@ -40,7 +40,7 @@ sdk=$(clojure -Spath -A:native)
 "$GRAALVM_HOME/bin/javac" --release 25 -cp "$sdk" -d "$classes" \
   src-java/babashka/ffi/impl/FfiTrampoline.java
 
-cp=$(clojure -Spath -A:native):src-native:resources-native:test-native:$classes
+cp=$(clojure -Spath -A:native):test-native:$classes
 
 echo "== compiling the namespaces"
 clojure -Scp "$cp" \

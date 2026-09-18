@@ -773,20 +773,16 @@
 ;; function pointers as compiled direct calls (~2ns). One per canonical
 ;; shape; loaded only in the image, never on the JVM, where the FFM handle
 ;; path is JIT-compiled and fast.
-;; This repository generates trampolines of its own, under
-;; babashka.ffi.impl, for its native image test. They sit outside :paths, so
-;; a consumer that does not put src-native on its classpath keeps the ones
-;; it generates itself, which is what babashka does today.
-(defn- trampoline-var [nm]
+;; The trampolines are generated into this repository by
+;; script/gen_ffi_metadata.clj and committed, so an image builds them from
+;; here rather than carrying a copy of its own.
+(def ^:private trampoline-ids
   (when native-image?
-    (or (try (requiring-resolve (symbol "babashka.ffi.impl.ffi-trampolines" nm))
-             (catch Throwable _ nil))
-        (try (requiring-resolve (symbol "babashka.impl.ffi-trampolines" nm))
-             (catch Throwable _ nil)))))
+    @(requiring-resolve 'babashka.ffi.impl.ffi-trampolines/ids)))
 
-(def ^:private trampoline-ids (some-> (trampoline-var "ids") deref))
-
-(def ^:private trampoline-invoker (trampoline-var "invoker"))
+(def ^:private trampoline-invoker
+  (when native-image?
+    (requiring-resolve 'babashka.ffi.impl.ffi-trampolines/invoker)))
 
 (defn- shape-key [types* rettype]
   (let [c {:long "J" :double "D" :float "F"}]

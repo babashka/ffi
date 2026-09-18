@@ -28,9 +28,10 @@ API listing is API.md, and the decisions are in doc/ai/adr/.
   decides, the trampolines and the registered upcall shapes. Plain
   assertions, no framework, built and run by script/native_test.sh.
 - script/gen_ffi_metadata.clj: generates the trampolines and the
-  reachability metadata into src-java, src-native and resources-native,
-  none of which are in :paths. babashka generates its own copies today and
-  is unaffected until it puts src-native on its classpath.
+  reachability metadata into src, src-java and resources, all committed.
+  babashka builds them straight from here, so the shape set and the code
+  that assumes it live in one place. Regenerate and commit after changing
+  the generator; metadata-generated-test fails otherwise.
 - test-resources/struct_lib.c: fixture for struct-by-value tests, compiled
   into target/ when cc or cl is on PATH.
 - examples/: runnable scripts, each on both hosts.
