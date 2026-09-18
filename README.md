@@ -16,14 +16,12 @@ org.babashka/ffi {:mvn/version "0.1.0"}
 
 | Platform | Requirement | Notes |
 |---|---|---|
-| JVM | JDK 25 or newer | Uses the Java FFM API. A scalar call is 3 to 6 ns. |
+| JVM | JDK 25 or newer | Uses the Java FFM API. |
 | babashka | 1.13.220 or newer | Built in, no dependency needed. |
-| GraalVM native image | GraalVM 25 or newer | Compiled trampolines, libffi for the rest. See [Build your own native image](doc/guide.md#build-your-own-native-image). |
-| Node.js | 26.1 or newer | Uses `node:ffi`. For [nbb](https://github.com/babashka/nbb), ClojureScript and shadow-cljs. See [On Node.js](doc/guide.md#on-nodejs). |
+| GraalVM native image | GraalVM 25 or newer | See [Build your own native image](doc/guide.md#build-your-own-native-image). |
+| Node.js | 26.1 or newer | Works with [nbb](https://github.com/babashka/nbb), ClojureScript and shadow-cljs through `node:ffi`. See [On Node.js](doc/guide.md#on-nodejs). |
 
-Bun and Deno are not supported. Each has an FFI of its own rather than
-`node:ffi`, and the two differ from it and from each other in how they
-represent a pointer.
+Bun and Deno are not supported.
 
 On the JVM, start with `--enable-native-access=ALL-UNNAMED`, or set the
 `Enable-Native-Access` manifest attribute in an uberjar. Without the flag,
