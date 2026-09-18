@@ -84,7 +84,7 @@
   (:refer-clojure :exclude [read with-open])
   (:require [clojure.string :as str])
   (:import [java.lang.foreign Arena FunctionDescriptor Linker
-            MemoryLayout MemorySegment SymbolLookup ValueLayout]
+            MemoryLayout MemorySegment SegmentAllocator SymbolLookup ValueLayout]
            [java.lang.invoke MethodHandle MethodHandles MethodType]))
 
 (set! *warn-on-reflection* true)
@@ -187,10 +187,60 @@
         (= :void t) :void
         :else (throw (ex-info (str "babashka.ffi: unknown type " t) {:type t}))))
 
-(def ^:private carrier-layout
-  {:long ValueLayout/JAVA_LONG
-   :double ValueLayout/JAVA_DOUBLE
-   :float ValueLayout/JAVA_FLOAT})
+(defn- carrier-class ^Class [t]
+  (case (carrier t)
+    :long Long/TYPE :double Double/TYPE :float Float/TYPE :void Void/TYPE))
+
+(declare ^:private signature-layout)
+
+(defn- signature-class
+  "The Java type of a signature position, taken from its layout so the two
+  cannot drift apart."
+  ^Class [t]
+  (if (= :void t)
+    Void/TYPE
+    (.carrier ^ValueLayout (signature-layout t))))
+
+(defn- signature-method-type
+  "The MethodType an upcall stub of this signature has."
+  ^MethodType [argtypes rettype]
+  (MethodType/methodType ^Class (signature-class rettype)
+                         ^"[Ljava.lang.Class;"
+                         (into-array Class (map signature-class argtypes))))
+
+(defn- carrier-handle
+  "Adapts downcall handle h so that its parameters and result are the
+  carriers. The descriptor names each type at the width C gives it, and the
+  generic invoker takes the boxed value of a carrier, so the two are cast
+  into line here."
+  ^MethodHandle [^MethodHandle h argtypes rettype]
+  (MethodHandles/explicitCastArguments
+   h (MethodType/methodType ^Class (carrier-class rettype)
+                            ^"[Ljava.lang.Class;" (into-array Class (map carrier-class argtypes)))))
+
+(def ^:private signature-layout
+  "The FFM layout of each type in a signature, at the width C gives it.
+
+  An argument that stays in a register is read from its low bits, so a
+  narrow integer described as a long arrives intact. One that runs out of
+  registers does not: macOS on AArch64 packs a stack slot to the width of
+  the argument, so a long in place of an int moves every argument after it
+  and the callee reads the wrong bytes.
+
+  A pointer keeps the long carrier. It is eight bytes either way, and an
+  ADDRESS would make the handle take a MemorySegment where every call path
+  here passes a long."
+  {:int ValueLayout/JAVA_INT :uint ValueLayout/JAVA_INT
+   :int32 ValueLayout/JAVA_INT :uint32 ValueLayout/JAVA_INT
+   :int16 ValueLayout/JAVA_SHORT :uint16 ValueLayout/JAVA_SHORT
+   :int8 ValueLayout/JAVA_BYTE :uint8 ValueLayout/JAVA_BYTE
+   :byte ValueLayout/JAVA_BYTE :char ValueLayout/JAVA_BYTE
+   :bool ValueLayout/JAVA_BYTE
+   :long ValueLayout/JAVA_LONG :ulong ValueLayout/JAVA_LONG
+   :int64 ValueLayout/JAVA_LONG :uint64 ValueLayout/JAVA_LONG
+   :size_t ValueLayout/JAVA_LONG :ssize_t ValueLayout/JAVA_LONG
+   :pointer ValueLayout/JAVA_LONG :string ValueLayout/JAVA_LONG
+   :float ValueLayout/JAVA_FLOAT :double ValueLayout/JAVA_DOUBLE})
 
 (def ^:private variadic-tail-types
   "The types a declared variadic tail may name. C promotes every variadic
@@ -242,10 +292,10 @@
                           {:value v}))))
 
 (defn- descriptor ^FunctionDescriptor [argtypes rettype]
-  (let [args (into-array MemoryLayout (map #(carrier-layout (carrier %)) argtypes))]
+  (let [args (into-array MemoryLayout (map signature-layout argtypes))]
     (if (= :void rettype)
       (FunctionDescriptor/ofVoid args)
-      (FunctionDescriptor/of (carrier-layout (carrier rettype)) args))))
+      (FunctionDescriptor/of (signature-layout rettype) args))))
 
 ;; On the SysV x86-64 and AArch64 ABIs, integer and floating-point arguments
 ;; are assigned registers from two independent sequences (GP and FP), so
@@ -790,12 +840,14 @@
   address is a delay containing the resolved symbol."
   [address sym all-types rettype nf]
   (let [n (count all-types)
-        handle (delay (.downcallHandle
-                       ^Linker @linker*
-                       ^MemorySegment @address
-                       (descriptor all-types rettype)
-                       (into-array java.lang.foreign.Linker$Option
-                                   [(java.lang.foreign.Linker$Option/firstVariadicArg nf)])))
+        handle (delay (carrier-handle
+                       (.downcallHandle
+                        ^Linker @linker*
+                        ^MemorySegment @address
+                        (descriptor all-types rettype)
+                        (into-array java.lang.foreign.Linker$Option
+                                    [(java.lang.foreign.Linker$Option/firstVariadicArg nf)]))
+                       all-types rettype))
         coercers ^objects (object-array (map arg-coercer all-types))]
     (fn [& args]
       (when-not (= n (count args))
@@ -1019,6 +1071,16 @@
         ([lib sym argtypes rettype] (f helpers lib sym argtypes rettype))
         ([lib sym argtypes rettype opts] (f helpers lib sym argtypes rettype opts))))))
 
+;; The struct call on the JVM, through the same generated-class mechanism.
+;; Resolved here, at load time, and never in a native image, where a struct
+;; call goes through libffi.
+(def ^:private jvm-struct-invoker
+  (when-not native-image?
+    (let [f (requiring-resolve 'babashka.ffi.impl.binding/struct-invoker)
+          helpers {:carrier carrier :arg-coercer arg-coercer :narrow-ret narrow-ret}]
+      (fn [raw slots types ret-kind rettype]
+        (f helpers raw slots types ret-kind rettype)))))
+
 (defn- fixed-ffm-cfn
   [lib sym argtypes rettype]
   (let [types argtypes
@@ -1039,10 +1101,12 @@
         raw (if tramp-id
               (delay (trampoline-invoker tramp-id (.address (require-symbol lib sym))))
               (delay
-                (let [handle (.downcallHandle ^Linker @linker*
-                                              (require-symbol lib sym)
-                                              (descriptor types* rettype)
-                                              (make-array java.lang.foreign.Linker$Option 0))]
+                (let [handle (carrier-handle
+                              (.downcallHandle ^Linker @linker*
+                                               (require-symbol lib sym)
+                                               (descriptor types* rettype)
+                                               (make-array java.lang.foreign.Linker$Option 0))
+                              types* rettype)]
                   (fn [^objects arr] (.invokeWithArguments ^MethodHandle handle arr)))))
          n (count types)
          strings? (boolean (some #(= :string %) types*))
@@ -2166,13 +2230,13 @@
 
 (defn- struct-descriptor
   "The FunctionDescriptor of a signature that passes a struct by value. A
-  struct position gets its own layout, a scalar position its carrier. rlay is
-  nil for a :void return."
+  struct position gets its own layout, a scalar position the width C gives
+  it. rlay is nil for a :void return."
   ^FunctionDescriptor [alays rlay]
   (let [lay-of (fn [lay]
                  (if (= :struct (:type lay))
                    (ffm-layout lay)
-                   (carrier-layout (carrier (:type lay)))))
+                   (signature-layout (:type lay))))
         args (into-array MemoryLayout (map lay-of alays))]
     (if rlay
       (FunctionDescriptor/of (lay-of rlay) args)
@@ -2206,10 +2270,62 @@
         ;; a struct return needs somewhere to land, which the handle takes as
         ;; its first argument
         base (if struct-ret? 1 0)
+        ;; one slot per handle parameter, so a generated class can call it
+        ;; with invokeExact instead of the generic invokeWithArguments
+        slots (into (if struct-ret? [:allocator] [])
+                    (map #(if (struct-arg? %) :segment :long))
+                    alays)
+        slot-types (into (if struct-ret? [nil] []) argtypes)
+        ret-kind (cond struct-ret? :segment void? :void :else :long)
+        exact (when jvm-struct-invoker
+                (jvm-struct-invoker handle slots slot-types ret-kind rettype))
+        ;; the generic invoker takes the boxed value of a carrier, and the
+        ;; descriptor names a scalar at the width C gives it
+        generic (delay (MethodHandles/explicitCastArguments
+                        ^MethodHandle @handle
+                        (MethodType/methodType
+                         ^Class (cond struct-ret? MemorySegment
+                                      void? Void/TYPE
+                                      :else (carrier-class rettype))
+                         ^"[Ljava.lang.Class;"
+                         (into-array Class (map (fn [slot t]
+                                                  (case slot
+                                                    :allocator SegmentAllocator
+                                                    :segment MemorySegment
+                                                    :long (carrier-class t)))
+                                                slots slot-types)))))
         arity-error (fn [got]
                       (throw (ex-info (str "babashka.ffi: " sym " expects " n
                                            " args, got " got)
-                                      {:symbol sym})))]
+                                      {:symbol sym})))
+        ;; the arguments as the handle takes them: a segment per struct, the
+        ;; caller's value per scalar, and a temporary C string per :string
+        prepare (fn [^Arena a ^objects arr args]
+                  (dotimes [i n]
+                    (let [v (nth args i)
+                          enc (aget encs i)]
+                      (aset arr (+ base i)
+                            (cond
+                              enc (let [seg (.allocate a (aget byte-sizes i) (aget aligns i))]
+                                    (enc a seg v)
+                                    seg)
+                              (and (aget string-arg? i) (string? v))
+                              (.address (.allocateFrom a ^String v))
+                              :else v)))))
+        ;; the call itself, from the array the prepare filled, at a fixed
+        ;; arity so that nothing allocates an argument seq per call
+        ^clojure.lang.IFn f exact
+        call (when exact
+               (case (+ base n)
+                 1 (fn [^objects a] (.invoke f (aget a 0)))
+                 2 (fn [^objects a] (.invoke f (aget a 0) (aget a 1)))
+                 3 (fn [^objects a] (.invoke f (aget a 0) (aget a 1) (aget a 2)))
+                 4 (fn [^objects a] (.invoke f (aget a 0) (aget a 1) (aget a 2) (aget a 3)))
+                 5 (fn [^objects a] (.invoke f (aget a 0) (aget a 1) (aget a 2) (aget a 3)
+                                             (aget a 4)))
+                 6 (fn [^objects a] (.invoke f (aget a 0) (aget a 1) (aget a 2) (aget a 3)
+                                             (aget a 4) (aget a 5)))
+                 (fn [^objects a] (.applyTo f (clojure.lang.ArraySeq/create a)))))]
     (binding-with-meta
       (fn [& args]
         (let [args (vec args)]
@@ -2217,21 +2333,18 @@
           (clojure.core/with-open [a (Arena/ofConfined)]
             (let [^objects arr (object-array (+ base n))]
               (when struct-ret? (aset arr 0 a))
-              (dotimes [i n]
-                (let [v (nth args i)
-                      enc (aget encs i)]
-                  (aset arr (+ base i)
-                        (cond
-                          enc (let [seg (.allocate ^Arena a (aget byte-sizes i) (aget aligns i))]
-                                (enc a seg v)
-                                seg)
-                          (and (aget string-arg? i) (string? v))
-                          (.address (.allocateFrom ^Arena a ^String v))
-                          :else ((aget coercers i) v)))))
-              (let [raw (.invokeWithArguments ^MethodHandle @handle arr)]
-                (cond struct-ret? (decode raw)
-                      void? nil
-                      :else (narrow-ret rettype raw)))))))
+              (prepare a arr args)
+              (if call
+                (let [r (call arr)]
+                  (if struct-ret? (decode r) r))
+                ;; more parameters than a generated class takes
+                (do (dotimes [i n]
+                      (when-not (aget encs i)
+                        (aset arr (+ base i) ((aget coercers i) (aget arr (+ base i))))))
+                    (let [raw (.invokeWithArguments ^MethodHandle @generic arr)]
+                      (cond struct-ret? (decode raw)
+                            void? nil
+                            :else (narrow-ret rettype raw)))))))))
       {:babashka.ffi/backend :ffm} sym argtypes rettype)))
 
 (defn- libffi-cfn
@@ -2410,6 +2523,9 @@
                (.findVirtual clojure.lang.IFn "invoke" obj-type)
                (.bindTo f)
                (.asType target-type))
+        ;; the stub takes each type at the width C gives it, as the
+        ;; descriptor says, while everything above works in carriers
+        mh (MethodHandles/explicitCastArguments mh (signature-method-type argtypes rettype))
         stub (.upcallStub ^Linker @linker* mh (descriptor argtypes rettype)
                           ^Arena arena
                           (make-array java.lang.foreign.Linker$Option 0))]

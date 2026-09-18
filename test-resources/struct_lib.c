@@ -82,3 +82,35 @@ EXPORT double tagged_value(const Tagged *t) {
   if (t->tag == 1) return t->u.d;
   return (double) (int) t->u.s[0];   /* 'u' */
 }
+
+/* 21 parameters, one of them a struct: more slots than a generated class
+ * takes, so the call falls back to the generic invoker */
+EXPORT int32_t wide_struct_sum(P2 p, int32_t a1, int32_t a2, int32_t a3, int32_t a4,
+                               int32_t a5, int32_t a6, int32_t a7, int32_t a8,
+                               int32_t a9, int32_t a10, int32_t a11, int32_t a12,
+                               int32_t a13, int32_t a14, int32_t a15, int32_t a16,
+                               int32_t a17, int32_t a18, int32_t a19, int32_t a20) {
+  return p.x + p.y + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10
+       + a11 + a12 + a13 + a14 + a15 + a16 + a17 + a18 + a19 + a20;
+}
+
+/* 12 int parameters, no struct: more than the integer argument registers,
+ * so the ones past them travel on the stack */
+EXPORT int32_t wide_int_sum(int32_t a1, int32_t a2, int32_t a3, int32_t a4,
+                            int32_t a5, int32_t a6, int32_t a7, int32_t a8,
+                            int32_t a9, int32_t a10, int32_t a11, int32_t a12) {
+  return a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10 + a11 + a12;
+}
+
+/* 10 int parameters: inside babashka's compiled trampoline set, and past
+ * the integer argument registers on Arm64 */
+EXPORT int32_t ten_int_sum(int32_t a1, int32_t a2, int32_t a3, int32_t a4, int32_t a5,
+                           int32_t a6, int32_t a7, int32_t a8, int32_t a9, int32_t a10) {
+  return a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10;
+}
+
+/* C calls back with ten int arguments, so the ones past the argument
+ * registers reach the callback off the stack */
+typedef int32_t (*ten_cb)(int32_t, int32_t, int32_t, int32_t, int32_t,
+                          int32_t, int32_t, int32_t, int32_t, int32_t);
+EXPORT int32_t call_with_ten(ten_cb f) { return f(1, 2, 3, 4, 5, 6, 7, 8, 9, 10); }

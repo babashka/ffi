@@ -380,6 +380,31 @@ the last underlying lookup exception as their cause. The flag lives in
 project.clj :jvm-opts and the deps.edn :babashka/dev alias; environments
 running tests with a different JVM invocation need it too.
 
+## Argument widths, 2026-09-18
+
+A descriptor named every integer by its carrier, so a C `int` travelled as a
+64-bit long. That reads correctly while an argument sits in a register,
+because the callee takes the low bits. It does not once arguments spill to
+the stack: macOS on AArch64 packs a stack slot to the width of the argument,
+so a long in place of an int moves every argument after it.
+
+Ten `int` arguments on macOS AArch64, JDK 25, against a C function that sums
+them:
+
+    descriptor of JAVA_LONG, what this ADR settled on    45
+    descriptor of JAVA_INT, the width C gives it         55
+
+The same on the upcall side: a callback of ten ints received
+`[1 2 3 4 5 6 7 8 42949672969 4642326336]`, the last two read off the stack,
+one of them an address.
+
+A descriptor now names each type at its C width, through signature-layout,
+and a pointer keeps the long carrier because it is eight bytes either way.
+The carrier is still what every call path moves a value in, so the handle is
+cast between the two. babashka is unaffected on the libffi path, which
+describes each type exactly, and wrong on the trampoline path, which takes
+every argument as a long. That fix belongs in the trampoline sources.
+
 ## Known gaps
 
 - Struct-by-value. DECIDED (2026-08-21), follow-up issue, not this branch:

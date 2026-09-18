@@ -24,7 +24,7 @@
   (:import [clojure.lang IFn IPersistentMap]
            [java.lang.classfile ClassBuilder ClassFile CodeBuilder]
            [java.lang.constant ClassDesc ConstantDescs MethodTypeDesc]
-           [java.lang.foreign Linker]
+           [java.lang.foreign Linker MemorySegment SegmentAllocator]
            [java.lang.invoke MethodHandle MethodHandles MethodHandles$Lookup$ClassOption
             MethodType MutableCallSite]
            [java.lang.reflect Constructor]
@@ -133,6 +133,8 @@
 (def ^:private ^ClassDesc cd-long ConstantDescs/CD_long)
 (def ^:private ^ClassDesc cd-int ConstantDescs/CD_int)
 (def ^:private ^ClassDesc cd-void ConstantDescs/CD_void)
+(def ^:private ^ClassDesc cd-segment (cd "java/lang/foreign/MemorySegment"))
+(def ^:private ^ClassDesc cd-allocator (cd "java/lang/foreign/SegmentAllocator"))
 
 (defn- consumer ^Consumer [f]
   (reify Consumer (accept [_ b] (f b))))
@@ -306,6 +308,167 @@
         ^Constructor ctor (.getConstructor ^Class cls
                                            (into-array Class [(class cs) Object Object IPersistentMap]))]
     (.newInstance ctor (object-array [cs ret info m]))))
+
+;; -- structs by value ---------------------------------------------------------
+;;
+;; A struct argument travels as a MemorySegment, and a struct return takes a
+;; SegmentAllocator in front of the arguments, so this class has one slot per
+;; handle parameter: a long for a scalar, an object for a segment or an
+;; allocator. babashka.ffi owns the arena, encodes each struct into a segment
+;; and decodes the result; this class only makes the call.
+
+(def ^:private slot-letter {:long "J" :segment "S" :allocator "A"})
+(def ^:private slot-desc {:long cd-long :segment cd-segment :allocator cd-allocator})
+(def ^:private ret-desc {:void cd-void :long cd-long :segment cd-segment})
+
+(defn- struct-class-bytes*
+  "Bytes of the class for these slots and return kind. The static final
+  TARGET comes from the class data. An instance holds one coercer per :long
+  slot, and the return fn for a :long return."
+  ^bytes [slots ret-kind]
+  (let [n (count slots)
+        this (cd (str "babashka/ffi/impl/Struct"
+                      (apply str (map slot-letter slots))
+                      (ret-kind {:void "V" :long "J" :segment "S"})))
+        static-final (bit-or ClassFile/ACC_PRIVATE ClassFile/ACC_STATIC ClassFile/ACC_FINAL)
+        final ClassFile/ACC_FINAL
+        ctor (mt cd-void cd-objects cd-object)
+        target (apply mt (ret-desc ret-kind) (map slot-desc slots))
+        invoke (apply mt cd-object (repeat n cd-object))
+        long-slots (filterv #(= :long (nth slots %)) (range n))]
+    (.build (ClassFile/of) this
+            (consumer
+             (fn [^ClassBuilder clb]
+               (.withFlags clb (int (bit-or ClassFile/ACC_PUBLIC ClassFile/ACC_FINAL)))
+               (.withSuperclass clb cd-afn)
+               (.withInterfaceSymbols clb ^"[Ljava.lang.constant.ClassDesc;"
+                                      (into-array ClassDesc [(cd "clojure/lang/Fn")]))
+               (doseq [[flags field type] (concat [[static-final "TARGET" cd-mh]
+                                                   [final "ret" cd-ret-fn]]
+                                                  (map (fn [i] [final (str "c" i) cd-coercer])
+                                                       long-slots))]
+                 (.withField clb ^String field ^ClassDesc type (int flags)))
+               (method clb "<clinit>" (mt cd-void) ClassFile/ACC_STATIC
+                       (fn [^CodeBuilder cob]
+                         (.invokestatic cob cd-mhs "lookup" (mt cd-lookup))
+                         (.loadConstant cob "_")
+                         (.loadConstant cob ^ClassDesc cd-mh)
+                         (.invokestatic cob cd-mhs "classData" (mt cd-object cd-lookup cd-string cd-class))
+                         (.checkcast cob cd-mh)
+                         (.putstatic cob this "TARGET" cd-mh)
+                         (.return_ cob)))
+               (method clb "<init>" ctor ClassFile/ACC_PUBLIC
+                       (fn [^CodeBuilder cob]
+                         (.aload cob 0)
+                         (.invokespecial cob cd-afn "<init>" (mt cd-void))
+                         (.aload cob 0)
+                         (.aload cob 2)
+                         (.checkcast cob cd-ret-fn)
+                         (.putfield cob this "ret" cd-ret-fn)
+                         (doseq [i long-slots]
+                           (.aload cob 0)
+                           (.aload cob 1)
+                           (.loadConstant cob (int i))
+                           (.aaload cob)
+                           (.checkcast cob cd-coercer)
+                           (.putfield cob this (str "c" i) cd-coercer))
+                         (.return_ cob)))
+               (method clb "invoke" invoke ClassFile/ACC_PUBLIC
+                       (fn [^CodeBuilder cob]
+                         (when (= :long ret-kind)
+                           (.aload cob 0)
+                           (.getfield cob this "ret" cd-ret-fn))
+                         (.getstatic cob this "TARGET" cd-mh)
+                         (dotimes [i n]
+                           (case (nth slots i)
+                             :long (do (.aload cob 0)
+                                       (.getfield cob this (str "c" i) cd-coercer)
+                                       (.aload cob (inc i))
+                                       (.invokeinterface cob cd-coercer "invokePrim" (mt cd-long cd-object)))
+                             :segment (do (.aload cob (inc i)) (.checkcast cob cd-segment))
+                             :allocator (do (.aload cob (inc i)) (.checkcast cob cd-allocator))))
+                         (.invokevirtual cob cd-mh "invokeExact" target)
+                         (case ret-kind
+                           :void (.aconst_null cob)
+                           :long (.invokeinterface cob cd-ret-fn "invokePrim" (mt cd-object cd-long))
+                           ;; the segment is already an Object on the stack
+                           :segment nil)
+                         (.areturn cob))))))))
+
+(def ^:private struct-class-bytes (memoize struct-class-bytes*))
+
+(defn- struct-handle
+  "Adapts downcall handle h to the slots: a scalar argument becomes a long,
+  doubles and floats as raw bits, a struct argument stays a MemorySegment
+  and an allocator a SegmentAllocator. The result becomes a long, a
+  MemorySegment or nothing. types holds the argtype of each :long slot and
+  nil elsewhere."
+  ^MethodHandle [carrier ^MethodHandle h slots types ret-kind rettype]
+  (let [double-ret? (and (= :long ret-kind) (not= :long (carrier rettype)))
+        cast-params ^"[Ljava.lang.Class;"
+        (into-array Class (map (fn [slot t]
+                                 (case slot
+                                   :allocator SegmentAllocator
+                                   :segment MemorySegment
+                                   :long (if (= :long (carrier t)) Long/TYPE Double/TYPE)))
+                               slots types))
+        cast-ret ^Class (case ret-kind
+                          :void Void/TYPE
+                          :segment MemorySegment
+                          :long (if double-ret? Double/TYPE Long/TYPE))
+        h (MethodHandles/explicitCastArguments h (MethodType/methodType cast-ret cast-params))
+        h (reduce (fn [^MethodHandle h i]
+                    (if (and (= :long (nth slots i))
+                             (not= :long (carrier (nth types i))))
+                      (MethodHandles/filterArguments
+                       h (int i) (into-array MethodHandle [@long-bits->double]))
+                      h))
+                  h
+                  (range (count slots)))]
+    (if double-ret?
+      (MethodHandles/filterReturnValue h @double->long-bits)
+      h)))
+
+(defn- slot-method-type
+  "The type the generated class calls invokeExact with, which the adapted
+  handle must have exactly."
+  ^MethodType [slots ret-kind]
+  (MethodType/methodType
+   ^Class (case ret-kind :void Void/TYPE :segment MemorySegment :long Long/TYPE)
+   ^"[Ljava.lang.Class;"
+   (into-array Class (map {:long Long/TYPE :segment MemorySegment :allocator SegmentAllocator}
+                          slots))))
+
+(def ^:private max-struct-arity
+  "AFn invokes with at most 20 arguments, and a struct return takes one of
+  the slots for its allocator."
+  20)
+
+(defn struct-invoker
+  "Returns a function of the handle's slots, or nil for a signature with
+  more of them than a generated class takes. slots names each parameter,
+  :allocator, :segment or :long, and types holds the argtype at each :long
+  slot. ret-kind is :long, :segment or :void.
+
+  The caller owns the arena: it passes it for an :allocator slot, a
+  MemorySegment for a :segment slot and its own value for a :long slot, and
+  decodes a returned MemorySegment itself. raw is a delay of the downcall
+  handle. helpers holds the babashka.ffi fns :carrier, :arg-coercer and
+  :narrow-ret."
+  [{:keys [carrier arg-coercer narrow-ret]} raw slots types ret-kind rettype]
+  (when (<= (count slots) max-struct-arity)
+    (let [pd (delay (struct-handle carrier @raw slots types ret-kind rettype))
+          cs (object-array (map (fn [slot t]
+                                  (when (= :long slot) (bits-coercer carrier arg-coercer t)))
+                                slots types))
+          ret (when (= :long ret-kind) (bits-ret-fn narrow-ret rettype))
+          cls (.lookupClass (.defineHiddenClassWithClassData
+                             (MethodHandles/lookup)
+                             ^bytes (struct-class-bytes slots ret-kind)
+                             (lazy-invoker (slot-method-type slots ret-kind) #(force pd))
+                             true no-options))
+          ^Constructor ctor (.getConstructor ^Class cls (into-array Class [(class cs) Object]))]
+      (.newInstance ctor (object-array [cs ret])))))
 
 (defn jvm-cfn
   "Creates a JVM binding with declared types for up to 20 arguments.

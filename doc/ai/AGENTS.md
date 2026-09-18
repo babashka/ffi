@@ -39,7 +39,7 @@ names it as :babashka.ffi/backend.
 | Signature | JVM | Native image |
 |---|---|---|
 | fixed, scalars, up to 20 args | binding.clj generated class with the FFM handle as a constant, 3 to 6 ns, about 70 us to create | compiled trampoline when the shape is in the set, about 30 ns, else libffi, about 1 us |
-| struct by value | FFM handle with invokeWithArguments | libffi |
+| struct by value | generated class, a segment per struct and an allocator slot for a struct return, about 70 ns | libffi |
 | variadic, tail inferred per call | cached binding per tail shape, about 55 ns more than a declared tail | libffi |
 | variadic, tail declared | generated class with firstVariadicArg | libffi |
 | more than 20 args, fixed or variadic | FFM handle with invokeWithArguments | libffi |
@@ -61,12 +61,21 @@ Adding or changing a type keyword touches each of these. Keep them in sync.
 - ffi.clj arg-coercer, one fn per type, chosen at binding time
 - ffi.clj narrow-ret, the return conversion for the boxed paths
 - binding.clj bits-ret-fn, the same table over raw long bits for the JVM path
-- ffi.clj sizes, array-carriers, exact-layout, ffi-type-codes
+- ffi.clj sizes, array-carriers, signature-layout, exact-layout, ffi-type-codes
 - the case tables in read, write and place
 - the callback return coercion in callback
 
 jvm-return-conversion-test checks narrow-ret and bits-ret-fn against each
 other through a callback that returns each type.
+
+signature-layout is what a descriptor names a type by, at the width C gives
+it. A carrier is what the call path moves it in. The two differ for every
+integer narrower than 64 bits, so a handle built from a descriptor is cast
+between them: carrier-handle for the generic invoker, struct-handle in
+binding.clj for the generated class, and explicitCastArguments onto
+signature-method-type for an upcall stub. Naming a narrow integer by its
+carrier reads the wrong bytes once arguments spill to the stack, which
+stack-arguments-test covers.
 
 ## Run the tests
 

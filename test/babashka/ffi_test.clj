@@ -296,6 +296,52 @@
 
 ;; -- fixed arrays -------------------------------------------------------------
 
+(deftest struct-call-slot-shapes-test
+  (if-not (true? @struct-lib)
+    (println "struct slot shapes skipped:"
+             (if (string? @struct-lib) @struct-lib "unknown reason"))
+    (do
+      (testing "a struct argument with a :void return"
+        (with-open [arena (ffi/confined-arena)]
+          (let [out (ffi/alloc arena :int)]
+            ((ffi/cfn "p2_store" [p2 :pointer] :void) {:x 3 :y 4} out)
+            (is (= 304 (ffi/read out :int))))))
+      (testing "more parameters than a generated class takes"
+        (let [wide (ffi/cfn "wide_struct_sum" (into [p2] (repeat 20 :int)) :int)]
+          (is (= 213 (apply wide {:x 1 :y 2} (range 1 21))))
+          (is (thrown-with-msg? Exception #"expects 21 args, got 20"
+                                (apply wide {:x 1 :y 2} (range 1 20)))))))))
+
+(deftest stack-arguments-test
+  ;; An argument that runs out of registers travels on the stack, and macOS
+  ;; on AArch64 packs a stack slot to the width of the argument. A signature
+  ;; that names a narrow integer as a 64-bit carrier moves every argument
+  ;; after the first spilled one, and the callee reads the wrong bytes.
+  (if-not (true? @struct-lib)
+    (println "stack arguments skipped:"
+             (if (string? @struct-lib) @struct-lib "unknown reason"))
+    (do
+      (testing "twelve int arguments all arrive"
+        (let [f (ffi/cfn "wide_int_sum" (vec (repeat 12 :int)) :int)]
+          (is (= 78 (apply f (range 1 13))))
+          (is (= 12 (apply f (repeat 12 1))))))
+      (testing "ten int arguments all arrive"
+        ;; babashka passes a trampoline every argument as a long, so this
+        ;; fails there until the trampolines carry the C widths
+        (when-not (System/getProperty "babashka.version")
+          (let [f (ffi/cfn "ten_int_sum" (vec (repeat 10 :int)) :int)]
+            (is (= 55 (apply f (range 1 11)))))))
+      (testing "a callback receives every argument C sends it"
+        ;; a callback of this width is outside the native image limits
+        (when-not (System/getProperty "babashka.version")
+          (with-open [arena (ffi/confined-arena)]
+            (let [seen (atom nil)
+                  cb (ffi/callback arena
+                                   (fn [& xs] (reset! seen (vec xs)) (apply + xs))
+                                   (vec (repeat 10 :int)) :int)]
+              (is (= 55 ((ffi/cfn "call_with_ten" [:pointer] :int) cb)))
+              (is (= [1 2 3 4 5 6 7 8 9 10] @seen)))))))))
+
 (def array-layout?
   "[:array elem n] arrived after the first release; an older built-in
   namespace does not know the kind."
