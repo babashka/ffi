@@ -267,6 +267,11 @@
         (bigint? a) (js/Number (js/BigInt.asIntN 32 a))
         :else (bit-or (to-number a) 0)))
 
+;; Each table below is also bound as a function of its key: the map itself
+;; on a host that can call one, a get on squint, which cannot. See lookup
+;; at the end of the file, after every table exists.
+(declare arg-coercer* ret-converter* sizes* scalar-get* scalar-set* array-carriers*)
+
 (def ^:private arg-coercer
   (let [i32 to-int32
         u32 (fn [a] (unsigned-bit-shift-right (to-int32 a) 0))
@@ -551,7 +556,7 @@
    (let [n (count argtypes)
          coercers (to-array (map arg-coercer argtypes))
          [c0 c1 c2 c3] coercers
-         convert (or (get ret-converter rettype) identity)
+         convert (or (ret-converter* rettype) identity)
          resolved (volatile! nil)
          native (fn [] (or @resolved (vreset! resolved (native-function lib sym argtypes rettype))))
          arity-error (fn [got]
@@ -904,7 +909,7 @@
          :align (:align el) :size (* n (:size el))}))
 
     (keyword? t)
-    (if-let [size (get sizes t)]
+    (if-let [size (sizes* t)]
       {:type t :size size :align size}
       (throw (ex-info (str "babashka.ffi: unknown type " t) {:type t})))
 
@@ -1059,9 +1064,9 @@
              (dotimes [i n] ((nth encs i) base (nth xs i))))))
 
        ;; a scalar: a value it cannot take gets the place and the type
-       (let [coerce (or (get arg-coercer t)
+       (let [coerce (or (arg-coercer* t)
                         (throw (ex-info (str "babashka.ffi: cannot write type " t) {:type t})))
-             set-fn (get scalar-set t)]
+             set-fn (scalar-set* t)]
          (fn [base v]
            (let [x (try (when (and (not= :bool t) (not= :pointer t)
                                    (not (or (number? v) (bigint? v) (nil? v) (instance? Pointer v))))
@@ -1095,7 +1100,7 @@
       (fn [p base]
         (zipmap names (map (fn [d] (d p base)) decs))))
 
-    (let [get-fn (or (get scalar-get (:type lay))
+    (let [get-fn (or (scalar-get* (:type lay))
                      (throw (ex-info (str "babashka.ffi: cannot read type " (:type lay))
                                      {:type (:type lay)})))]
       (fn [_ base] (get-fn base offset)))))
@@ -1131,8 +1136,8 @@
   ([p t] (read p t 0))
   ([p t offset]
    (let [p (accessible p)]
-     (if-let [get-fn (when (keyword? t) (get scalar-get t))]
-       (do (check-bounds p offset (get sizes t))
+     (if-let [get-fn (when (keyword? t) (scalar-get* t))]
+       (do (check-bounds p offset (sizes* t))
            (get-fn (.-addr p) offset))
        (cond
          (instance? Place t)
@@ -1156,9 +1161,9 @@
   ([p t v] (write p t v 0))
   ([p t v offset]
    (let [p (accessible p)]
-     (if-let [set-fn (when (keyword? t) (get scalar-set t))]
-       (do (check-bounds p offset (get sizes t))
-           (set-fn (.-addr p) offset ((get arg-coercer t) v)))
+     (if-let [set-fn (when (keyword? t) (scalar-set* t))]
+       (do (check-bounds p offset (sizes* t))
+           (set-fn (.-addr p) offset ((arg-coercer* t) v)))
        (cond
          (instance? Place t)
          (do (check-bounds p offset (.-extent t))
@@ -1183,7 +1188,7 @@
      :float js/Float32Array :double js/Float64Array}))
 
 (defn- array-carrier [t]
-  (or (get array-carriers t)
+  (or (array-carriers* t)
       (throw (ex-info (cond
                         (layout-vector? t)
                         (str "babashka.ffi: read-array and write-array copy scalars into a typed array;"
@@ -1210,7 +1215,7 @@
   ([p t n offset]
    (let [ctor (array-carrier t)
          p (accessible p)
-         bytes (* n (get sizes t))]
+         bytes (* n (sizes* t))]
      (check-bounds p offset bytes)
      (if (zero? n)
        (new ctor 0)
@@ -1371,8 +1376,8 @@
   (when (.-closed arena)
     (throw (ex-info "babashka.ffi: the arena is closed" {:arena arena})))
   (let [n (count argtypes)
-        in (to-array (map #(get ret-converter %) argtypes))
-        out (when-not (= :void rettype) (get arg-coercer rettype))
+        in (to-array (map #(ret-converter* %) argtypes))
+        out (when-not (= :void rettype) (arg-coercer* rettype))
         wrapper (fn [& args]
                   (let [arr (to-array args)]
                     (dotimes [i n]
@@ -1388,3 +1393,17 @@
       "auto" (.unrefCallback lib addr)
       (on-close arena (fn [] (.unregisterCallback lib addr))))
     (Pointer. addr 0 arena wrapper)))
+
+;; -- table lookups ------------------------------------------------------------
+
+(defn- lookup
+  "A table as a function of its key."
+  [m]
+  (if squint? (fn [k] (get m k)) m))
+
+(def ^:private arg-coercer* (lookup arg-coercer))
+(def ^:private ret-converter* (lookup ret-converter))
+(def ^:private sizes* (lookup sizes))
+(def ^:private scalar-get* (lookup scalar-get))
+(def ^:private scalar-set* (lookup scalar-set))
+(def ^:private array-carriers* (lookup array-carriers))
