@@ -18,7 +18,11 @@ API listing is API.md, and the decisions are in doc/ai/adr/.
   It shares no code with ffi.clj: a change to a layout rule, a type keyword
   or an error message goes in both. The ClojureScript compiler takes defcfn
   and with-open from ffi.clj, and nbb takes them from the defmacros in
-  ffi.cljs, so a macro change goes in both as well. See ADR 0008.
+  ffi.cljs, so a macro change goes in both as well. See ADR 0008. The
+  compiler emits nothing for a defmacro in a .cljs file, so each macro body
+  in ffi.cljs is a function, defcfn-form and with-open-form, public and
+  :no-doc. A compiled build that hands the namespace to SCI, which is how
+  nbb carries babashka.ffi as a built-in module, makes the macros from them.
 - resources/clj-kondo.exports: the defcfn hook.
 - test/babashka/ffi_test.clj: one suite for both hosts.
 - test-jvm/babashka/ffi_binding_test.clj: the generated class, JVM only.
