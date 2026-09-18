@@ -418,6 +418,20 @@ cast between the two. babashka is unaffected on the libffi path, which
 describes each type exactly, and wrong on the trampoline path, which takes
 every argument as a long. That fix belongs in the trampoline sources.
 
+## A :bool return is read as an int, 2026-09-18
+
+The width change made a `:bool` return one byte on the JVM, and babashka's
+`bool-test` went red on Linux: `(ffi/cfn "isalpha" [:int] :bool)` answered
+false for a letter. `isalpha` returns an int, glibc answers 1024, and the low
+byte of 1024 is zero. macOS answers 1, so no local run saw it, and a
+trampoline reads the whole register, so no native run did either.
+
+`:bool` is what a C predicate gets declared as, so the return is read as an
+int again, through `return-layout`. A width matters for an argument, which
+can sit in a stack slot of that size, and an argument keeps its one byte. A
+return value sits in a register, where reading more of it moves nothing. The
+Node.js host reads an int32 for the same reason.
+
 ## Known gaps
 
 - Struct-by-value. DECIDED (2026-08-21), follow-up issue, not this branch:

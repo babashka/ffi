@@ -95,7 +95,9 @@ jvm-return-conversion-test checks narrow-ret and bits-ret-fn against each
 other through a callback that returns each type.
 
 signature-layout is what a descriptor names a type by, at the width C gives
-it. A carrier is what the call path moves it in. The two differ for every
+it. return-layout is the same for a return value, except that :bool is read
+as an int: a C predicate such as isalpha returns an int whose low byte can be
+zero, 1024 on glibc, and only Linux shows it. A carrier is what the call path moves it in. The two differ for every
 integer narrower than 64 bits, so a handle built from a descriptor is cast
 between them: carrier-handle for the generic invoker, struct-handle in
 binding.clj for the generated class, and explicitCastArguments onto

@@ -189,18 +189,35 @@
 
 (declare ^:private signature-layout)
 
+(defn- return-layout
+  "The layout a return value is read by. It is the signature layout, except
+  for :bool, which is read as an int.
+
+  A width matters for an argument, which can sit in a stack slot of that
+  size. A return value sits in a register, so reading more of it moves
+  nothing. :bool is what a C predicate is declared as, and a predicate such
+  as isalpha returns an int whose low byte can be zero when the int is not:
+  glibc answers 1024 for a letter."
+  ^ValueLayout [t]
+  (if (= :bool t) ValueLayout/JAVA_INT (signature-layout t)))
+
 (defn- signature-class
-  "The Java type of a signature position, taken from its layout so the two
+  "The Java type of an argument position, taken from its layout so the two
   cannot drift apart."
+  ^Class [t]
+  (.carrier ^ValueLayout (signature-layout t)))
+
+(defn- return-class
+  "The Java type of the return position."
   ^Class [t]
   (if (= :void t)
     Void/TYPE
-    (.carrier ^ValueLayout (signature-layout t))))
+    (.carrier (return-layout t))))
 
 (defn- signature-method-type
   "The MethodType an upcall stub of this signature has."
   ^MethodType [argtypes rettype]
-  (MethodType/methodType ^Class (signature-class rettype)
+  (MethodType/methodType ^Class (return-class rettype)
                          ^"[Ljava.lang.Class;"
                          (into-array Class (map signature-class argtypes))))
 
@@ -291,7 +308,7 @@
   (let [args (into-array MemoryLayout (map signature-layout argtypes))]
     (if (= :void rettype)
       (FunctionDescriptor/ofVoid args)
-      (FunctionDescriptor/of (signature-layout rettype) args))))
+      (FunctionDescriptor/of (return-layout rettype) args))))
 
 (def ^:private carrier-value-layout
   {:long ValueLayout/JAVA_LONG :double ValueLayout/JAVA_DOUBLE
@@ -2295,7 +2312,10 @@
                    (signature-layout (:type lay))))
         args (into-array MemoryLayout (map lay-of alays))]
     (if rlay
-      (FunctionDescriptor/of (lay-of rlay) args)
+      (FunctionDescriptor/of (if (= :struct (:type rlay))
+                               (ffm-layout rlay)
+                               (return-layout (:type rlay)))
+                             args)
       (FunctionDescriptor/ofVoid args))))
 
 (defn- struct-ffm-cfn

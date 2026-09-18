@@ -30,6 +30,16 @@
     (testing "a C call through the default lookup"
       (is (= 5 (strlen "hello"))))))
 
+(deftest bool-return-test
+  (cond
+    (not @default-lookup?)
+    (println "bool return skipped: this build has no default lookup")
+    (str/starts-with? (System/getProperty "os.name") "Windows")
+    (println "bool return skipped: isalpha is not in the Windows default lookup")
+    :else
+    (testing "a :bool return reads the whole int a C predicate returns, glibc answers 1024 for a letter"
+      (is (= [true false] (mapv (ffi/cfn "isalpha" [:int] :bool) [97 49]))))))
+
 (def native-image?
   (boolean (System/getProperty "org.graalvm.nativeimage.imagecode")))
 

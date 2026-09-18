@@ -24,6 +24,8 @@
       (is (= 5 (llabs -5)))
       (is (= 5 (llabs (js/BigInt -5))))
       (is (= (js/BigInt "9007199254740993") (llabs (js/BigInt "-9007199254740993"))))))
+  (testing "a :bool return reads the whole int a C predicate returns"
+    (is (= [true false] (mapv (ffi/cfn "isalpha" [:int] :bool) [97 49]))))
   (testing ":double, :float and :string returns"
     (is (= 3 ((ffi/cfn "sqrt" [:double] :double) 9)))
     (is (= 3 ((ffi/cfn "sqrtf" [:float] :float) 9)))
