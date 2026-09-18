@@ -3,7 +3,7 @@
 [babashka.ffi](https://github.com/babashka/ffi): call C libraries from
 Clojure, babashka and Node.js.
 
-## Unreleased
+## 0.1.2
 
 - Squint compatibility
 
