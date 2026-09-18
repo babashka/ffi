@@ -24,6 +24,13 @@ API listing is API.md, and the decisions are in doc/ai/adr/.
 - test-jvm/babashka/ffi_binding_test.clj: the generated class, JVM only.
 - test-node/babashka/ffi_test.cljs: the Node.js suite. It follows
   ffi_test.clj case by case, without what node:ffi cannot call.
+- test-native/babashka/ffi/native_test.clj: what only a native image
+  decides, the trampolines and the registered upcall shapes. Plain
+  assertions, no framework, built and run by script/native_test.sh.
+- script/gen_ffi_metadata.clj: generates the trampolines and the
+  reachability metadata into src-java, src-native and resources-native,
+  none of which are in :paths. babashka generates its own copies today and
+  is unaffected until it puts src-native on its classpath.
 - test-resources/struct_lib.c: fixture for struct-by-value tests, compiled
   into target/ when cc or cl is on PATH.
 - examples/: runnable scripts, each on both hosts.
@@ -80,7 +87,7 @@ stack-arguments-test covers.
 A callback in a native image is the exception: it keeps the carrier shape,
 through carrier-descriptor, and narrows each value on arrival instead, in
 the in-c table in callback. babashka registers the upcall shapes an image
-can make when it builds it, in script/gen_ffi_metadata.clj, and one shape
+can make when it builds it, from script/gen_ffi_metadata.clj, and one shape
 per width per position is not a set anything can register. The narrowing is
 what makes that sound, not the six-argument cap: a C caller writes the low
 half of the register and leaves the upper half zero, so a narrow integer
@@ -100,6 +107,16 @@ Babashka, through its built-in copy of this namespace:
 
 ```sh
 bb test:bb
+```
+
+A native image, needs GRAALVM_HOME and a C compiler. This is the only run
+that exercises the branch's code on the trampolines and the upcall shapes an
+image registers. Running the suite against a released babashka does not:
+that binary carries the babashka.ffi it was built with, so `bb test:bb`
+reports on babashka's code, not on the tree.
+
+```sh
+bb test:native
 ```
 
 Node.js, needs Node.js 26.1 or newer on PATH. The three commands run

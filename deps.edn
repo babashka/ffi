@@ -12,6 +12,13 @@
          :main-opts ["-m" "cognitect.test-runner" "-d" "test" "-d" "test-jvm"]
          :exec-args {:dirs ["test" "test-jvm"]}
          :exec-fn cognitect.test-runner.api/test}
+  ;; the native image test: the trampolines are generated Java against the
+  ;; GraalVM SDK, which is on the classpath for javac and for the build
+  :native {:extra-deps {org.graalvm.sdk/nativeimage {:mvn/version "25.0.2"}
+                        ;; initializes the Clojure namespaces when the image
+                        ;; is built, as babashka's own build does
+                        com.github.clj-easy/graal-build-time {:mvn/version "1.0.5"}}}
+
   ;; the Node.js host, compiled with ClojureScript. Needs JDK 25 or newer,
   ;; because the compiler loads the macros from ffi.clj.
   :cljs-test {:extra-deps {olical/cljs-test-runner {:mvn/version "3.8.1"}

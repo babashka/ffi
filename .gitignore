@@ -6,3 +6,7 @@ target/
 node_modules/
 .shadow-cljs/
 cljs-test-runner-out/
+target/native/
+src-native/
+src-java/
+resources-native/

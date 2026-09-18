@@ -91,6 +91,32 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then sep=';'; else sep=':'; fi
           npx --yes nbb@1.5.212 --classpath "src${sep}test-node" -m babashka.ffi-test
 
+  native:
+    name: Native image (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: graalvm
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: DeLaGuardo/setup-clojure@13.4
+        with:
+          cli: latest
+          bb: latest
+
+      # The trampolines and the registered upcall shapes only exist in an
+      # image, so this is the only job that runs the branch's code on them.
+      - name: Build and run the native image
+        run: script/native_test.sh
+
   cljs:
     name: ClojureScript and shadow-cljs
     runs-on: ubuntu-latest
