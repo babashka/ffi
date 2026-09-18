@@ -1415,6 +1415,36 @@ public final class FfiTrampoline {
         double invoke(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7);
     }
 
+    public interface F_V_JJJJJJJJJ extends CFunctionPointer {
+        @InvokeCFunctionPointer
+        void invoke(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7, long a8);
+    }
+
+    public interface F_J_JJJJJJJJJ extends CFunctionPointer {
+        @InvokeCFunctionPointer
+        long invoke(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7, long a8);
+    }
+
+    public interface F_D_JJJJJJJJJ extends CFunctionPointer {
+        @InvokeCFunctionPointer
+        double invoke(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7, long a8);
+    }
+
+    public interface F_V_JJJJJJJJJJ extends CFunctionPointer {
+        @InvokeCFunctionPointer
+        void invoke(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7, long a8, long a9);
+    }
+
+    public interface F_J_JJJJJJJJJJ extends CFunctionPointer {
+        @InvokeCFunctionPointer
+        long invoke(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7, long a8, long a9);
+    }
+
+    public interface F_D_JJJJJJJJJJ extends CFunctionPointer {
+        @InvokeCFunctionPointer
+        double invoke(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7, long a8, long a9);
+    }
+
     private static Object dispatch0(int id, long fn, Object[] a) {
         switch (id) {
         case 0: ((F_V_) WordFactory.pointer(fn)).invoke(); return null;
@@ -1697,6 +1727,12 @@ public final class FfiTrampoline {
         case 277: ((F_V_JJJJJJJJ) WordFactory.pointer(fn)).invoke(longV(a[0]), longV(a[1]), longV(a[2]), longV(a[3]), longV(a[4]), longV(a[5]), longV(a[6]), longV(a[7])); return null;
         case 278: return ((F_J_JJJJJJJJ) WordFactory.pointer(fn)).invoke(longV(a[0]), longV(a[1]), longV(a[2]), longV(a[3]), longV(a[4]), longV(a[5]), longV(a[6]), longV(a[7]));
         case 279: return ((F_D_JJJJJJJJ) WordFactory.pointer(fn)).invoke(longV(a[0]), longV(a[1]), longV(a[2]), longV(a[3]), longV(a[4]), longV(a[5]), longV(a[6]), longV(a[7]));
+        case 280: ((F_V_JJJJJJJJJ) WordFactory.pointer(fn)).invoke(longV(a[0]), longV(a[1]), longV(a[2]), longV(a[3]), longV(a[4]), longV(a[5]), longV(a[6]), longV(a[7]), longV(a[8])); return null;
+        case 281: return ((F_J_JJJJJJJJJ) WordFactory.pointer(fn)).invoke(longV(a[0]), longV(a[1]), longV(a[2]), longV(a[3]), longV(a[4]), longV(a[5]), longV(a[6]), longV(a[7]), longV(a[8]));
+        case 282: return ((F_D_JJJJJJJJJ) WordFactory.pointer(fn)).invoke(longV(a[0]), longV(a[1]), longV(a[2]), longV(a[3]), longV(a[4]), longV(a[5]), longV(a[6]), longV(a[7]), longV(a[8]));
+        case 283: ((F_V_JJJJJJJJJJ) WordFactory.pointer(fn)).invoke(longV(a[0]), longV(a[1]), longV(a[2]), longV(a[3]), longV(a[4]), longV(a[5]), longV(a[6]), longV(a[7]), longV(a[8]), longV(a[9])); return null;
+        case 284: return ((F_J_JJJJJJJJJJ) WordFactory.pointer(fn)).invoke(longV(a[0]), longV(a[1]), longV(a[2]), longV(a[3]), longV(a[4]), longV(a[5]), longV(a[6]), longV(a[7]), longV(a[8]), longV(a[9]));
+        case 285: return ((F_D_JJJJJJJJJJ) WordFactory.pointer(fn)).invoke(longV(a[0]), longV(a[1]), longV(a[2]), longV(a[3]), longV(a[4]), longV(a[5]), longV(a[6]), longV(a[7]), longV(a[8]), longV(a[9]));
         }
         throw new IllegalArgumentException("bad shape id: " + id);
     }

@@ -784,6 +784,28 @@
   (when native-image?
     (requiring-resolve 'babashka.ffi.impl.ffi-trampolines/invoker)))
 
+;; A trampoline takes every argument as a long, which is the width C gives a
+;; pointer and a 64-bit integer and not the one it gives a narrower type. An
+;; argument in a register is read from its low bits, so the difference does
+;; not show. One on the stack does show it where the ABI packs a stack slot
+;; to the width of the argument, which macOS on AArch64 does and the others
+;; here do not. AArch64 passes eight integers in registers, so a wider shape
+;; is left to libffi there.
+(def ^:private packed-stack-slots?
+  (and (= "aarch64" (System/getProperty "os.arch"))
+       (= :mac (os-key))))
+
+(def ^:private max-register-args 8)
+
+(declare ^:private shape-key)
+
+(defn- trampoline-id
+  "The trampoline for this shape, or nil when it has none or cannot use the
+  one it has."
+  [types* rettype]
+  (when-not (and packed-stack-slots? (> (count types*) max-register-args))
+    (get trampoline-ids (shape-key types* rettype))))
+
 (defn- shape-key [types* rettype]
   (let [c {:long "J" :double "D" :float "F"}]
     (str (if (= :void rettype) "V" (c (carrier rettype)))
@@ -1070,9 +1092,9 @@
 (defn- fixed-cfn
   [lib sym argtypes rettype]
   (if (and native-image?
-           (not (get trampoline-ids (shape-key (let [p (sort-permutation argtypes)]
-                                                 (if p (mapv argtypes p) argtypes))
-                                               rettype)))
+           (not (trampoline-id (let [p (sort-permutation argtypes)]
+                                 (if p (mapv argtypes p) argtypes))
+                               rettype))
            (libffi-available?))
     ;; no trampoline for this shape: libffi makes the call (~1us)
     (libffi-cfn lib sym argtypes rettype)
@@ -1117,7 +1139,7 @@
         ;; raw invoker: a fn of the coerced argument array. In a native
         ;; image a generated trampoline (compiled direct call) when the
         ;; shape has one; otherwise an FFM downcall handle.
-        tramp-id (get trampoline-ids (shape-key types* rettype))
+        tramp-id (trampoline-id types* rettype)
         ;; in a native image every trampoline shape is known ahead of time
         ;; (ordered shapes on Windows, canonical elsewhere). A signature
         ;; without one calls through libffi; a build without libffi gets

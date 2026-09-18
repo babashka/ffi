@@ -283,7 +283,13 @@
    "D_JJJJJJJ" 276
    "V_JJJJJJJJ" 277
    "J_JJJJJJJJ" 278
-   "D_JJJJJJJJ" 279})
+   "D_JJJJJJJJ" 279
+   "V_JJJJJJJJJ" 280
+   "J_JJJJJJJJJ" 281
+   "D_JJJJJJJJJ" 282
+   "V_JJJJJJJJJJ" 283
+   "J_JJJJJJJJJJ" 284
+   "D_JJJJJJJJJJ" 285})
 
 (defn invoker [id fnp]
   (let [id (int id)

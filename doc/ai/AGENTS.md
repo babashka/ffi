@@ -53,6 +53,14 @@ names it as :babashka.ffi/backend.
 | more than 20 args, fixed or variadic | FFM handle with invokeWithArguments | libffi |
 
 Every type keyword has a carrier: :long, :double, :float or :void. The
+A trampoline takes every argument as a long, which is not the width C gives
+a narrow integer. That shows only once an argument reaches the stack, and
+only where the ABI packs a stack slot to the width of the argument, which
+macOS on AArch64 does. The shape set is the same everywhere, so the
+generated sources are too and can be committed; trampoline-id declines a
+shape wider than the argument registers at run time instead, and the call
+goes to libffi. packed-stack-slots? and max-register-args hold that rule.
+
 trampoline set and the generated class bytes are keyed on carriers, not
 types. The generated class passes every argument and result as a long,
 doubles and floats as raw bits, and resolves the symbol on the first call

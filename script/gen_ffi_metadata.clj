@@ -51,13 +51,11 @@
 ;; integers in registers, so a shape that stays inside them is sound, and a
 ;; wider one is not and goes through libffi at about a microsecond.
 (def max-int-args
-  ;; the target, not the host: windows mode generates for a Windows build,
-  ;; whichever machine runs the generator
-  (if (and (not windows?)
-           (= "aarch64" (System/getProperty "os.arch"))
-           (str/starts-with? (System/getProperty "os.name") "Mac"))
-    8
-    10))
+  ;; The shape set is the same on every platform, so the generated sources
+  ;; are too and can be committed. Where a shape of this width would put an
+  ;; argument on the stack at the wrong size, babashka.ffi declines the
+  ;; trampoline at run time rather than the generator leaving it out here.
+  10)
 
 (defn combos-n [types n]
   (if (zero? n)
