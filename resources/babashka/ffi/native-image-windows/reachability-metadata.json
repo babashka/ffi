@@ -1,0 +1,122 @@
+{
+  "foreign" : {
+    "upcalls" : [ {
+      "returnType" : "void",
+      "parameterTypes" : [ "jdouble", "jlong" ]
+    }, {
+      "returnType" : "jlong",
+      "parameterTypes" : [ "jdouble", "jlong" ]
+    }, {
+      "returnType" : "jdouble",
+      "parameterTypes" : [ "jdouble", "jlong" ]
+    }, {
+      "returnType" : "void",
+      "parameterTypes" : [ "jlong", "jdouble", "jlong" ]
+    }, {
+      "returnType" : "jlong",
+      "parameterTypes" : [ "jlong", "jdouble", "jlong" ]
+    }, {
+      "returnType" : "jdouble",
+      "parameterTypes" : [ "jlong", "jdouble", "jlong" ]
+    }, {
+      "returnType" : "void",
+      "parameterTypes" : [ "jdouble", "jlong", "jlong" ]
+    }, {
+      "returnType" : "jlong",
+      "parameterTypes" : [ "jdouble", "jlong", "jlong" ]
+    }, {
+      "returnType" : "jdouble",
+      "parameterTypes" : [ "jdouble", "jlong", "jlong" ]
+    }, {
+      "returnType" : "void",
+      "parameterTypes" : [ "jdouble", "jlong", "jdouble" ]
+    }, {
+      "returnType" : "jlong",
+      "parameterTypes" : [ "jdouble", "jlong", "jdouble" ]
+    }, {
+      "returnType" : "jdouble",
+      "parameterTypes" : [ "jdouble", "jlong", "jdouble" ]
+    }, {
+      "returnType" : "void",
+      "parameterTypes" : [ "jdouble", "jdouble", "jlong" ]
+    }, {
+      "returnType" : "jlong",
+      "parameterTypes" : [ "jdouble", "jdouble", "jlong" ]
+    }, {
+      "returnType" : "jdouble",
+      "parameterTypes" : [ "jdouble", "jdouble", "jlong" ]
+    }, {
+      "returnType" : "void",
+      "parameterTypes" : [ "jlong", "jlong", "jdouble", "jlong" ]
+    }, {
+      "returnType" : "jlong",
+      "parameterTypes" : [ "jlong", "jlong", "jdouble", "jlong" ]
+    }, {
+      "returnType" : "jdouble",
+      "parameterTypes" : [ "jlong", "jlong", "jdouble", "jlong" ]
+    }, {
+      "returnType" : "void",
+      "parameterTypes" : [ "jlong", "jdouble", "jlong", "jlong" ]
+    }, {
+      "returnType" : "jlong",
+      "parameterTypes" : [ "jlong", "jdouble", "jlong", "jlong" ]
+    }, {
+      "returnType" : "jdouble",
+      "parameterTypes" : [ "jlong", "jdouble", "jlong", "jlong" ]
+    }, {
+      "returnType" : "void",
+      "parameterTypes" : [ "jlong", "jdouble", "jlong", "jdouble" ]
+    }, {
+      "returnType" : "jlong",
+      "parameterTypes" : [ "jlong", "jdouble", "jlong", "jdouble" ]
+    }, {
+      "returnType" : "jdouble",
+      "parameterTypes" : [ "jlong", "jdouble", "jlong", "jdouble" ]
+    }, {
+      "returnType" : "void",
+      "parameterTypes" : [ "jlong", "jdouble", "jdouble", "jlong" ]
+    }, {
+      "returnType" : "jlong",
+      "parameterTypes" : [ "jlong", "jdouble", "jdouble", "jlong" ]
+    }, {
+      "returnType" : "jdouble",
+      "parameterTypes" : [ "jlong", "jdouble", "jdouble", "jlong" ]
+    }, {
+      "returnType" : "void",
+      "parameterTypes" : [ "jdouble", "jlong", "jlong", "jlong" ]
+    }, {
+      "returnType" : "jlong",
+      "parameterTypes" : [ "jdouble", "jlong", "jlong", "jlong" ]
+    }, {
+      "returnType" : "jdouble",
+      "parameterTypes" : [ "jdouble", "jlong", "jlong", "jlong" ]
+    }, {
+      "returnType" : "void",
+      "parameterTypes" : [ "jdouble", "jlong", "jlong", "jdouble" ]
+    }, {
+      "returnType" : "jlong",
+      "parameterTypes" : [ "jdouble", "jlong", "jlong", "jdouble" ]
+    }, {
+      "returnType" : "jdouble",
+      "parameterTypes" : [ "jdouble", "jlong", "jlong", "jdouble" ]
+    }, {
+      "returnType" : "void",
+      "parameterTypes" : [ "jdouble", "jlong", "jdouble", "jlong" ]
+    }, {
+      "returnType" : "jlong",
+      "parameterTypes" : [ "jdouble", "jlong", "jdouble", "jlong" ]
+    }, {
+      "returnType" : "jdouble",
+      "parameterTypes" : [ "jdouble", "jlong", "jdouble", "jlong" ]
+    }, {
+      "returnType" : "void",
+      "parameterTypes" : [ "jdouble", "jdouble", "jlong", "jlong" ]
+    }, {
+      "returnType" : "jlong",
+      "parameterTypes" : [ "jdouble", "jdouble", "jlong", "jlong" ]
+    }, {
+      "returnType" : "jdouble",
+      "parameterTypes" : [ "jdouble", "jdouble", "jlong", "jlong" ]
+    } ]
+  }
+}

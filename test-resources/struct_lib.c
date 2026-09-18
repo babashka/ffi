@@ -137,3 +137,10 @@ EXPORT int64_t ten_long_sum(int64_t a1, int64_t a2, int64_t a3, int64_t a4, int6
                             int64_t a6, int64_t a7, int64_t a8, int64_t a9, int64_t a10) {
   return a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10;
 }
+
+/* a double before an integer: one shape where the arguments are sorted, and
+ * a shape of its own on Windows, which assigns registers by position */
+EXPORT double double_then_long(double d, int64_t l) { return d + (double) l; }
+
+typedef double (*dl_cb)(double, int64_t);
+EXPORT double call_double_then_long(dl_cb f) { return f(1.5, 2); }

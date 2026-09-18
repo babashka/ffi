@@ -21,14 +21,21 @@
 ;; Type names are JNI ("jlong", "jdouble", "jfloat"): fixed sizes on every
 ;; platform. C "long" is 32-bit on Windows and must not be used here.
 ;;
-;; With "windows" as the first argument, emits ORDERED shapes instead of
-;; count shapes: the Win64 ABI assigns argument registers by position, so
-;; babashka.ffi does not sort there (sort-permutation returns nil) and every
-;; ordering needs its own descriptor. The Windows build must run this mode
-;; before script/uberjar. Untested on Windows.
+;; The Win64 ABI assigns argument registers by position, so babashka.ffi does
+;; not sort there (sort-permutation returns nil) and every ORDERING needs its
+;; own shape. Both sets are generated and committed, and babashka.ffi picks
+;; one when the image is built, so no build runs this script:
+;; - the sorted set, FfiTrampoline and ffi-trampolines, everywhere else
+;; - the ordered set, FfiTrampolineOrdered and ffi-trampolines-ordered, on
+;;   Windows
+;; The upcall shapes only the ordered set needs are in a second metadata
+;; file, under a resource root native-image does not look in by itself. A
+;; Windows build names it, and an image anywhere else does not pay for them:
+;;     -H:ConfigurationResourceRoots=babashka/ffi/native-image-windows
+;; GraalVM 25 refuses a condition on a foreign call, which would have kept
+;; this to one file.
 ;;
-;; Also generates the native-image call trampolines for the sorted shape set
-;; (identical in both modes):
+;; The native-image call trampolines:
 ;; - src-java/babashka/ffi/impl/FfiTrampoline.java: per shape, a CFunctionPointer
 ;;   interface and a static method calling through a raw function pointer via
 ;;   @InvokeCFunctionPointer - a COMPILED direct call (~2ns), where FFM
@@ -41,7 +48,6 @@
 (require '[cheshire.core :as json]
          '[clojure.string :as str])
 
-(def windows? (= "windows" (first *command-line-args*)))
 
 ;; A trampoline takes every argument as a long. An argument in a register is
 ;; read from its low bits, so the width does not matter there. One on the
@@ -98,13 +104,14 @@
   ;; descriptors for them.
   [])
 
-(def upcalls
-  ;; same family both modes: <= 4 args, <= 2 doubles, no float, plus
+(defn upcalls-for
+  ;; same family both sets: <= 4 args, <= 2 doubles, no float, plus
   ;; pure-integer shapes of arity 5 and 6; Windows needs every ordering
   ;; (callbacks do not sort there either), which for a pure-integer shape
   ;; is the one ordering
+  [ordered?]
   (concat
-   (if windows?
+   (if ordered?
      (for [args (mapcat #(combos-n ["jlong" "jdouble"] %) (range 0 5))
            :when (<= (count (filter #(= "jdouble" %) args)) 2)
            ret ["void" "jlong" "jdouble"]]
@@ -118,6 +125,13 @@
          ret ["void" "jlong" "jdouble"]]
      {"returnType" ret "parameterTypes" (shape a 0 0)})))
 
+(def upcalls (vec (upcalls-for false)))
+
+(def windows-upcalls
+  ;; a sorted shape is one of the orderings, so the ordered set holds the
+  ;; sorted one; the rest is what only Windows calls
+  (vec (remove (set upcalls) (upcalls-for true))))
+
 (def reflection
   ;; callbacks call the wrapped IFn through a bound MethodHandle; they take
   ;; at most 6 arguments
@@ -126,13 +140,15 @@
                 {"name" "invoke"
                  "parameterTypes" (vec (repeat n "java.lang.Object"))})}])
 
-(println "downcalls:" (count downcalls) "upcalls:" (count upcalls))
+(println "downcalls:" (count downcalls) "upcalls:" (count upcalls)
+         "windows upcalls:" (count windows-upcalls))
 
 ;; babashka builds these sources straight out of this repository: src and
 ;; resources are already on its paths, and src-java goes on its
 ;; :java-source-paths. They are generated and committed here, and nowhere
 ;; else, so the shape set and the code that assumes it cannot drift apart.
 (doseq [d ["resources/META-INF/native-image/babashka/ffi"
+           "resources/babashka/ffi/native-image-windows"
            "src-java/babashka/ffi/impl"
            "src/babashka/ffi/impl"]]
   (.mkdirs (java.io.File. d)))
@@ -144,6 +160,10 @@
                             {:pretty true}))
 
 ;; -- trampolines --------------------------------------------------------------
+
+(spit "resources/babashka/ffi/native-image-windows/reachability-metadata.json"
+      (json/generate-string {"foreign" {"upcalls" windows-upcalls}}
+                            {:pretty true}))
 
 (def MAX-ARITY 6)
 
@@ -174,9 +194,10 @@
 (def jtype {"J" "long" "D" "double" "F" "float" "V" "void"})
 (def clj-cast {"J" "long" "D" "double" "F" "float"})
 
-(def shape-sigs
-  ;; [ret-char arg-chars-string]; Windows uses the ordered family
-  (for [args (if windows? ordered-shapes sorted-shapes)
+(defn shape-sigs
+  ;; [ret-char arg-chars-string]
+  [shapes]
+  (for [args shapes
         ret (cond-> ["void" "jlong" "jdouble"]
               (<= (count args) 4) (conj "jfloat"))]
     [(jchar ret) (str/join (map jchar args))]))
@@ -200,24 +221,25 @@
 ;; One switch-dispatch method instead of a static method per shape: a shape's
 ;; per-method class metadata and the per-shape Clojure closures were most of
 ;; the trampolines' image size.
-(spit "src-java/babashka/ffi/impl/FfiTrampoline.java"
+(defn emit! [class-name ns-name file-stem what sigs]
+  (spit (str "src-java/babashka/ffi/impl/" class-name ".java")
       (str "// Generated by script/gen_ffi_metadata.clj. Do not edit.\n"
            "package babashka.ffi.impl;\n\n"
            "import org.graalvm.nativeimage.c.function.CFunctionPointer;\n"
            "import org.graalvm.nativeimage.c.function.InvokeCFunctionPointer;\n"
            "import org.graalvm.word.WordFactory;\n\n"
            "/** Native-image call trampolines for babashka.ffi: one compiled\n"
-           " * direct call per canonical shape, dispatched by shape id. Only\n"
+           " * direct call per " what " shape, dispatched by shape id. Only\n"
            " * functional in a native image; never invoked on the JVM. */\n"
-           "public final class FfiTrampoline {\n"
-           "    private FfiTrampoline() {}\n\n"
+           "public final class " class-name " {\n"
+           "    private " class-name "() {}\n\n"
            "    private static long longV(Object o) { return ((Number) o).longValue(); }\n"
            "    private static double dblV(Object o) { return ((Number) o).doubleValue(); }\n"
            "    private static float fltV(Object o) { return ((Number) o).floatValue(); }\n\n"
-           (str/join "\n" (map java-iface shape-sigs))
+           (str/join "\n" (map java-iface sigs))
            ;; a Java method tops out at 64KB of bytecode; the Windows ordered
            ;; family exceeds one switch, so dispatch in chunks
-           (let [chunks (partition-all 300 (map-indexed vector shape-sigs))]
+           (let [chunks (partition-all 300 (map-indexed vector sigs))]
              (str
               (str/join
                "\n"
@@ -243,22 +265,26 @@
               "    }\n"))
            "}\n"))
 
-(spit "src/babashka/ffi/impl/ffi_trampolines.clj"
+  (spit (str "src/babashka/ffi/impl/" file-stem ".clj")
       (str ";; Generated by script/gen_ffi_metadata.clj. Do not edit.\n"
-           "(ns babashka.ffi.impl.ffi-trampolines\n"
+           "(ns babashka.ffi.impl." ns-name "\n"
            "  {:no-doc true}\n"
-           "  (:import [babashka.ffi.impl FfiTrampoline]))\n\n"
+           "  (:import [babashka.ffi.impl " class-name "]))\n\n"
            "(def ids\n"
            "  {"
            (str/join "\n   "
                      (map-indexed (fn [id [ret args]]
                                     (str "\"" ret "_" args "\" " id))
-                                  shape-sigs))
+                                  sigs))
            "})\n\n"
            "(defn invoker [id fnp]\n"
            "  (let [id (int id)\n"
            "        fnp (long fnp)]\n"
            "    (fn [^objects a]\n"
-           "      (FfiTrampoline/dispatch id fnp a))))\n"))
+           "      (" class-name "/dispatch id fnp a))))\n"))
+  (println what "trampolines:" (count sigs)))
 
-(println "trampolines:" (count shape-sigs))
+(emit! "FfiTrampoline" "ffi-trampolines" "ffi_trampolines" "canonical"
+       (shape-sigs sorted-shapes))
+(emit! "FfiTrampolineOrdered" "ffi-trampolines-ordered" "ffi_trampolines_ordered" "ordered"
+       (shape-sigs ordered-shapes))

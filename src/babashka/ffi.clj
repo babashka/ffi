@@ -770,14 +770,22 @@
 ;; path is JIT-compiled and fast.
 ;; The trampolines are generated into this repository by
 ;; script/gen_ffi_metadata.clj and committed, so an image builds them from
-;; here rather than carrying a copy of its own.
+;; here rather than carrying a copy of its own. There are two sets, and the
+;; image loads the one for the platform it is built on: Windows assigns
+;; argument registers by position, so it has a trampoline per argument
+;; order, where every other platform sorts the arguments onto one.
+(def ^:private trampoline-ns
+  (if windows?
+    "babashka.ffi.impl.ffi-trampolines-ordered"
+    "babashka.ffi.impl.ffi-trampolines"))
+
 (def ^:private trampoline-ids
   (when native-image?
-    @(requiring-resolve 'babashka.ffi.impl.ffi-trampolines/ids)))
+    @(requiring-resolve (symbol trampoline-ns "ids"))))
 
 (def ^:private trampoline-invoker
   (when native-image?
-    (requiring-resolve 'babashka.ffi.impl.ffi-trampolines/invoker)))
+    (requiring-resolve (symbol trampoline-ns "invoker"))))
 
 ;; A trampoline takes every argument as a long, which is the width C gives a
 ;; pointer and a 64-bit integer and not the one it gives a narrower type. An
