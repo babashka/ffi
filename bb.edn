@@ -1,9 +1,7 @@
+;; Only quickdoc and publish need a dependency, and they carry their own:
+;; every other task then starts without resolving a classpath, which is what
+;; the test jobs do on CI.
 {:paths ["src" "bb"]
- :deps {io.github.borkdude/quickdoc
-        #_{:local/root "/Users/borkdude/dev/quickdoc"}
-        {:git/sha "5097746c91fbd6605792e7dc817a81d20b8d691a"}
-        ;; tools.build itself is built into babashka, so build.clj runs here
-        io.github.babashka/deps-deploy {:mvn/version "0.0.1"}}
  :tasks
  {test:bb {:doc "Run the tests through babashka's built-in babashka.ffi."
            :extra-paths ["test"]
@@ -35,8 +33,17 @@
                          (shell "npx" "shadow-cljs" "compile" "node-test" "node-test-advanced")
                          (shell "node" "target/shadow/node-tests.js")
                          (shell "node" "target/shadow/node-tests-advanced.js"))}
+  test:squint
+  {:doc "Compile the Node.js tests with squint and run them. Needs Node.js 26.1 or newer."
+   :task (do (shell "npm" "install")
+             (shell "npx" "squint" "compile")
+             (shell "node" ".squint-out/babashka/run_tests.mjs"))}
+
   quickdoc
   {:doc "Invoke quickdoc"
+   :extra-deps {io.github.borkdude/quickdoc
+                #_{:local/root "/Users/borkdude/dev/quickdoc"}
+                {:git/sha "5097746c91fbd6605792e7dc817a81d20b8d691a"}}
    :requires ([quickdoc.api :as api])
    ;; the task body is evaluated, so the override map is quoted. The vars
    ;; a deftype generates are not API: the constructor is private at run
@@ -74,5 +81,7 @@
 
   publish
   {:doc "Build the jar and deploy it to Clojars. Pass --bump to bump the release counter first"
+   ;; tools.build itself is built into babashka, so build.clj runs here
+   :extra-deps {io.github.babashka/deps-deploy {:mvn/version "0.0.1"}}
    :extra-paths ["."]
    :exec-fn tasks/publish}}}

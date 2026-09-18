@@ -40,6 +40,7 @@
   - a struct by value in a signature
   - a variadic signature, :&
   - a function pointer as the symbol. Bind a function by name."
+  {:squint/compile-time true}
   (:refer-clojure :exclude [clone])
   ;; The ClojureScript compiler takes defcfn and with-open from ffi.clj, so
   ;; its JVM needs JDK 25 or newer. nbb uses the defmacros in this file when
@@ -72,6 +73,11 @@
 
 (defn- bigint? [x]
   (identical? js/BigInt (type x)))
+
+(defn- digits
+  "The number s spells, or nil. squint has no parse-long."
+  [s]
+  (when (re-matches #"[0-9]+" s) (js/parseInt s 10)))
 
 (defn- from-big
   "Returns a number for a safe integer, otherwise the bigint."
@@ -412,7 +418,7 @@
                                (let [;; newest soname first, numerically:
                                      ;; libz.so.10 beats libz.so.9
                                      vkey (fn [f]
-                                            (mapv #(or (parse-long %) -1)
+                                            (mapv #(or (digits %) -1)
                                                   (rest (str/split (subs f (count base)) #"\."))))
                                      newest-first (fn [x y]
                                                     (let [a (vkey x) b (vkey y)
@@ -448,7 +454,9 @@
   [lib]
   (let [lib (cond (map? lib) lib
                   (fn? lib) (lib)
-                  (or (delay? lib) (var? lib) (instance? Atom lib)) @lib
+                  ;; a delay, an atom or a var. squint has no Atom symbol to
+                  ;; name, and IDeref covers the three on both hosts
+                  (satisfies? IDeref lib) @lib
                   :else lib)
         lookup (when (map? lib) (:lookup lib))]
     (if (instance? (.-DynamicLibrary nffi) lookup)
@@ -477,8 +485,10 @@
 
 ;; -- foreign functions --------------------------------------------------------
 
+^{:squint/compile-time :both}
 (def ^:private layout-kinds #{:struct :array :union})
 
+^{:squint/compile-time :both}
 (defn- layout-vector? [t]
   (and (vector? t) (contains? layout-kinds (first t))))
 
@@ -578,6 +588,7 @@
          general)
        {:babashka.ffi/backend :node}))))
 
+^{:squint/compile-time :both}
 (defn ^:no-doc defcfn-form
   "The form defcfn expands to. A function, so a compiled build has it: see
   the ns form."
@@ -632,6 +643,7 @@
              (fn ~name ~@fn-tail)))
         `(def ~name ~binding-form)))))
 
+^{:squint/compile-time true}
 (defmacro defcfn
   "Defines name as a C function binding created by cfn:
 
@@ -727,6 +739,7 @@
   []
   @the-global-arena)
 
+^{:squint/compile-time :both}
 (defn ^:no-doc with-open-form
   "The form with-open expands to. A function, so a compiled build has it."
   [bindings body]
@@ -737,6 +750,7 @@
          (babashka.ffi/with-open ~(subvec bindings 2) ~@body)
          (finally (.close ~(nth bindings 0)))))))
 
+^{:squint/compile-time true}
 (defmacro with-open
   "Evaluates body with each name bound to its value. Calls .close on each
   value in reverse order when body returns or throws.

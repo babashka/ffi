@@ -3,10 +3,10 @@
   `bb test:node`. The cases follow test/babashka/ffi_test.clj, without the
   struct-by-value, variadic and function-pointer cases that node:ffi does
   not support."
-  (:require [babashka.ffi :as ffi :refer [defcfn]]
+  (:require [babashka.ffi :as ffi]
             [cljs.test :as t :refer [deftest is testing]]))
 
-(defcfn strlen "strlen" [:string] :long)
+(ffi/defcfn strlen "strlen" [:string] :long)
 
 (def windows? (= "win32" js/process.platform))
 
@@ -490,8 +490,8 @@
           (is (thrown-with-msg? js/Error #"at \[:msgs 1 :msg\], a :int field cannot take"
                                 (ffi/write q (ffi/place outer [:msgs 1 :msg]) "x"))))))))
 
-(defcfn c-abs "The absolute value." "abs" [:int] :int)
-(defcfn twice-abs "abs" [:int] :int
+(ffi/defcfn c-abs "The absolute value." "abs" [:int] :int)
+(ffi/defcfn twice-abs "abs" [:int] :int
   raw [x] (* 2 (raw x)))
 
 (deftest macro-form-test
