@@ -9,7 +9,7 @@ repository as a submodule.
 Status: experimental. The API can still change.
 
 ``` clojure
-org.babashka/ffi {:mvn/version "0.1.0"}
+org.babashka/ffi {:mvn/version "0.1.1"}
 ```
 
 ## Platforms
