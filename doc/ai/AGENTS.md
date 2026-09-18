@@ -78,11 +78,15 @@ carrier reads the wrong bytes once arguments spill to the stack, which
 stack-arguments-test covers.
 
 A callback in a native image is the exception: it keeps the carrier shape,
-through carrier-descriptor. babashka registers the upcall shapes an image
+through carrier-descriptor, and narrows each value on arrival instead, in
+the in-c table in callback. babashka registers the upcall shapes an image
 can make when it builds it, in script/gen_ffi_metadata.clj, and one shape
-per width per position is not a set anything can register. It is sound
-because an image caps a callback at six arguments, which every ABI here
-passes in registers. Widen that cap and this has to be settled first.
+per width per position is not a set anything can register. The narrowing is
+what makes that sound, not the six-argument cap: a C caller writes the low
+half of the register and leaves the upper half zero, so a narrow integer
+read at its carrier width arrives without its sign, in a register as much
+as on the stack. narrow-int? lists the types this applies to, and
+narrow-ret does the conversion.
 
 ## Run the tests
 

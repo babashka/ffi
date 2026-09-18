@@ -398,6 +398,19 @@ The same on the upcall side: a callback of ten ints received
 `[1 2 3 4 5 6 7 8 42949672969 4642326336]`, the last two read off the stack,
 one of them an address.
 
+An upcall has a second half to it, which no argument count reaches. C writes
+the low half of a register and a 32-bit write leaves the upper half zero, so
+a callback that reads a narrow integer at its carrier width reads it
+unsigned. A callback of `[:int :int]` given -1 and -2 received
+`[4294967295 4294967294]`, in the first two argument registers. Every
+negative narrow integer a callback took was wrong, which is the common case
+rather than an edge, and no test passed a negative value to a callback.
+
+A descriptor at the C width fixes both halves on the JVM. A native image
+keeps the carrier shape, because it registers the shapes it can make when it
+is built and one shape per width per position is not a set anything can
+register, so it narrows each value on arrival instead.
+
 A descriptor now names each type at its C width, through signature-layout,
 and a pointer keeps the long carrier because it is eight bytes either way.
 The carrier is still what every call path moves a value in, so the handle is

@@ -301,16 +301,20 @@
   {:long ValueLayout/JAVA_LONG :double ValueLayout/JAVA_DOUBLE
    :float ValueLayout/JAVA_FLOAT})
 
+(def ^:private narrow-int?
+  "The integer types C gives fewer than eight bytes."
+  #{:int :uint :int32 :uint32 :int16 :uint16 :int8 :uint8 :byte :char})
+
 (defn- carrier-descriptor
   "The FunctionDescriptor of a signature in carriers, every integer widened
   to a long.
 
   A native image registers the upcall shapes it can make when it is built.
   One shape per width per position is not a set anything can register, so a
-  callback there keeps the carrier shape. It is sound because a callback in
-  an image takes at most six arguments, which every ABI here passes in
-  registers, and an argument that never reaches the stack is read from its
-  low bits whatever width it was declared at."
+  callback there keeps the carrier shape and narrows each value on arrival
+  instead, through narrow-int? in callback. A C caller writes the low half
+  of the register and leaves the upper half zero, so a narrow integer read
+  at its carrier width arrives without its sign."
   ^FunctionDescriptor [argtypes rettype]
   (let [lay #(carrier-value-layout (carrier %))
         args (into-array MemoryLayout (map lay argtypes))]
@@ -2501,10 +2505,15 @@
         ;; Integer crossing the upcall boundary uncaught would kill the VM)
         ;; and hand f the declared types, not the carriers
         ret-c (when-not (= :void rettype) (arg-coercer rettype))
-        in-c (mapv (fn [t] (case t
-                             :bool (fn [a] (not (zero? (long a))))
-                             :pointer (fn [a] (MemorySegment/ofAddress (long a)))
-                             nil))
+        in-c (mapv (fn [t]
+                     (cond
+                       (= :bool t) (fn [a] (not (zero? (long a))))
+                       (= :pointer t) (fn [a] (MemorySegment/ofAddress (long a)))
+                       ;; the stub of a native image takes the carrier, so
+                       ;; the sign of a narrow integer is in the low half
+                       ;; and the upper half is whatever C left there
+                       (and native-image? (narrow-int? t)) (fn [a] (narrow-ret t a))
+                       :else nil))
                    argtypes)
         f (if (or ret-c (some some? in-c))
             (or (wrap-callback f in-c ret-c)

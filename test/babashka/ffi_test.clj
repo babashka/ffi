@@ -331,6 +331,23 @@
         (when-not (System/getProperty "babashka.version")
           (let [f (ffi/cfn "ten_int_sum" (vec (repeat 10 :int)) :int)]
             (is (= 55 (apply f (range 1 11)))))))
+      (testing "a callback receives a negative narrow integer with its sign"
+        ;; C writes the low half of the register and leaves the upper half
+        ;; zero, so a callback that reads the value at a wider type reads it
+        ;; unsigned. babashka keeps the carrier shape its image registered
+        ;; and narrows on arrival, which the current binary predates.
+        (when-not (System/getProperty "babashka.version")
+          (with-open [arena (ffi/confined-arena)]
+            (let [seen (atom nil)
+                  cb (ffi/callback arena (fn [a b] (reset! seen [a b]) (+ a b))
+                                   [:int :int] :long)]
+              (is (= -3 ((ffi/cfn "call_with_negatives" [:pointer] :long) cb)))
+              (is (= [-1 -2] @seen)))
+            (let [seen (atom nil)
+                  cb (ffi/callback arena (fn [a b c] (reset! seen [a b c]) (+ a b c))
+                                   [:int8 :int16 :int] :long)]
+              (is (= -12 ((ffi/cfn "call_with_narrow" [:pointer] :long) cb)))
+              (is (= [-3 -4 -5] @seen))))))
       (testing "a callback receives every argument C sends it"
         ;; a callback of this width is outside the native image limits
         (when-not (System/getProperty "babashka.version")

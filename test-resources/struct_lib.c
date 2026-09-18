@@ -114,3 +114,12 @@ EXPORT int32_t ten_int_sum(int32_t a1, int32_t a2, int32_t a3, int32_t a4, int32
 typedef int32_t (*ten_cb)(int32_t, int32_t, int32_t, int32_t, int32_t,
                           int32_t, int32_t, int32_t, int32_t, int32_t);
 EXPORT int32_t call_with_ten(ten_cb f) { return f(1, 2, 3, 4, 5, 6, 7, 8, 9, 10); }
+
+/* C calls back with negative narrow integers. A 32-bit write leaves the
+ * upper half of the register zero, so a callback that declares them wider
+ * than C does reads them unsigned */
+typedef int64_t (*neg_cb)(int32_t, int32_t);
+EXPORT int64_t call_with_negatives(neg_cb f) { return f(-1, -2); }
+
+typedef int64_t (*narrow_cb)(int8_t, int16_t, int32_t);
+EXPORT int64_t call_with_narrow(narrow_cb f) { return f(-3, -4, -5); }
