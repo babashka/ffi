@@ -292,10 +292,9 @@
     (do
       (testing "each ABI class of struct argument"
         (is (= 7 ((ffi/cfn "p2_sum" [p2] :int) {:x 3 :y 4})))
-        (when-not (System/getProperty "babashka.version")
-          (testing "a :bool return next to a struct argument is the low byte"
-            (is (= [true false]
-                   (mapv (ffi/cfn "p2_same" [p2] :bool) [{:x 3 :y 3} {:x 3 :y 4}])))))
+        (testing "a :bool return next to a struct argument is the low byte"
+          (is (= [true false]
+                 (mapv (ffi/cfn "p2_same" [p2] :bool) [{:x 3 :y 3} {:x 3 :y 4}]))))
         (is (= 6.0 ((ffi/cfn "v3_sum" [v3] :double) {:x 1.0 :y 2.0 :z 3.0})))
         (is (= 10 ((ffi/cfn "big_sum" [big] :long) {:a 1 :b 2 :c 3 :d 4})))
         (is (= 9.5 ((ffi/cfn "pad_sum" [pad] :double) {:c 7 :d 2.5})))
