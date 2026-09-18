@@ -19,7 +19,7 @@ On the JVM:
 
 In babashka the namespace is built in: `(require '[babashka.ffi :as ffi])`.
 
-In a GraalVM native image of your own: see
+To build a GraalVM native image, see
 [Build your own native image](doc/guide.md#build-your-own-native-image).
 
 On Node.js, experimental:

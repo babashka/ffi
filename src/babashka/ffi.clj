@@ -24,9 +24,9 @@
 
   A pointer is a native java.lang.foreign.MemorySegment with a size. read and
   write check each access against this size. Pointers from C have size zero.
-  reinterpret specifies their size before access. :bool
-  represents a one-byte C boolean and returns true or false. Thus, a C
-  predicate does not return the truthy number 0.
+  Use reinterpret to specify their size before access.
+
+  :bool represents a one-byte C boolean and returns true or false.
 
   A layout describes memory: [:struct [[name type] ...]] for a struct and
   [:array type n] for a fixed array. read returns a struct as a map and an
@@ -35,21 +35,18 @@
   [:name [:array :char 32]].
 
   [:union [[name type] ...]] describes a C union. read returns a union as a
-  pointer to its bytes, since a union carries no tag of its own; read the
-  member you know applies from that pointer. write takes a pair, [member
-  value]. A union is not passed by value in a signature.
+  pointer to its bytes. Read the active member from that pointer using its
+  type. write takes a [member value] pair. Unions cannot be passed by value.
 
-  place resolves one member of a layout, by name or by a path of names and
-  array indices into nested layouts, into a place that read and write take
-  where they take a type. The path is resolved once; the offset and the
-  type come from the layout.
+  Use place to select a layout member by name or by a path of names and array
+  indices. Pass the result to read or write instead of a type. A place stores
+  the member's offset and type.
 
   read-array and write-array copy elements of one scalar type between
   native memory and a Java array of that width, as a memcpy.
 
-  A function that takes a struct as an argument, or returns one, without a
-  pointer in between, gets a layout on that position in the signature. A
-  struct value is a map of its fields:
+  Use a layout in a function signature to pass or return a struct by value.
+  Represent struct values as maps:
 
       (ffi/defcfn c-div \"div\" [:int :int] [:struct [[:quot :int] [:rem :int]]])
       (c-div 7 2)   ;=> {:quot 3 :rem 1}
@@ -61,12 +58,11 @@
   arguments, at most three mixed floating-point arguments or four of the
   same floating-point type, up to 10 integer or pointer arguments, and a
   :float return with up to four arguments. A fixed signature outside this
-  set calls through libffi, at about 1 microsecond instead of about 100
-  nanoseconds. Without libffi, such a signature throws.
+  set requires libffi. Binding fails if libffi is unavailable.
 
   Native images use libffi for every variadic call. Without libffi, a
-  variadic call throws. Callbacks
-  support up to four arguments and two :double arguments, or up to six
+  variadic call throws. In a native image, callbacks support up to four
+  arguments with at most two :double arguments, or up to six
   integer and pointer arguments. Callbacks do not support :float. The
   callback return type must be :void, an integer type, :pointer, or :double.
   Argument order does not affect these limits. See doc/guide.md for details
@@ -430,8 +426,7 @@
 (defn reinterpret
   "Returns a view of segment seg with byte size size.
 
-  Without an arena the view has an unbounded lifetime. That is correct for
-  memory that C owns and that outlives your code.
+  Without an arena, the view retains seg's lifetime.
 
   With an arena, the view is valid only while that arena is open. A read after
   the arena closes throws. The arena calls the optional cleanup function with
@@ -454,8 +449,8 @@
 
 (defn slice
   "Returns a slice of seg at byte offset. By default, the slice ends with seg.
-  len is an integer byte count, a type keyword, or a struct layout, so walking
-  an array of structs takes the layout itself:
+  len is an integer byte count, a type keyword, or a layout. To select one
+  struct from an array:
 
       (slice arr (* i (sizeof point)) point)
 
@@ -501,8 +496,8 @@
   A pointer returned by C has no size, so the read runs to the first NUL
   byte. This is what a :string return type does.
 
-  Give a limit in bytes. If no NUL appears within the limit, `ptr->string`
-  throws an error. A limit only narrows: a pointer with a known size keeps it.
+  limit is a maximum byte count. If p has a nonzero size, the read is also
+  bounded by that size. Throws if no NUL byte occurs within these bounds.
 
   CAUTION: Without a limit, ptr->string can read past a buffer that has no
   NUL byte. This can stop the process."
@@ -658,7 +653,7 @@
   :darwin is an alias for :mac. For a bare name, the function also searches
   common installation directories. Returns a library map whose :path value
   identifies the loaded candidate. The map can be the first argument to cfn.
-  In that form, cfn searches only this library."
+  In that form, cfn searches this library and its dependencies."
   [lib]
   (let [paths (cond
                 (map? lib)
@@ -1019,24 +1014,22 @@
 
 (defn cfn
   "Creates a Clojure function that calls the C function sym. sym is a C symbol
-  name or a function pointer. argtypes is a vector of type keywords. rettype
-  is a type keyword. A struct that the function takes as an argument, or
-  returns, without a pointer in between, is a layout on that position, and
-  its value is a map of its fields. On the JVM, struct calls use the FFM linker
-  and need only the JDK. Native images use libffi for struct calls.
+  name or a function pointer. argtypes is a vector of argument types. rettype
+  is the return type. Use type keywords for scalars and layouts for structs
+  passed by value. Struct values are maps of their fields. Struct calls
+  require libffi in a native image and only the JDK on the JVM.
 
   Use a function pointer for a function that has no exported name. The pointer
   can come from a loader, C function, struct field, find-symbol, or callback.
 
   A library value limits the search to one library and its dependencies.
   Without a library value, cfn searches all loaded libraries. Then it searches
-  the default system lookup. The first call resolves the symbol and creates
-  the call handle. You can create the binding before you load its library.
+  the default system lookup. The first call resolves the symbol. You can
+  create the binding before you load its library.
 
   A :& in argtypes declares a variadic C function. The types before :& are
-  the fixed parameters. Types after :& declare the tail once, resolved when
-  the binding is made; with nothing after :&, each call infers the tail
-  types from its values."
+  the fixed parameters. Types after :& declare the variadic argument types.
+  With no types after :&, each call infers them from its values."
   ([sym argtypes rettype] (cfn nil sym argtypes rettype))
   ([lib sym argtypes rettype]
    (when-not (or (string? sym) (native-segment? sym))
@@ -1235,9 +1228,8 @@
         \"Opens the database at path, storing the handle in out-param pp.\"
         \"sqlite3_open\" [:string :pointer] :int)
 
-  An optional docstring and attribute map can precede the C symbol. The final
-  three arguments are the C symbol, argument types, and return type. defcfn
-  preserves all metadata on name. This metadata includes ^:private.
+  An optional docstring and attribute map can precede the C symbol, argument
+  types, and return type. Preserves metadata on name, including ^:private.
 
   The :library key in the attribute map selects a library for cfn:
 
@@ -1429,15 +1421,14 @@
   "Allocates zeroed native memory in arena and returns its pointer.
   n is an integer byte count, a type keyword, or a struct layout.
 
-  Use a confined arena inside one function. Use a shared arena for memory that
-  outlives the call and is released elsewhere. When the arena closes, it
-  releases its memory.
+  Use a confined arena for access from one thread or a shared arena for
+  access from multiple threads. Closing the arena releases its memory.
 
   A type or layout uses natural alignment. An integer byte count uses
   alignment 16. Specify an alignment to override this value.
 
-  There is no unscoped form. If C allocates the memory, bind its allocator with
-  cfn. Release the result with the matching C deallocator.
+  For memory allocated by C, bind the allocator with cfn and release the
+  result with the matching C deallocator.
 
   CAUTION: Do not close the arena while C uses its memory.
   C can access released memory."
@@ -1500,8 +1491,8 @@
 (defn read
   "Reads a value of type t from p. The default byte offset is zero.
 
-  t is a type keyword, a layout, or a place from `place`. A place is a
-  member of a layout resolved once, so reading through it does no lookup.
+  t is a type keyword, a layout, or a place returned by place. A place
+  specifies the layout member's type and offset.
 
   Checks the access against the size of p. Rejects a zero-size pointer.
   reinterpret specifies a valid size."
@@ -1536,8 +1527,8 @@
 (defn write
   "Writes v as type t to p. The default byte offset is zero. Returns nil.
 
-  t is a type keyword, a layout, or a place from `place`. Through a place
-  the member's type is known, so a union member needs no pair.
+  t is a type keyword, a layout, or a place returned by place. When a place
+  selects a union member, pass the member's value directly.
 
   Checks the access against the size of p. Rejects a zero-size pointer.
   reinterpret specifies a valid size."
@@ -1601,8 +1592,8 @@
   "Copies n elements of type t from pointer p, at byte offset (default 0),
   into a new Java array. Returns the array.
 
-  The copy uses memcpy. The type gives the element width and nothing else:
-  :int, :uint and :int32 fill an int[] with the bits as they are, so a
+  Copies raw bytes without converting elements. For example,
+  :int, :uint and :int32 return an int[] with the same bits, so a
   :uint above Integer/MAX_VALUE reads as a negative int. :long and the other
   eight-byte types fill a long[], and :pointer fills a long[] of addresses.
   :byte, :char, :int8, :uint8 and :bool fill a byte[]. For pointers, use
@@ -1623,8 +1614,8 @@
   "Copies Java array arr into memory at pointer p, at byte offset (default
   0), as elements of type t. Returns nil.
 
-  The copy is a memcpy, as in read-array, and the array must be the Java
-  array for the type: an int[] for :int, a long[] for :long or :pointer, a
+  Copies raw bytes without converting elements. arr must be a Java array
+  of the matching type: an int[] for :int, a long[] for :long or :pointer, a
   byte[] for :char."
   ([p t arr] (write-array p t arr 0))
   ([p t arr offset]
@@ -2495,11 +2486,11 @@
 
 (defn callback
   "Creates a C function pointer that invokes f. arena owns the pointer, which
-  is valid until the arena releases it. There is no separate release function.
+  is valid until the arena releases it.
   argtypes and rettype use the cfn type keywords. f receives :pointer arguments
-  as zero-size pointers. It receives
-  :bool arguments as booleans and other arguments as longs or doubles. For a
-  :pointer return f returns a pointer, or nil for null.
+  as zero-size pointers and :bool arguments as booleans. Numeric arguments
+  are passed as numbers. For a :pointer return, f must return a pointer or
+  nil for NULL.
 
   Choose the arena for the thread that calls back:
 
@@ -2508,14 +2499,15 @@
   A shared arena allows C to invoke the callback from any thread, including a
   thread that your code did not create. Use it for asynchronous callbacks, such
   as event-loop notifications. A confined arena accepts a call from its own
-  thread only. If C calls back during a call that you make, use this arena, such
-  as for a comparison function. A global arena never releases the pointer.
+  thread only. Use it for synchronous callbacks, such as a comparison
+  function. A global arena never releases the pointer.
 
   An automatic arena releases the pointer once the pointer itself becomes
   unreachable. The garbage collector cannot see the copy that C holds. Use an
   automatic arena only when your reference outlives every call that C can make.
 
-  CAUTION: Unregister the callback before its arena releases the pointer."
+  CAUTION: Unregister the callback before its arena releases the pointer.
+  Catch exceptions inside f. An uncaught exception can stop the process."
   [arena f argtypes rettype]
   (doseq [t argtypes] (carrier t))
   (carrier rettype)

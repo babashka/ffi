@@ -136,8 +136,7 @@
 (defn reinterpret
   "Returns a view of pointer seg with byte size size.
 
-  Without an arena the view has an unbounded lifetime. That is correct for
-  memory that C owns and that outlives your code.
+  Without an arena, the view retains seg's lifetime.
 
   With an arena, the view is valid only while that arena is open. A read after
   the arena closes throws. The arena calls the optional cleanup function with
@@ -162,8 +161,8 @@
 
 (defn slice
   "Returns a slice of seg at byte offset. By default, the slice ends with seg.
-  len is an integer byte count, a type keyword, or a struct layout, so walking
-  an array of structs takes the layout itself:
+  len is an integer byte count, a type keyword, or a layout. To select one
+  struct from an array:
 
       (slice arr (* i (sizeof point)) point)
 
@@ -214,8 +213,8 @@
   A pointer returned by C has no size, so the read runs to the first NUL
   byte. This is what a :string return type does.
 
-  Give a limit in bytes. If no NUL appears within the limit, `ptr->string`
-  throws an error. A limit only narrows: a pointer with a known size keeps it.
+  limit is a maximum byte count. If p has a nonzero size, the read is also
+  bounded by that size. Throws if no NUL byte occurs within these bounds.
 
   CAUTION: Without a limit, ptr->string can read past a buffer that has no
   NUL byte. This can stop the process."
