@@ -3,13 +3,12 @@
 `babashka.ffi` calls functions in native shared libraries. The API is
 experimental. The library is built into babashka and also runs on the JVM.
 
-On the JVM, you need to:
+On the JVM, enable native access with either of these settings:
 
 - Start the JVM with `--enable-native-access=ALL-UNNAMED`.
 - Set the `Enable-Native-Access` manifest attribute in an uberjar.
 
-Without either setting, you'll get a warning from the JDK. A future release will refuse the
-calls without these settings.
+Without either setting, the JDK warns about native access.
 
 ## Contents
 
@@ -17,7 +16,7 @@ calls without these settings.
 - [Load a library](#load-a-library)
 - [Bind a function](#bind-a-function)
   - [Bind an address](#bind-an-address)
-  - [Wrap the binding in one form](#wrap-the-binding-in-one-form)
+  - [Define a wrapper with `defcfn`](#define-a-wrapper-with-defcfn)
   - [Types](#types)
   - [Pass a struct by value](#pass-a-struct-by-value)
 - [Call a variadic function](#call-a-variadic-function)
@@ -35,6 +34,7 @@ calls without these settings.
   - [On Node.js](#on-nodejs)
   - [String arguments](#string-arguments)
   - [Callbacks](#callbacks)
+- [Build your own native image](#build-your-own-native-image)
 - [Examples](#examples)
 
 ## Quickstart
@@ -336,13 +336,11 @@ becomes `nil`.
 
 ### Pass a struct by value
 
-A C function can take a struct as an argument, or return one, without a
-pointer in between. On that position in the signature, write a layout
-instead of a type keyword. A struct layout has the form `[:struct fields]`.
-Each field is a `[name type]` pair in C declaration order. The order sets
-the memory offsets. The name sets only the map key. A type is a type
-keyword or another layout. A struct value is a map of
-its fields, in any order:
+Use a layout instead of a type keyword to pass or return a struct by value.
+A struct layout has the form `[:struct fields]`. Each field is a `[name type]`
+pair in C declaration order. The order determines the memory offsets, and
+the name determines the map key. A field type is a type keyword or another
+layout. Pass struct values as maps:
 
 ```clojure
 (defcfn c-div "div" [:int :int] [:struct [[:quot :int] [:rem :int]]])
@@ -382,26 +380,16 @@ To map a struct to a value of your own, wrap the binding:
     (vec3 x y z)))
 ```
 
-On the JVM, a struct call uses the FFM linker. The linker builds a downcall
-handle from the struct layout.
-
-A native image cannot build this handle at run time. It can call only
-signatures that were registered when the image was built. A struct descriptor
-carries the whole layout, so a fixed set of registrations cannot cover every
-struct. Native images use [libffi](https://github.com/libffi/libffi) for these
-calls. Libffi places the arguments from a description that it builds at run
-time. When `babashka.ffi` binds the function, it compares its struct layout
-with the layout that libffi computes. A difference is an error.
-
-A struct call takes approximately 1 microsecond in a native image. A call
-with only primitive types takes approximately 150 nanoseconds.
+On the JVM, struct calls use the FFM linker. Native images require
+[libffi](https://github.com/libffi/libffi) for these calls. Binding fails if
+libffi computes a different struct layout.
 
 Every babashka binary includes `libffi`, except the musl static binary and a
 build made with `BABASHKA_LIBFFI=none`. `bb describe` shows the version under
 `:libffi/version`. In a binary without libffi, a struct binding causes an
 error.
 
-This implementation does not support structs in variadic signatures.
+Structs are not supported in variadic signatures.
 
 A `:string` struct field follows the same [pointer-lifetime rules](#types) as a
 `:string` argument.
@@ -474,9 +462,9 @@ Before you access the memory, specify its size with `reinterpret`:
 (ffi/read (ffi/reinterpret p 16) :int 8)
 ```
 
-`alloc 0` and an end-of-block slice also have size zero. `ptr->string` rejects
-size zero and reads other pointers within their size. Declare a C string return
-type as `:string`.
+`alloc 0` and an end-of-block slice also have size zero. `ptr->string` reads
+zero-size pointers until the first NUL byte. For pointers with a nonzero size,
+it reads within that size. Declare a C string return type as `:string`.
 
 Use `size` to get the segment size. Use `address` to convert a pointer to a
 long. Use `segment` to convert a raw address to a pointer. Use `slice` to
@@ -602,8 +590,8 @@ argument:
 (ffi/read p :double 8)
 ```
 
-These byte offsets are for a buffer with no shape. For a struct or an array,
-describe the memory with a layout and use `place` to resolve its members: see
+Use byte offsets to access a buffer directly. For a struct or an array,
+describe the memory with a layout and use `place` to select its members. See
 [Read and write a struct](#read-and-write-a-struct).
 
 `read` supports each listed type except `:void`. `write` also excludes
@@ -642,8 +630,8 @@ pointer, slice it first. The source comes first, as in `fs/copy`:
 (ffi/clone arena src)                   ; a new pointer with the same bytes
 ```
 
-Both need pointers with a size. A pointer from C has none; give it one with
-`reinterpret`.
+Both need pointers with a size. Use `reinterpret` to specify a size for a
+pointer returned by C.
 
 Use `byte-buffer` to create a zero-copy `java.nio.ByteBuffer` view of native
 memory:
@@ -787,7 +775,7 @@ remain valid after `write` returns. Allocate the bytes and write the pointer:
 ;;=> {:id 7, :name "seven"}
 ```
 
-`read` copies the string bytes out. It does not allocate memory.
+`read` copies the bytes into a string without allocating native memory.
 
 ### Fixed arrays
 
@@ -825,8 +813,7 @@ limit:
 ;;=> "spine"
 ```
 
-The limit stops the read at the end of the field when the name fills it
-without a NUL byte.
+The function throws if the field contains no NUL byte within the limit.
 
 C never passes an array by value. A parameter declared as an array is a
 pointer to its first element, so declare `:pointer` for it. A struct that
@@ -835,9 +822,8 @@ array layout in a signature.
 
 ### Unions
 
-A C union is `[:union [[name type] ...]]`. It is as large as its largest
-member and aligned to its strictest one, so a struct that holds a union
-gets the offsets the compiler gives it:
+Use `[:union [[name type] ...]]` to describe a C union. Its size includes
+space for its largest member and padding for the required alignment:
 
 ```clojure
 (def curl-msg
@@ -846,10 +832,9 @@ gets the offsets the compiler gives it:
             [:data [:union [[:whatever :pointer] [:result :int]]]]]])
 ```
 
-A union carries no tag of its own. In C the program knows which member is
-live: from a sibling field, as in `CURLMsg`, or from what it stored, as in
-`epoll_data_t`. So `read` returns a union as a pointer to its bytes, sized
-to the union, and you read the member you know applies:
+Use the C API's rules to select the active union member. For example,
+`CURLMsg` identifies the active member in a separate field. Use `place` to
+read that member:
 
 ```clojure
 (def CURLMSG_DONE 1)   ; curl/multi.h
@@ -861,8 +846,8 @@ to the union, and you read the member you know applies:
   (ffi/read p msg-result))
 ```
 
-`read` of the union itself gives a pointer to its bytes, for a member you
-read with a type of your own: `(ffi/read data :int)`.
+Reading the union itself returns a pointer with the union's size. Read a
+member from this pointer with its type: `(ffi/read data :int)`.
 
 `write` takes a union as a pair of the member name and its value:
 
@@ -923,9 +908,6 @@ Use `callback` to pass a Clojure function to C:
 `callback` returns a function pointer. The arena owns the pointer, exactly
 as it owns the memory that `alloc` returns. The pointer is valid until the
 arena releases it.
-
-`callback` has no separate release function. The owning arena controls the
-pointer lifetime.
 
 Choose the arena for the thread that calls back:
 
@@ -993,6 +975,10 @@ calls through a trampoline in about 30 nanoseconds. The set covers:
 
 Argument order does not change this set.
 
+On macOS on AArch64, a signature with a type narrower than 8 bytes after the
+eighth argument calls through libffi. A trampoline passes each argument as
+8 bytes, and that platform gives an argument on the stack its own width.
+
 Every shape in the set adds compiled code to the babashka binary. If a shape
 you need is missing, or a call you make often falls back to libffi, open an
 issue. The set can grow.
@@ -1001,13 +987,8 @@ Everything else calls through libffi: a fixed signature outside the set,
 every variadic call, and every struct call. A libffi call takes about 1
 microsecond.
 
-In a build without libffi, a fixed signature outside the set throws.
-Variadic calls use the FFM fallback with these limits:
-
-- At most five total arguments.
-- At most three fixed arguments, none of them `:float`.
-- At most two `:double` arguments.
-- A `:void`, integer, or pointer return type.
+In a build without libffi, binding fails for variadic signatures and fixed
+signatures outside this set.
 
 These figures include only the call itself. In babashka, the interpreter
 usually costs more. A `loop` with `recur` adds roughly 30 nanoseconds per
@@ -1057,8 +1038,8 @@ costs about 12 nanoseconds.
 ### String arguments
 
 A `:string` argument copies the string into native memory for the call and
-releases it afterwards. That copy costs about 300 nanoseconds on both hosts,
-several times the call itself.
+releases it afterwards. That copy costs about 300 nanoseconds on the JVM and
+in babashka, several times the call itself.
 
 If a loop passes the same string repeatedly, convert it once with `string->ptr`
 and declare the parameter as `:pointer`:
@@ -1077,7 +1058,7 @@ per iteration.
 
 ### Callbacks
 
-Callbacks do not use libffi on either host and keep these limits:
+In a native image, callbacks have these limits:
 
 - A callback can have up to 4 arguments, with up to 2 `:double` arguments
   among them.
@@ -1088,6 +1069,62 @@ Callbacks do not use libffi on either host and keep these limits:
   For `:pointer`, return a pointer, or `nil` for null.
 
 If a C API needs a callback shape outside this set, open an issue.
+
+## Build your own native image
+
+Use Oracle GraalVM 25 or newer to build a native image with `babashka.ffi`.
+The library includes call trampolines and reachability metadata.
+
+1. Add the library, the GraalVM SDK and
+   [graal-build-time](https://github.com/clj-easy/graal-build-time) to
+   `deps.edn`:
+
+   ```clojure
+   {:deps {io.github.babashka/ffi {:git/url "https://github.com/babashka/ffi"
+                                   :git/sha "..."}
+           com.github.clj-easy/graal-build-time {:mvn/version "1.0.5"}}
+    :aliases {:native {:extra-deps {org.graalvm.sdk/nativeimage {:mvn/version "25.0.2"}}}}}
+   ```
+
+2. Compile the trampoline class. A git dependency does not compile Java
+   sources, so compile the file from the checkout of the library:
+
+   ```sh
+   javac --release 25 -cp "$(clojure -Spath -A:native)" -d target/classes \
+     path/to/ffi/src-java/babashka/ffi/impl/FfiTrampoline.java
+   ```
+
+3. Compile your namespaces ahead of time into `target/classes`.
+
+4. Build the image:
+
+   ```sh
+   native-image \
+     -cp "$(clojure -Spath -A:native):target/classes" \
+     --features=clj_easy.graal_build_time.InitClojureClasses \
+     -H:+ForeignAPISupport \
+     --enable-native-access=ALL-UNNAMED \
+     --no-fallback \
+     -o my-program my.main
+   ```
+
+Use `graal-build-time` to initialize `babashka.ffi` and the other Clojure
+namespaces at build time.
+
+See `script/native_test.sh` for a complete build example.
+
+For a Windows image, run `bb script/gen_ffi_metadata.clj windows` in the
+checkout before step 2. Windows assigns argument registers by position, so
+it needs a trampoline per argument order.
+
+The limits in [In a babashka native binary](#in-a-babashka-native-binary)
+and [Callbacks](#callbacks) apply. This build does not link libffi. Binding
+fails for structs passed by value, variadic signatures, and fixed signatures
+outside the trampoline set. babashka links libffi in its own build.
+
+On macOS on AArch64, a signature with a type narrower than 8 bytes after the
+eighth argument does not use a trampoline. Without libffi it throws when the
+binding is made.
 
 ## Examples
 

@@ -10,7 +10,7 @@
     -  [`clone`](#babashka.ffi/clone) - Allocates a copy of pointer src in arena with the same size and returns the new pointer.
     -  [`confined-arena`](#babashka.ffi/confined-arena) - Returns an arena for one thread.
     -  [`copy`](#babashka.ffi/copy) - Copies bytes from pointer src to pointer dst.
-    -  [`defcfn`](#babashka.ffi/defcfn) - Defines name as a C function binding created by cfn: (defcfn sqlite3-open "sqlite3_open" [:string :pointer] :int) (defcfn sqlite3-open "Opens the database at path, storing the handle in out-param pp." "sqlite3_open" [:string :pointer] :int) An optional docstring and attribute map can precede the C symbol.
+    -  [`defcfn`](#babashka.ffi/defcfn) - Defines name as a C function binding created by cfn: (defcfn sqlite3-open "sqlite3_open" [:string :pointer] :int) (defcfn sqlite3-open "Opens the database at path, storing the handle in out-param pp." "sqlite3_open" [:string :pointer] :int) An optional docstring and attribute map can precede the C symbol, argument types, and return type.
     -  [`find-symbol`](#babashka.ffi/find-symbol) - Finds sym and returns a pointer to it.
     -  [`global-arena`](#babashka.ffi/global-arena) - Returns the global arena.
     -  [`load-library`](#babashka.ffi/load-library) - Loads a shared library and adds it to the symbol search.
@@ -62,9 +62,9 @@ Use these type keywords:
 
 A pointer is a native java.lang.foreign.MemorySegment with a size. read and
 write check each access against this size. Pointers from C have size zero.
-reinterpret specifies their size before access. :bool
-represents a one-byte C boolean and returns true or false. Thus, a C
-predicate does not return the truthy number 0.
+Use reinterpret to specify their size before access.
+
+:bool represents a one-byte C boolean and returns true or false.
 
 A layout describes memory: [:struct [[name type] ...]] for a struct and
 [:array type n] for a fixed array. read returns a struct as a map and an
@@ -73,21 +73,18 @@ array. A field of a struct can be either, so `char name[32]` is
 [:name [:array :char 32]].
 
 [:union [[name type] ...]] describes a C union. read returns a union as a
-pointer to its bytes, since a union carries no tag of its own; read the
-member you know applies from that pointer. write takes a pair, [member
-value]. A union is not passed by value in a signature.
+pointer to its bytes. Read the active member from that pointer using its
+type. write takes a [member value] pair. Unions cannot be passed by value.
 
-place resolves one member of a layout, by name or by a path of names and
-array indices into nested layouts, into a place that read and write take
-where they take a type. The path is resolved once; the offset and the
-type come from the layout.
+Use place to select a layout member by name or by a path of names and array
+indices. Pass the result to read or write instead of a type. A place stores
+the member's offset and type.
 
 read-array and write-array copy elements of one scalar type between
 native memory and a Java array of that width, as a memcpy.
 
-A function that takes a struct as an argument, or returns one, without a
-pointer in between, gets a layout on that position in the signature. A
-struct value is a map of its fields:
+Use a layout in a function signature to pass or return a struct by value.
+Represent struct values as maps:
 
     (ffi/defcfn c-div "div" [:int :int] [:struct [[:quot :int] [:rem :int]]])
     (c-div 7 2)   ;=> {:quot 3 :rem 1}
@@ -99,12 +96,11 @@ Native images compile a fixed set of fast call shapes: up to six
 arguments, at most three mixed floating-point arguments or four of the
 same floating-point type, up to 10 integer or pointer arguments, and a
 :float return with up to four arguments. A fixed signature outside this
-set calls through libffi, at about 1 microsecond instead of about 100
-nanoseconds. Without libffi, such a signature throws.
+set requires libffi. Binding fails if libffi is unavailable.
 
 Native images use libffi for every variadic call. Without libffi, a
-variadic call throws. Callbacks
-support up to four arguments and two :double arguments, or up to six
+variadic call throws. In a native image, callbacks support up to four
+arguments with at most two :double arguments, or up to six
 integer and pointer arguments. Callbacks do not support :float. The
 callback return type must be :void, an integer type, :pointer, or :double.
 Argument order does not affect these limits. See doc/guide.md for details
@@ -130,7 +126,7 @@ doubles. Strings use C strings:
 Function.
 
 Returns the native address of pointer p as a Clojure long.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L394-L397">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L464-L467">Source</a></sub></p>
 
 ## <a name="babashka.ffi/alignof">`alignof`</a>
 ``` clojure
@@ -139,7 +135,7 @@ Returns the native address of pointer p as a Clojure long.
 Function.
 
 Returns the alignment, in bytes, of type keyword t or of a struct layout.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1251-L1254">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1364-L1367">Source</a></sub></p>
 
 ## <a name="babashka.ffi/alloc">`alloc`</a>
 ``` clojure
@@ -151,19 +147,18 @@ Function.
 Allocates zeroed native memory in arena and returns its pointer.
 n is an integer byte count, a type keyword, or a struct layout.
 
-Use a confined arena inside one function. Use a shared arena for memory that
-outlives the call and is released elsewhere. When the arena closes, it
-releases its memory.
+Use a confined arena for access from one thread or a shared arena for
+access from multiple threads. Closing the arena releases its memory.
 
 A type or layout uses natural alignment. An integer byte count uses
 alignment 16. Specify an alignment to override this value.
 
-There is no unscoped form. If C allocates the memory, bind its allocator with
-cfn. Release the result with the matching C deallocator.
+For memory allocated by C, bind the allocator with cfn and release the
+result with the matching C deallocator.
 
 CAUTION: Do not close the arena while C uses its memory.
 C can access released memory.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1307-L1331">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1420-L1443">Source</a></sub></p>
 
 ## <a name="babashka.ffi/auto-arena">`auto-arena`</a>
 ``` clojure
@@ -173,7 +168,7 @@ Function.
 
 Returns an arena that the garbage collector manages.
 Keep the arena reachable while C uses its pointers. You cannot close it.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1268-L1272">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1381-L1385">Source</a></sub></p>
 
 ## <a name="babashka.ffi/byte-buffer">`byte-buffer`</a>
 ``` clojure
@@ -189,7 +184,7 @@ invalid memory access can stop the process.
 
 The byte order is big-endian, as it is for each new ByteBuffer. If you need a
 different byte order, set it with .order.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1625-L1636">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1737-L1748">Source</a></sub></p>
 
 ## <a name="babashka.ffi/callback">`callback`</a>
 ``` clojure
@@ -198,11 +193,11 @@ different byte order, set it with .order.
 Function.
 
 Creates a C function pointer that invokes f. arena owns the pointer, which
-is valid until the arena releases it. There is no separate release function.
+is valid until the arena releases it.
 argtypes and rettype use the cfn type keywords. f receives :pointer arguments
-as zero-size pointers. It receives
-:bool arguments as booleans and other arguments as longs or doubles. For a
-:pointer return f returns a pointer, or nil for null.
+as zero-size pointers and :bool arguments as booleans. Numeric arguments
+are passed as numbers. For a :pointer return, f must return a pointer or
+nil for NULL.
 
 Choose the arena for the thread that calls back:
 
@@ -211,15 +206,16 @@ Choose the arena for the thread that calls back:
 A shared arena allows C to invoke the callback from any thread, including a
 thread that your code did not create. Use it for asynchronous callbacks, such
 as event-loop notifications. A confined arena accepts a call from its own
-thread only. If C calls back during a call that you make, use this arena, such
-as for a comparison function. A global arena never releases the pointer.
+thread only. Use it for synchronous callbacks, such as a comparison
+function. A global arena never releases the pointer.
 
 An automatic arena releases the pointer once the pointer itself becomes
 unreachable. The garbage collector cannot see the copy that C holds. Use an
 automatic arena only when your reference outlives every call that C can make.
 
 CAUTION: Unregister the callback before its arena releases the pointer.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L2326-L2416">Source</a></sub></p>
+Catch exceptions inside f. An uncaught exception can stop the process.
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L2487-L2592">Source</a></sub></p>
 
 ## <a name="babashka.ffi/cfn">`cfn`</a>
 ``` clojure
@@ -229,25 +225,23 @@ CAUTION: Unregister the callback before its arena releases the pointer.
 Function.
 
 Creates a Clojure function that calls the C function sym. sym is a C symbol
-name or a function pointer. argtypes is a vector of type keywords. rettype
-is a type keyword. A struct that the function takes as an argument, or
-returns, without a pointer in between, is a layout on that position, and
-its value is a map of its fields. On the JVM, struct calls use the FFM linker
-and need only the JDK. Native images use libffi for struct calls.
+name or a function pointer. argtypes is a vector of argument types. rettype
+is the return type. Use type keywords for scalars and layouts for structs
+passed by value. Struct values are maps of their fields. Struct calls
+require libffi in a native image and only the JDK on the JVM.
 
 Use a function pointer for a function that has no exported name. The pointer
 can come from a loader, C function, struct field, find-symbol, or callback.
 
 A library value limits the search to one library and its dependencies.
 Without a library value, cfn searches all loaded libraries. Then it searches
-the default system lookup. The first call resolves the symbol and creates
-the call handle. You can create the binding before you load its library.
+the default system lookup. The first call resolves the symbol. You can
+create the binding before you load its library.
 
 A :& in argtypes declares a variadic C function. The types before :& are
-the fixed parameters. Types after :& declare the tail once, resolved when
-the binding is made; with nothing after :&, each call infers the tail
-types from its values.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L911-L988">Source</a></sub></p>
+the fixed parameters. Types after :& declare the variadic argument types.
+With no types after :&, each call infers them from its values.
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1015-L1090">Source</a></sub></p>
 
 ## <a name="babashka.ffi/clone">`clone`</a>
 ``` clojure
@@ -257,7 +251,7 @@ Function.
 
 Allocates a copy of pointer src in arena with the same size and returns
 the new pointer. Use reinterpret to specify a size for pointers from C.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1539-L1546">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1651-L1658">Source</a></sub></p>
 
 ## <a name="babashka.ffi/confined-arena">`confined-arena`</a>
 ``` clojure
@@ -267,7 +261,7 @@ Function.
 
 Returns an arena for one thread.
 Create this arena in with-open to release its memory.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1256-L1260">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1369-L1373">Source</a></sub></p>
 
 ## <a name="babashka.ffi/copy">`copy`</a>
 ``` clojure
@@ -286,7 +280,7 @@ middle of dst, slice it first:
     (ffi/copy src (ffi/slice dst 16) n)
 
 Supports overlapping regions, as with memmove.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1519-L1537">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1631-L1649">Source</a></sub></p>
 
 ## <a name="babashka.ffi/defcfn">`defcfn`</a>
 ``` clojure
@@ -303,9 +297,8 @@ Defines name as a C function binding created by cfn:
       "Opens the database at path, storing the handle in out-param pp."
       "sqlite3_open" [:string :pointer] :int)
 
-An optional docstring and attribute map can precede the C symbol. The final
-three arguments are the C symbol, argument types, and return type. defcfn
-preserves all metadata on name. This metadata includes ^:private.
+An optional docstring and attribute map can precede the C symbol, argument
+types, and return type. Preserves metadata on name, including ^:private.
 
 The :library key in the attribute map selects a library for cfn:
 
@@ -340,7 +333,7 @@ The wrapper can have multiple arities. Its argument lists can differ from
 the C function. The raw name does not enter the namespace. The wrapper
 form needs a literal argtypes vector. Only the plain form accepts an
 argtypes expression.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1108-L1217">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1222-L1330">Source</a></sub></p>
 
 ## <a name="babashka.ffi/find-symbol">`find-symbol`</a>
 ``` clojure
@@ -354,7 +347,7 @@ Finds sym and returns a pointer to it. Returns nil for an unknown symbol.
 A library value limits the search to one library and its dependencies.
 Without a library value, find-symbol searches all loaded libraries. Then it
 searches the default system lookup.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L681-L689">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L751-L759">Source</a></sub></p>
 
 ## <a name="babashka.ffi/global-arena">`global-arena`</a>
 ``` clojure
@@ -364,7 +357,7 @@ Function.
 
 Returns the global arena. Its memory exists until the process stops.
 You cannot close this arena.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1274-L1278">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1387-L1391">Source</a></sub></p>
 
 ## <a name="babashka.ffi/load-library">`load-library`</a>
 ``` clojure
@@ -388,8 +381,8 @@ map uses the keys :mac, :linux, and :windows:
 :darwin is an alias for :mac. For a bare name, the function also searches
 common installation directories. Returns a library map whose :path value
 identifies the loaded candidate. The map can be the first argument to cfn.
-In that form, cfn searches only this library.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L569-L605">Source</a></sub></p>
+In that form, cfn searches this library and its dependencies.
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L639-L675">Source</a></sub></p>
 
 ## <a name="babashka.ffi/load-system-library">`load-system-library`</a>
 ``` clojure
@@ -400,7 +393,7 @@ Function.
 Loads a shared library by its short name. For example, "z" selects
 libz.dylib, libz.so, or z.dll. On Linux, the search also includes versioned
 names such as libz.so.1. Returns the same library map as load-library.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L607-L646">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L677-L716">Source</a></sub></p>
 
 ## <a name="babashka.ffi/null">`null`</a>
 
@@ -408,7 +401,7 @@ names such as libz.so.1. Returns the same library map as load-library.
 
 
 The NULL pointer.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1644-L1646">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1756-L1758">Source</a></sub></p>
 
 ## <a name="babashka.ffi/null?">`null?`</a>
 ``` clojure
@@ -417,7 +410,7 @@ The NULL pointer.
 Function.
 
 Returns true for a NULL pointer. Returns false for all other pointers.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1648-L1651">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1760-L1763">Source</a></sub></p>
 
 ## <a name="babashka.ffi/place">`place`</a>
 ``` clojure
@@ -441,7 +434,7 @@ as a vector, a union as a pointer on read and a pair on write. A path to
 a union member accepts the member's value directly on write.
 
 Throws for an invalid path. Create a place once and reuse it.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1603-L1623">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1715-L1735">Source</a></sub></p>
 
 ## <a name="babashka.ffi/pointer?">`pointer?`</a>
 ``` clojure
@@ -450,7 +443,7 @@ Throws for an invalid path. Create a place once and reuse it.
 Function.
 
 Returns true when x is a pointer: a MemorySegment of native memory.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L405-L408">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L475-L478">Source</a></sub></p>
 
 ## <a name="babashka.ffi/ptr->string">`ptr->string`</a>
 ``` clojure
@@ -465,12 +458,12 @@ pointer.
 A pointer returned by C has no size, so the read runs to the first NUL
 byte. This is what a :string return type does.
 
-Give a limit in bytes. If no NUL appears within the limit, `ptr->string`
-throws an error. A limit only narrows: a pointer with a known size keeps it.
+limit is a maximum byte count. If p has a nonzero size, the read is also
+bounded by that size. Throws if no NUL byte occurs within these bounds.
 
 CAUTION: Without a limit, ptr->string can read past a buffer that has no
 NUL byte. This can stop the process.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L422-L459">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L492-L529">Source</a></sub></p>
 
 ## <a name="babashka.ffi/read">`read`</a>
 ``` clojure
@@ -481,12 +474,12 @@ Function.
 
 Reads a value of type t from p. The default byte offset is zero.
 
-t is a type keyword, a layout, or a place from `place`. A place is a
-member of a layout resolved once, so reading through it does no lookup.
+t is a type keyword, a layout, or a place returned by place. A place
+specifies the layout member's type and offset.
 
 Checks the access against the size of p. Rejects a zero-size pointer.
 reinterpret specifies a valid size.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1379-L1413">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1491-L1525">Source</a></sub></p>
 
 ## <a name="babashka.ffi/read-array">`read-array`</a>
 ``` clojure
@@ -498,8 +491,8 @@ Function.
 Copies n elements of type t from pointer p, at byte offset (default 0),
 into a new Java array. Returns the array.
 
-The copy uses memcpy. The type gives the element width and nothing else:
-:int, :uint and :int32 fill an int[] with the bits as they are, so a
+Copies raw bytes without converting elements. For example,
+:int, :uint and :int32 return an int[] with the same bits, so a
 :uint above Integer/MAX_VALUE reads as a negative int. :long and the other
 eight-byte types fill a long[], and :pointer fills a long[] of addresses.
 :byte, :char, :int8, :uint8 and :bool fill a byte[]. For pointers, use
@@ -507,7 +500,7 @@ read with [:array :pointer n].
 
 For an array of structs, or for elements decoded the way read decodes
 them, use read with an [:array t n] layout.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1479-L1499">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1591-L1611">Source</a></sub></p>
 
 ## <a name="babashka.ffi/reinterpret">`reinterpret`</a>
 ``` clojure
@@ -519,8 +512,7 @@ Function.
 
 Returns a view of segment seg with byte size size.
 
-Without an arena the view has an unbounded lifetime. That is correct for
-memory that C owns and that outlives your code.
+Without an arena, the view retains seg's lifetime.
 
 With an arena, the view is valid only while that arena is open. A read after
 the arena closes throws. The arena calls the optional cleanup function with
@@ -531,7 +523,7 @@ correct. A larger size permits out-of-bounds reads.
 
 CAUTION: If the arena is closed, do not pass the view to C. C can access the
 released memory.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L355-L376">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L426-L446">Source</a></sub></p>
 
 ## <a name="babashka.ffi/segment">`segment`</a>
 ``` clojure
@@ -545,7 +537,7 @@ A specified nonzero size enables bounds checks.
 
 CAUTION: Keep addr before size. A transposed call can stop the process at
 the first read.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L345-L353">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L416-L424">Source</a></sub></p>
 
 ## <a name="babashka.ffi/shared-arena">`shared-arena`</a>
 ``` clojure
@@ -555,7 +547,7 @@ Function.
 
 Returns an arena for multiple threads.
 Create this arena in with-open to release its memory.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1262-L1266">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1375-L1379">Source</a></sub></p>
 
 ## <a name="babashka.ffi/size">`size`</a>
 ``` clojure
@@ -565,7 +557,7 @@ Function.
 
 Returns the size of pointer p in bytes. A pointer that C returned has
 size 0.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L399-L403">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L469-L473">Source</a></sub></p>
 
 ## <a name="babashka.ffi/sizeof">`sizeof`</a>
 ``` clojure
@@ -575,7 +567,7 @@ Function.
 
 Returns the size of a type keyword or struct layout, in bytes. The size
 of a struct includes padding.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1245-L1249">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1358-L1362">Source</a></sub></p>
 
 ## <a name="babashka.ffi/slice">`slice`</a>
 ``` clojure
@@ -585,14 +577,14 @@ of a struct includes padding.
 Function.
 
 Returns a slice of seg at byte offset. By default, the slice ends with seg.
-len is an integer byte count, a type keyword, or a struct layout, so walking
-an array of structs takes the layout itself:
+len is an integer byte count, a type keyword, or a layout. To select one
+struct from an array:
 
     (slice arr (* i (sizeof point)) point)
 
 CAUTION: Keep offset before len. A transposed call throws only if the result
 does not fit in seg.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L380-L392">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L450-L462">Source</a></sub></p>
 
 ## <a name="babashka.ffi/string->ptr">`string->ptr`</a>
 ``` clojure
@@ -602,7 +594,7 @@ Function.
 
 Copies s into arena as a NUL-terminated UTF-8 string and returns its
 pointer. The arena controls the lifetime of the string.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1638-L1642">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1750-L1754">Source</a></sub></p>
 
 ## <a name="babashka.ffi/with-open">`with-open`</a>
 ``` clojure
@@ -615,7 +607,7 @@ value in reverse order when body returns or throws.
 
 CAUTION: On Node.js the arena closes when body returns. Do not return a
 promise that still uses it.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1280-L1294">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1393-L1407">Source</a></sub></p>
 
 ## <a name="babashka.ffi/write">`write`</a>
 ``` clojure
@@ -626,12 +618,12 @@ Function.
 
 Writes v as type t to p. The default byte offset is zero. Returns nil.
 
-t is a type keyword, a layout, or a place from `place`. Through a place
-the member's type is known, so a union member needs no pair.
+t is a type keyword, a layout, or a place returned by place. When a place
+selects a union member, pass the member's value directly.
 
 Checks the access against the size of p. Rejects a zero-size pointer.
 reinterpret specifies a valid size.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1415-L1444">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1527-L1556">Source</a></sub></p>
 
 ## <a name="babashka.ffi/write-array">`write-array`</a>
 ``` clojure
@@ -643,7 +635,7 @@ Function.
 Copies Java array arr into memory at pointer p, at byte offset (default
 0), as elements of type t. Returns nil.
 
-The copy is a memcpy, as in read-array, and the array must be the Java
-array for the type: an int[] for :int, a long[] for :long or :pointer, a
+Copies raw bytes without converting elements. arr must be a Java array
+of the matching type: an int[] for :int, a long[] for :long or :pointer, a
 byte[] for :char.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1501-L1517">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1613-L1629">Source</a></sub></p>

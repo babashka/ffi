@@ -24,9 +24,9 @@
 
   A pointer is a native java.lang.foreign.MemorySegment with a size. read and
   write check each access against this size. Pointers from C have size zero.
-  reinterpret specifies their size before access. :bool
-  represents a one-byte C boolean and returns true or false. Thus, a C
-  predicate does not return the truthy number 0.
+  Use reinterpret to specify their size before access.
+
+  :bool represents a one-byte C boolean and returns true or false.
 
   A layout describes memory: [:struct [[name type] ...]] for a struct and
   [:array type n] for a fixed array. read returns a struct as a map and an
@@ -35,21 +35,18 @@
   [:name [:array :char 32]].
 
   [:union [[name type] ...]] describes a C union. read returns a union as a
-  pointer to its bytes, since a union carries no tag of its own; read the
-  member you know applies from that pointer. write takes a pair, [member
-  value]. A union is not passed by value in a signature.
+  pointer to its bytes. Read the active member from that pointer using its
+  type. write takes a [member value] pair. Unions cannot be passed by value.
 
-  place resolves one member of a layout, by name or by a path of names and
-  array indices into nested layouts, into a place that read and write take
-  where they take a type. The path is resolved once; the offset and the
-  type come from the layout.
+  Use place to select a layout member by name or by a path of names and array
+  indices. Pass the result to read or write instead of a type. A place stores
+  the member's offset and type.
 
   read-array and write-array copy elements of one scalar type between
   native memory and a Java array of that width, as a memcpy.
 
-  A function that takes a struct as an argument, or returns one, without a
-  pointer in between, gets a layout on that position in the signature. A
-  struct value is a map of its fields:
+  Use a layout in a function signature to pass or return a struct by value.
+  Represent struct values as maps:
 
       (ffi/defcfn c-div \"div\" [:int :int] [:struct [[:quot :int] [:rem :int]]])
       (c-div 7 2)   ;=> {:quot 3 :rem 1}
@@ -61,12 +58,11 @@
   arguments, at most three mixed floating-point arguments or four of the
   same floating-point type, up to 10 integer or pointer arguments, and a
   :float return with up to four arguments. A fixed signature outside this
-  set calls through libffi, at about 1 microsecond instead of about 100
-  nanoseconds. Without libffi, such a signature throws.
+  set requires libffi. Binding fails if libffi is unavailable.
 
   Native images use libffi for every variadic call. Without libffi, a
-  variadic call throws. Callbacks
-  support up to four arguments and two :double arguments, or up to six
+  variadic call throws. In a native image, callbacks support up to four
+  arguments with at most two :double arguments, or up to six
   integer and pointer arguments. Callbacks do not support :float. The
   callback return type must be :void, an integer type, :pointer, or :double.
   Argument order does not affect these limits. See doc/guide.md for details
@@ -84,7 +80,7 @@
   (:refer-clojure :exclude [read with-open])
   (:require [clojure.string :as str])
   (:import [java.lang.foreign Arena FunctionDescriptor Linker
-            MemoryLayout MemorySegment SymbolLookup ValueLayout]
+            MemoryLayout MemorySegment SegmentAllocator SymbolLookup ValueLayout]
            [java.lang.invoke MethodHandle MethodHandles MethodType]))
 
 (set! *warn-on-reflection* true)
@@ -187,10 +183,60 @@
         (= :void t) :void
         :else (throw (ex-info (str "babashka.ffi: unknown type " t) {:type t}))))
 
-(def ^:private carrier-layout
-  {:long ValueLayout/JAVA_LONG
-   :double ValueLayout/JAVA_DOUBLE
-   :float ValueLayout/JAVA_FLOAT})
+(defn- carrier-class ^Class [t]
+  (case (carrier t)
+    :long Long/TYPE :double Double/TYPE :float Float/TYPE :void Void/TYPE))
+
+(declare ^:private signature-layout)
+
+(defn- signature-class
+  "The Java type of a signature position, taken from its layout so the two
+  cannot drift apart."
+  ^Class [t]
+  (if (= :void t)
+    Void/TYPE
+    (.carrier ^ValueLayout (signature-layout t))))
+
+(defn- signature-method-type
+  "The MethodType an upcall stub of this signature has."
+  ^MethodType [argtypes rettype]
+  (MethodType/methodType ^Class (signature-class rettype)
+                         ^"[Ljava.lang.Class;"
+                         (into-array Class (map signature-class argtypes))))
+
+(defn- carrier-handle
+  "Adapts downcall handle h so that its parameters and result are the
+  carriers. The descriptor names each type at the width C gives it, and the
+  generic invoker takes the boxed value of a carrier, so the two are cast
+  into line here."
+  ^MethodHandle [^MethodHandle h argtypes rettype]
+  (MethodHandles/explicitCastArguments
+   h (MethodType/methodType ^Class (carrier-class rettype)
+                            ^"[Ljava.lang.Class;" (into-array Class (map carrier-class argtypes)))))
+
+(def ^:private signature-layout
+  "The FFM layout of each type in a signature, at the width C gives it.
+
+  An argument that stays in a register is read from its low bits, so a
+  narrow integer described as a long arrives intact. One that runs out of
+  registers does not: macOS on AArch64 packs a stack slot to the width of
+  the argument, so a long in place of an int moves every argument after it
+  and the callee reads the wrong bytes.
+
+  A pointer keeps the long carrier. It is eight bytes either way, and an
+  ADDRESS would make the handle take a MemorySegment where every call path
+  here passes a long."
+  {:int ValueLayout/JAVA_INT :uint ValueLayout/JAVA_INT
+   :int32 ValueLayout/JAVA_INT :uint32 ValueLayout/JAVA_INT
+   :int16 ValueLayout/JAVA_SHORT :uint16 ValueLayout/JAVA_SHORT
+   :int8 ValueLayout/JAVA_BYTE :uint8 ValueLayout/JAVA_BYTE
+   :byte ValueLayout/JAVA_BYTE :char ValueLayout/JAVA_BYTE
+   :bool ValueLayout/JAVA_BYTE
+   :long ValueLayout/JAVA_LONG :ulong ValueLayout/JAVA_LONG
+   :int64 ValueLayout/JAVA_LONG :uint64 ValueLayout/JAVA_LONG
+   :size_t ValueLayout/JAVA_LONG :ssize_t ValueLayout/JAVA_LONG
+   :pointer ValueLayout/JAVA_LONG :string ValueLayout/JAVA_LONG
+   :float ValueLayout/JAVA_FLOAT :double ValueLayout/JAVA_DOUBLE})
 
 (def ^:private variadic-tail-types
   "The types a declared variadic tail may name. C promotes every variadic
@@ -242,10 +288,35 @@
                           {:value v}))))
 
 (defn- descriptor ^FunctionDescriptor [argtypes rettype]
-  (let [args (into-array MemoryLayout (map #(carrier-layout (carrier %)) argtypes))]
+  (let [args (into-array MemoryLayout (map signature-layout argtypes))]
     (if (= :void rettype)
       (FunctionDescriptor/ofVoid args)
-      (FunctionDescriptor/of (carrier-layout (carrier rettype)) args))))
+      (FunctionDescriptor/of (signature-layout rettype) args))))
+
+(def ^:private carrier-value-layout
+  {:long ValueLayout/JAVA_LONG :double ValueLayout/JAVA_DOUBLE
+   :float ValueLayout/JAVA_FLOAT})
+
+(def ^:private narrow-int?
+  "The integer types C gives fewer than eight bytes."
+  #{:int :uint :int32 :uint32 :int16 :uint16 :int8 :uint8 :byte :char})
+
+(defn- carrier-descriptor
+  "The FunctionDescriptor of a signature in carriers, every integer widened
+  to a long.
+
+  A native image registers the upcall shapes it can make when it is built.
+  One shape per width per position is not a set anything can register, so a
+  callback there keeps the carrier shape and narrows each value on arrival
+  instead, through narrow-int? in callback. A C caller writes the low half
+  of the register and leaves the upper half zero, so a narrow integer read
+  at its carrier width arrives without its sign."
+  ^FunctionDescriptor [argtypes rettype]
+  (let [lay #(carrier-value-layout (carrier %))
+        args (into-array MemoryLayout (map lay argtypes))]
+    (if (= :void rettype)
+      (FunctionDescriptor/ofVoid args)
+      (FunctionDescriptor/of (lay rettype) args))))
 
 ;; On the SysV x86-64 and AArch64 ABIs, integer and floating-point arguments
 ;; are assigned registers from two independent sequences (GP and FP), so
@@ -355,8 +426,7 @@
 (defn reinterpret
   "Returns a view of segment seg with byte size size.
 
-  Without an arena the view has an unbounded lifetime. That is correct for
-  memory that C owns and that outlives your code.
+  Without an arena, the view retains seg's lifetime.
 
   With an arena, the view is valid only while that arena is open. A read after
   the arena closes throws. The arena calls the optional cleanup function with
@@ -379,8 +449,8 @@
 
 (defn slice
   "Returns a slice of seg at byte offset. By default, the slice ends with seg.
-  len is an integer byte count, a type keyword, or a struct layout, so walking
-  an array of structs takes the layout itself:
+  len is an integer byte count, a type keyword, or a layout. To select one
+  struct from an array:
 
       (slice arr (* i (sizeof point)) point)
 
@@ -426,8 +496,8 @@
   A pointer returned by C has no size, so the read runs to the first NUL
   byte. This is what a :string return type does.
 
-  Give a limit in bytes. If no NUL appears within the limit, `ptr->string`
-  throws an error. A limit only narrows: a pointer with a known size keeps it.
+  limit is a maximum byte count. If p has a nonzero size, the read is also
+  bounded by that size. Throws if no NUL byte occurs within these bounds.
 
   CAUTION: Without a limit, ptr->string can read past a buffer that has no
   NUL byte. This can stop the process."
@@ -583,7 +653,7 @@
   :darwin is an alias for :mac. For a bare name, the function also searches
   common installation directories. Returns a library map whose :path value
   identifies the loaded candidate. The map can be the first argument to cfn.
-  In that form, cfn searches only this library."
+  In that form, cfn searches this library and its dependencies."
   [lib]
   (let [paths (cond
                 (map? lib)
@@ -698,13 +768,45 @@
 ;; function pointers as compiled direct calls (~2ns). One per canonical
 ;; shape; loaded only in the image, never on the JVM, where the FFM handle
 ;; path is JIT-compiled and fast.
+;; The trampolines are generated into this repository by
+;; script/gen_ffi_metadata.clj and committed, so an image builds them from
+;; here rather than carrying a copy of its own.
 (def ^:private trampoline-ids
   (when native-image?
-    @(requiring-resolve 'babashka.impl.ffi-trampolines/ids)))
+    @(requiring-resolve 'babashka.ffi.impl.ffi-trampolines/ids)))
 
 (def ^:private trampoline-invoker
   (when native-image?
-    (requiring-resolve 'babashka.impl.ffi-trampolines/invoker)))
+    (requiring-resolve 'babashka.ffi.impl.ffi-trampolines/invoker)))
+
+;; A trampoline takes every argument as a long, which is the width C gives a
+;; pointer and a 64-bit integer and not the one it gives a narrower type. An
+;; argument in a register is read from its low bits, so the difference does
+;; not show. One on the stack does show it where the ABI packs a stack slot
+;; to the width of the argument, which macOS on AArch64 does and the others
+;; here do not. AArch64 passes eight integers in registers, so a shape with a
+;; narrow type after the eighth argument is left to libffi there. The check
+;; reads os.arch when the image is built, so it holds for a build on the
+;; machine it targets and not for a cross build.
+(def ^:private apple-aarch64?
+  (and (= "aarch64" (System/getProperty "os.arch"))
+       (= :mac (os-key))))
+
+(declare ^:private shape-key)
+
+(defn- narrow-on-stack?
+  "True when one of types, past the eight that AArch64 passes in registers,
+  is narrower than the long a trampoline passes it as."
+  [types]
+  (boolean (some #(< (.byteSize ^ValueLayout (signature-layout %)) 8)
+                 (drop 8 types))))
+
+(defn- trampoline-id
+  "The trampoline for this shape, or nil when it has none or cannot use the
+  one it has."
+  [types* rettype]
+  (when-not (and apple-aarch64? (narrow-on-stack? types*))
+    (get trampoline-ids (shape-key types* rettype))))
 
 (defn- shape-key [types* rettype]
   (let [c {:long "J" :double "D" :float "F"}]
@@ -790,12 +892,14 @@
   address is a delay containing the resolved symbol."
   [address sym all-types rettype nf]
   (let [n (count all-types)
-        handle (delay (.downcallHandle
-                       ^Linker @linker*
-                       ^MemorySegment @address
-                       (descriptor all-types rettype)
-                       (into-array java.lang.foreign.Linker$Option
-                                   [(java.lang.foreign.Linker$Option/firstVariadicArg nf)])))
+        handle (delay (carrier-handle
+                       (.downcallHandle
+                        ^Linker @linker*
+                        ^MemorySegment @address
+                        (descriptor all-types rettype)
+                        (into-array java.lang.foreign.Linker$Option
+                                    [(java.lang.foreign.Linker$Option/firstVariadicArg nf)]))
+                       all-types rettype))
         coercers ^objects (object-array (map arg-coercer all-types))]
     (fn [& args]
       (when-not (= n (count args))
@@ -910,24 +1014,22 @@
 
 (defn cfn
   "Creates a Clojure function that calls the C function sym. sym is a C symbol
-  name or a function pointer. argtypes is a vector of type keywords. rettype
-  is a type keyword. A struct that the function takes as an argument, or
-  returns, without a pointer in between, is a layout on that position, and
-  its value is a map of its fields. On the JVM, struct calls use the FFM linker
-  and need only the JDK. Native images use libffi for struct calls.
+  name or a function pointer. argtypes is a vector of argument types. rettype
+  is the return type. Use type keywords for scalars and layouts for structs
+  passed by value. Struct values are maps of their fields. Struct calls
+  require libffi in a native image and only the JDK on the JVM.
 
   Use a function pointer for a function that has no exported name. The pointer
   can come from a loader, C function, struct field, find-symbol, or callback.
 
   A library value limits the search to one library and its dependencies.
   Without a library value, cfn searches all loaded libraries. Then it searches
-  the default system lookup. The first call resolves the symbol and creates
-  the call handle. You can create the binding before you load its library.
+  the default system lookup. The first call resolves the symbol. You can
+  create the binding before you load its library.
 
   A :& in argtypes declares a variadic C function. The types before :& are
-  the fixed parameters. Types after :& declare the tail once, resolved when
-  the binding is made; with nothing after :&, each call infers the tail
-  types from its values."
+  the fixed parameters. Types after :& declare the variadic argument types.
+  With no types after :&, each call infers them from its values."
   ([sym argtypes rettype] (cfn nil sym argtypes rettype))
   ([lib sym argtypes rettype]
    (when-not (or (string? sym) (native-segment? sym))
@@ -990,9 +1092,9 @@
 (defn- fixed-cfn
   [lib sym argtypes rettype]
   (if (and native-image?
-           (not (get trampoline-ids (shape-key (let [p (sort-permutation argtypes)]
-                                                 (if p (mapv argtypes p) argtypes))
-                                               rettype)))
+           (not (trampoline-id (let [p (sort-permutation argtypes)]
+                                 (if p (mapv argtypes p) argtypes))
+                               rettype))
            (libffi-available?))
     ;; no trampoline for this shape: libffi makes the call (~1us)
     (libffi-cfn lib sym argtypes rettype)
@@ -1019,6 +1121,16 @@
         ([lib sym argtypes rettype] (f helpers lib sym argtypes rettype))
         ([lib sym argtypes rettype opts] (f helpers lib sym argtypes rettype opts))))))
 
+;; The struct call on the JVM, through the same generated-class mechanism.
+;; Resolved here, at load time, and never in a native image, where a struct
+;; call goes through libffi.
+(def ^:private jvm-struct-invoker
+  (when-not native-image?
+    (let [f (requiring-resolve 'babashka.ffi.impl.binding/struct-invoker)
+          helpers {:carrier carrier :arg-coercer arg-coercer :narrow-ret narrow-ret}]
+      (fn [raw slots types ret-kind rettype]
+        (f helpers raw slots types ret-kind rettype)))))
+
 (defn- fixed-ffm-cfn
   [lib sym argtypes rettype]
   (let [types argtypes
@@ -1027,7 +1139,7 @@
         ;; raw invoker: a fn of the coerced argument array. In a native
         ;; image a generated trampoline (compiled direct call) when the
         ;; shape has one; otherwise an FFM downcall handle.
-        tramp-id (get trampoline-ids (shape-key types* rettype))
+        tramp-id (trampoline-id types* rettype)
         ;; in a native image every trampoline shape is known ahead of time
         ;; (ordered shapes on Windows, canonical elsewhere). A signature
         ;; without one calls through libffi; a build without libffi gets
@@ -1039,10 +1151,12 @@
         raw (if tramp-id
               (delay (trampoline-invoker tramp-id (.address (require-symbol lib sym))))
               (delay
-                (let [handle (.downcallHandle ^Linker @linker*
-                                              (require-symbol lib sym)
-                                              (descriptor types* rettype)
-                                              (make-array java.lang.foreign.Linker$Option 0))]
+                (let [handle (carrier-handle
+                              (.downcallHandle ^Linker @linker*
+                                               (require-symbol lib sym)
+                                               (descriptor types* rettype)
+                                               (make-array java.lang.foreign.Linker$Option 0))
+                              types* rettype)]
                   (fn [^objects arr] (.invokeWithArguments ^MethodHandle handle arr)))))
          n (count types)
          strings? (boolean (some #(= :string %) types*))
@@ -1114,9 +1228,8 @@
         \"Opens the database at path, storing the handle in out-param pp.\"
         \"sqlite3_open\" [:string :pointer] :int)
 
-  An optional docstring and attribute map can precede the C symbol. The final
-  three arguments are the C symbol, argument types, and return type. defcfn
-  preserves all metadata on name. This metadata includes ^:private.
+  An optional docstring and attribute map can precede the C symbol, argument
+  types, and return type. Preserves metadata on name, including ^:private.
 
   The :library key in the attribute map selects a library for cfn:
 
@@ -1308,15 +1421,14 @@
   "Allocates zeroed native memory in arena and returns its pointer.
   n is an integer byte count, a type keyword, or a struct layout.
 
-  Use a confined arena inside one function. Use a shared arena for memory that
-  outlives the call and is released elsewhere. When the arena closes, it
-  releases its memory.
+  Use a confined arena for access from one thread or a shared arena for
+  access from multiple threads. Closing the arena releases its memory.
 
   A type or layout uses natural alignment. An integer byte count uses
   alignment 16. Specify an alignment to override this value.
 
-  There is no unscoped form. If C allocates the memory, bind its allocator with
-  cfn. Release the result with the matching C deallocator.
+  For memory allocated by C, bind the allocator with cfn and release the
+  result with the matching C deallocator.
 
   CAUTION: Do not close the arena while C uses its memory.
   C can access released memory."
@@ -1379,8 +1491,8 @@
 (defn read
   "Reads a value of type t from p. The default byte offset is zero.
 
-  t is a type keyword, a layout, or a place from `place`. A place is a
-  member of a layout resolved once, so reading through it does no lookup.
+  t is a type keyword, a layout, or a place returned by place. A place
+  specifies the layout member's type and offset.
 
   Checks the access against the size of p. Rejects a zero-size pointer.
   reinterpret specifies a valid size."
@@ -1415,8 +1527,8 @@
 (defn write
   "Writes v as type t to p. The default byte offset is zero. Returns nil.
 
-  t is a type keyword, a layout, or a place from `place`. Through a place
-  the member's type is known, so a union member needs no pair.
+  t is a type keyword, a layout, or a place returned by place. When a place
+  selects a union member, pass the member's value directly.
 
   Checks the access against the size of p. Rejects a zero-size pointer.
   reinterpret specifies a valid size."
@@ -1480,8 +1592,8 @@
   "Copies n elements of type t from pointer p, at byte offset (default 0),
   into a new Java array. Returns the array.
 
-  The copy uses memcpy. The type gives the element width and nothing else:
-  :int, :uint and :int32 fill an int[] with the bits as they are, so a
+  Copies raw bytes without converting elements. For example,
+  :int, :uint and :int32 return an int[] with the same bits, so a
   :uint above Integer/MAX_VALUE reads as a negative int. :long and the other
   eight-byte types fill a long[], and :pointer fills a long[] of addresses.
   :byte, :char, :int8, :uint8 and :bool fill a byte[]. For pointers, use
@@ -1502,8 +1614,8 @@
   "Copies Java array arr into memory at pointer p, at byte offset (default
   0), as elements of type t. Returns nil.
 
-  The copy is a memcpy, as in read-array, and the array must be the Java
-  array for the type: an int[] for :int, a long[] for :long or :pointer, a
+  Copies raw bytes without converting elements. arr must be a Java array
+  of the matching type: an int[] for :int, a long[] for :long or :pointer, a
   byte[] for :char."
   ([p t arr] (write-array p t arr 0))
   ([p t arr offset]
@@ -2166,13 +2278,13 @@
 
 (defn- struct-descriptor
   "The FunctionDescriptor of a signature that passes a struct by value. A
-  struct position gets its own layout, a scalar position its carrier. rlay is
-  nil for a :void return."
+  struct position gets its own layout, a scalar position the width C gives
+  it. rlay is nil for a :void return."
   ^FunctionDescriptor [alays rlay]
   (let [lay-of (fn [lay]
                  (if (= :struct (:type lay))
                    (ffm-layout lay)
-                   (carrier-layout (carrier (:type lay)))))
+                   (signature-layout (:type lay))))
         args (into-array MemoryLayout (map lay-of alays))]
     (if rlay
       (FunctionDescriptor/of (lay-of rlay) args)
@@ -2206,10 +2318,62 @@
         ;; a struct return needs somewhere to land, which the handle takes as
         ;; its first argument
         base (if struct-ret? 1 0)
+        ;; one slot per handle parameter, so a generated class can call it
+        ;; with invokeExact instead of the generic invokeWithArguments
+        slots (into (if struct-ret? [:allocator] [])
+                    (map #(if (struct-arg? %) :segment :long))
+                    alays)
+        slot-types (into (if struct-ret? [nil] []) argtypes)
+        ret-kind (cond struct-ret? :segment void? :void :else :long)
+        exact (when jvm-struct-invoker
+                (jvm-struct-invoker handle slots slot-types ret-kind rettype))
+        ;; the generic invoker takes the boxed value of a carrier, and the
+        ;; descriptor names a scalar at the width C gives it
+        generic (delay (MethodHandles/explicitCastArguments
+                        ^MethodHandle @handle
+                        (MethodType/methodType
+                         ^Class (cond struct-ret? MemorySegment
+                                      void? Void/TYPE
+                                      :else (carrier-class rettype))
+                         ^"[Ljava.lang.Class;"
+                         (into-array Class (map (fn [slot t]
+                                                  (case slot
+                                                    :allocator SegmentAllocator
+                                                    :segment MemorySegment
+                                                    :long (carrier-class t)))
+                                                slots slot-types)))))
         arity-error (fn [got]
                       (throw (ex-info (str "babashka.ffi: " sym " expects " n
                                            " args, got " got)
-                                      {:symbol sym})))]
+                                      {:symbol sym})))
+        ;; the arguments as the handle takes them: a segment per struct, the
+        ;; caller's value per scalar, and a temporary C string per :string
+        prepare (fn [^Arena a ^objects arr args]
+                  (dotimes [i n]
+                    (let [v (nth args i)
+                          enc (aget encs i)]
+                      (aset arr (+ base i)
+                            (cond
+                              enc (let [seg (.allocate a (aget byte-sizes i) (aget aligns i))]
+                                    (enc a seg v)
+                                    seg)
+                              (and (aget string-arg? i) (string? v))
+                              (.address (.allocateFrom a ^String v))
+                              :else v)))))
+        ;; the call itself, from the array the prepare filled, at a fixed
+        ;; arity so that nothing allocates an argument seq per call
+        ^clojure.lang.IFn f exact
+        call (when exact
+               (case (+ base n)
+                 1 (fn [^objects a] (.invoke f (aget a 0)))
+                 2 (fn [^objects a] (.invoke f (aget a 0) (aget a 1)))
+                 3 (fn [^objects a] (.invoke f (aget a 0) (aget a 1) (aget a 2)))
+                 4 (fn [^objects a] (.invoke f (aget a 0) (aget a 1) (aget a 2) (aget a 3)))
+                 5 (fn [^objects a] (.invoke f (aget a 0) (aget a 1) (aget a 2) (aget a 3)
+                                             (aget a 4)))
+                 6 (fn [^objects a] (.invoke f (aget a 0) (aget a 1) (aget a 2) (aget a 3)
+                                             (aget a 4) (aget a 5)))
+                 (fn [^objects a] (.applyTo f (clojure.lang.ArraySeq/create a)))))]
     (binding-with-meta
       (fn [& args]
         (let [args (vec args)]
@@ -2217,21 +2381,18 @@
           (clojure.core/with-open [a (Arena/ofConfined)]
             (let [^objects arr (object-array (+ base n))]
               (when struct-ret? (aset arr 0 a))
-              (dotimes [i n]
-                (let [v (nth args i)
-                      enc (aget encs i)]
-                  (aset arr (+ base i)
-                        (cond
-                          enc (let [seg (.allocate ^Arena a (aget byte-sizes i) (aget aligns i))]
-                                (enc a seg v)
-                                seg)
-                          (and (aget string-arg? i) (string? v))
-                          (.address (.allocateFrom ^Arena a ^String v))
-                          :else ((aget coercers i) v)))))
-              (let [raw (.invokeWithArguments ^MethodHandle @handle arr)]
-                (cond struct-ret? (decode raw)
-                      void? nil
-                      :else (narrow-ret rettype raw)))))))
+              (prepare a arr args)
+              (if call
+                (let [r (call arr)]
+                  (if struct-ret? (decode r) r))
+                ;; more parameters than a generated class takes
+                (do (dotimes [i n]
+                      (when-not (aget encs i)
+                        (aset arr (+ base i) ((aget coercers i) (aget arr (+ base i))))))
+                    (let [raw (.invokeWithArguments ^MethodHandle @generic arr)]
+                      (cond struct-ret? (decode raw)
+                            void? nil
+                            :else (narrow-ret rettype raw)))))))))
       {:babashka.ffi/backend :ffm} sym argtypes rettype)))
 
 (defn- libffi-cfn
@@ -2325,11 +2486,11 @@
 
 (defn callback
   "Creates a C function pointer that invokes f. arena owns the pointer, which
-  is valid until the arena releases it. There is no separate release function.
+  is valid until the arena releases it.
   argtypes and rettype use the cfn type keywords. f receives :pointer arguments
-  as zero-size pointers. It receives
-  :bool arguments as booleans and other arguments as longs or doubles. For a
-  :pointer return f returns a pointer, or nil for null.
+  as zero-size pointers and :bool arguments as booleans. Numeric arguments
+  are passed as numbers. For a :pointer return, f must return a pointer or
+  nil for NULL.
 
   Choose the arena for the thread that calls back:
 
@@ -2338,14 +2499,15 @@
   A shared arena allows C to invoke the callback from any thread, including a
   thread that your code did not create. Use it for asynchronous callbacks, such
   as event-loop notifications. A confined arena accepts a call from its own
-  thread only. If C calls back during a call that you make, use this arena, such
-  as for a comparison function. A global arena never releases the pointer.
+  thread only. Use it for synchronous callbacks, such as a comparison
+  function. A global arena never releases the pointer.
 
   An automatic arena releases the pointer once the pointer itself becomes
   unreachable. The garbage collector cannot see the copy that C holds. Use an
   automatic arena only when your reference outlives every call that C can make.
 
-  CAUTION: Unregister the callback before its arena releases the pointer."
+  CAUTION: Unregister the callback before its arena releases the pointer.
+  Catch exceptions inside f. An uncaught exception can stop the process."
   [arena f argtypes rettype]
   (doseq [t argtypes] (carrier t))
   (carrier rettype)
@@ -2367,10 +2529,15 @@
         ;; Integer crossing the upcall boundary uncaught would kill the VM)
         ;; and hand f the declared types, not the carriers
         ret-c (when-not (= :void rettype) (arg-coercer rettype))
-        in-c (mapv (fn [t] (case t
-                             :bool (fn [a] (not (zero? (long a))))
-                             :pointer (fn [a] (MemorySegment/ofAddress (long a)))
-                             nil))
+        in-c (mapv (fn [t]
+                     (cond
+                       (= :bool t) (fn [a] (not (zero? (long a))))
+                       (= :pointer t) (fn [a] (MemorySegment/ofAddress (long a)))
+                       ;; the stub of a native image takes the carrier, so
+                       ;; the sign of a narrow integer is in the low half
+                       ;; and the upper half is whatever C left there
+                       (and native-image? (narrow-int? t)) (fn [a] (narrow-ret t a))
+                       :else nil))
                    argtypes)
         f (if (or ret-c (some some? in-c))
             (or (wrap-callback f in-c ret-c)
@@ -2410,7 +2577,16 @@
                (.findVirtual clojure.lang.IFn "invoke" obj-type)
                (.bindTo f)
                (.asType target-type))
-        stub (.upcallStub ^Linker @linker* mh (descriptor argtypes rettype)
+        ;; the stub takes each type at the width C gives it, as the
+        ;; descriptor says, while everything above works in carriers. A
+        ;; native image keeps the carrier shape, which is what it registered.
+        mh (if native-image?
+             mh
+             (MethodHandles/explicitCastArguments mh (signature-method-type argtypes rettype)))
+        stub (.upcallStub ^Linker @linker* mh
+                          (if native-image?
+                            (carrier-descriptor argtypes rettype)
+                            (descriptor argtypes rettype))
                           ^Arena arena
                           (make-array java.lang.foreign.Linker$Option 0))]
     stub))

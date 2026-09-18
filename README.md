@@ -19,6 +19,9 @@ On the JVM:
 
 In babashka the namespace is built in: `(require '[babashka.ffi :as ffi])`.
 
+To build a GraalVM native image, see
+[Build your own native image](doc/guide.md#build-your-own-native-image).
+
 On Node.js, experimental:
 
 - Node.js 26.1 or newer. The library uses `node:ffi`.

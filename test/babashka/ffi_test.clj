@@ -296,6 +296,113 @@
 
 ;; -- fixed arrays -------------------------------------------------------------
 
+(deftest struct-call-slot-shapes-test
+  (if-not (true? @struct-lib)
+    (println "struct slot shapes skipped:"
+             (if (string? @struct-lib) @struct-lib "unknown reason"))
+    (do
+      (testing "a struct argument with a :void return"
+        (with-open [arena (ffi/confined-arena)]
+          (let [out (ffi/alloc arena :int)]
+            ((ffi/cfn "p2_store" [p2 :pointer] :void) {:x 3 :y 4} out)
+            (is (= 304 (ffi/read out :int))))))
+      (testing "more parameters than a generated class takes"
+        (let [wide (ffi/cfn "wide_struct_sum" (into [p2] (repeat 20 :int)) :int)]
+          (is (= 213 (apply wide {:x 1 :y 2} (range 1 21))))
+          (is (thrown-with-msg? Exception #"expects 21 args, got 20"
+                                (apply wide {:x 1 :y 2} (range 1 20)))))))))
+
+(def ^:private generated-files
+  ["resources/META-INF/native-image/babashka/ffi/reachability-metadata.json"
+   "src-java/babashka/ffi/impl/FfiTrampoline.java"
+   "src/babashka/ffi/impl/ffi_trampolines.clj"])
+
+(deftest metadata-generated-test
+  ;; babashka only: the generator is a babashka script and reads JSON with
+  ;; cheshire, which is built in there
+  (when (and (System/getProperty "babashka.version") (fs/exists? "script/gen_ffi_metadata.clj"))
+    ;; a CRLF checkout would fail the byte comparison
+    (when-not (str/starts-with? (System/getProperty "os.name") "Windows")
+      (testing "the committed generated sources match the generator"
+        (let [before (mapv slurp generated-files)]
+          (try
+            (load-file "script/gen_ffi_metadata.clj")
+            (doseq [[f b] (map vector generated-files before)]
+              (is (= b (slurp f))
+                  (str f ": run bb script/gen_ffi_metadata.clj and commit the result")))
+            (finally
+              (doseq [[f b] (map vector generated-files before)]
+                (spit f b))))))
+      (testing "windows mode: ordered trampolines, no fixed FFM descriptors"
+        (let [before (mapv slurp generated-files)
+              parse (resolve 'cheshire.core/parse-string)]
+          (try
+            (binding [*command-line-args* '("windows")]
+              (load-file "script/gen_ffi_metadata.clj"))
+            (let [meta (parse (slurp (first generated-files)))
+                  downcalls (get-in meta ["foreign" "downcalls"])
+                  java-src (slurp (second generated-files))]
+              (testing "no FFM downcall descriptors: a trampoline or libffi makes every call"
+                (is (empty? downcalls)))
+              (testing "upcalls respect the 2-double family limit"
+                (is (every? #(<= (count (filter #{"jdouble"} (get % "parameterTypes"))) 2)
+                            (get-in meta ["foreign" "upcalls"]))))
+              (testing "ordered shapes get trampolines, out-of-family ones do not"
+                (is (str/includes? java-src "interface F_D_DJ "))
+                (is (str/includes? java-src "interface F_J_JJJJJJJJJJ "))
+                (is (str/includes? java-src "interface F_V_JJDDDD "))
+                (is (not (str/includes? java-src "interface F_V_DDDFJ ")))))
+            (finally
+              (doseq [[f b] (map vector generated-files before)]
+                (spit f b)))))))))
+
+(deftest stack-arguments-test
+  ;; An argument that runs out of registers travels on the stack, and macOS
+  ;; on AArch64 packs a stack slot to the width of the argument. A signature
+  ;; that names a narrow integer as a 64-bit carrier moves every argument
+  ;; after the first spilled one, and the callee reads the wrong bytes.
+  (if-not (true? @struct-lib)
+    (println "stack arguments skipped:"
+             (if (string? @struct-lib) @struct-lib "unknown reason"))
+    (do
+      (testing "twelve int arguments all arrive"
+        (let [f (ffi/cfn "wide_int_sum" (vec (repeat 12 :int)) :int)]
+          (is (= 78 (apply f (range 1 13))))
+          (is (= 12 (apply f (repeat 12 1))))))
+      (testing "ten int arguments all arrive"
+        ;; babashka passes a trampoline every argument as a long, so this
+        ;; fails there until the trampolines carry the C widths
+        (when-not (System/getProperty "babashka.version")
+          (let [f (ffi/cfn "ten_int_sum" (vec (repeat 10 :int)) :int)]
+            (is (= 55 (apply f (range 1 11)))))))
+      (testing "a callback receives a negative narrow integer with its sign"
+        ;; C writes the low half of the register and leaves the upper half
+        ;; zero, so a callback that reads the value at a wider type reads it
+        ;; unsigned. babashka keeps the carrier shape its image registered
+        ;; and narrows on arrival, which the current binary predates.
+        (when-not (System/getProperty "babashka.version")
+          (with-open [arena (ffi/confined-arena)]
+            (let [seen (atom nil)
+                  cb (ffi/callback arena (fn [a b] (reset! seen [a b]) (+ a b))
+                                   [:int :int] :long)]
+              (is (= -3 ((ffi/cfn "call_with_negatives" [:pointer] :long) cb)))
+              (is (= [-1 -2] @seen)))
+            (let [seen (atom nil)
+                  cb (ffi/callback arena (fn [a b c] (reset! seen [a b c]) (+ a b c))
+                                   [:int8 :int16 :int] :long)]
+              (is (= -12 ((ffi/cfn "call_with_narrow" [:pointer] :long) cb)))
+              (is (= [-3 -4 -5] @seen))))))
+      (testing "a callback receives every argument C sends it"
+        ;; a callback of this width is outside the native image limits
+        (when-not (System/getProperty "babashka.version")
+          (with-open [arena (ffi/confined-arena)]
+            (let [seen (atom nil)
+                  cb (ffi/callback arena
+                                   (fn [& xs] (reset! seen (vec xs)) (apply + xs))
+                                   (vec (repeat 10 :int)) :int)]
+              (is (= 55 ((ffi/cfn "call_with_ten" [:pointer] :int) cb)))
+              (is (= [1 2 3 4 5 6 7 8 9 10] @seen)))))))))
+
 (def array-layout?
   "[:array elem n] arrived after the first release; an older built-in
   namespace does not know the kind."

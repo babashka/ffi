@@ -90,9 +90,30 @@ them on the JVM and in babashka. Accepting booleans in the integer coercer
 would also affect fixed arguments, struct fields and callback returns.
 A separate boolean tail type would require promotion to `int` in libffi.
 
-Keep `invokeWithArguments` for struct calls. Measurements in #44 attribute
-40 to 55 percent of a flat struct call to invocation and 10 to 15 percent
-to the codec.
+## Struct calls, 2026-09-18
+
+Issue #44 item 4. The measurement it asked for put 40 to 55 percent of a
+flat struct call in `invokeWithArguments` and 10 to 15 percent in the codec,
+so the call went the same way as the rest: a generated class, one slot per
+handle parameter, a long for a scalar, a `MemorySegment` for a struct and a
+`SegmentAllocator` in front when the return is a struct. It is a second,
+smaller class rather than a widening of the scalar one, which stays as it
+is. babashka.ffi keeps the arena, the encoding and the decoding, so the
+class only makes the call. More than 20 slots keeps `invokeWithArguments`,
+because `AFn` invokes with at most 20.
+
+criterium quick-bench, macOS AArch64, JDK 25, against the same session on
+main. These numbers include the argument width change in ADR 0002, which
+landed with them:
+
+    p2_sum     flat struct argument       120 -> 72 ns
+    v3_sum     three doubles by value     143 -> 98 ns
+    rect_sum   nested struct argument     185 -> 110 ns
+    div        struct return              127 -> 79 ns
+    rect_swap  struct in and out          226 -> 179 ns
+
+`rect_swap` gains least: its nested encode and decode are about 81 ns of the
+total, which no change to the invocation reaches.
 
 ## Consequences
 

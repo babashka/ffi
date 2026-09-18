@@ -24,6 +24,14 @@ API listing is API.md, and the decisions are in doc/ai/adr/.
 - test-jvm/babashka/ffi_binding_test.clj: the generated class, JVM only.
 - test-node/babashka/ffi_test.cljs: the Node.js suite. It follows
   ffi_test.clj case by case, without what node:ffi cannot call.
+- test-native/babashka/ffi/native_test.clj: what only a native image
+  decides, the trampolines and the registered upcall shapes. Plain
+  assertions, no framework, built and run by script/native_test.sh.
+- script/gen_ffi_metadata.clj: generates the trampolines and the
+  reachability metadata into src, src-java and resources, all committed.
+  babashka builds them straight from here, so the shape set and the code
+  that assumes it live in one place. Regenerate and commit after changing
+  the generator; metadata-generated-test fails otherwise.
 - test-resources/struct_lib.c: fixture for struct-by-value tests, compiled
   into target/ when cc or cl is on PATH.
 - examples/: runnable scripts, each on both hosts.
@@ -39,12 +47,22 @@ names it as :babashka.ffi/backend.
 | Signature | JVM | Native image |
 |---|---|---|
 | fixed, scalars, up to 20 args | binding.clj generated class with the FFM handle as a constant, 3 to 6 ns, about 70 us to create | compiled trampoline when the shape is in the set, about 30 ns, else libffi, about 1 us |
-| struct by value | FFM handle with invokeWithArguments | libffi |
+| struct by value | generated class, a segment per struct and an allocator slot for a struct return, about 70 ns | libffi |
 | variadic, tail inferred per call | cached binding per tail shape, about 55 ns more than a declared tail | libffi |
 | variadic, tail declared | generated class with firstVariadicArg | libffi |
 | more than 20 args, fixed or variadic | FFM handle with invokeWithArguments | libffi |
 
 Every type keyword has a carrier: :long, :double, :float or :void. The
+A trampoline takes every argument as a long, which is not the width C gives
+a narrow integer. That shows only once an argument reaches the stack, and
+only where the ABI packs a stack slot to the width of the argument, which
+macOS on AArch64 does. The shape set is the same everywhere, so the
+generated sources are too and can be committed; trampoline-id declines a
+shape with a narrow type past the eighth argument at run time instead, and
+the call goes to libffi. apple-aarch64? and narrow-on-stack? hold that rule.
+It reads os.arch when the image is built, so it does not survive a cross
+build.
+
 trampoline set and the generated class bytes are keyed on carriers, not
 types. The generated class passes every argument and result as a long,
 doubles and floats as raw bits, and resolves the symbol on the first call
@@ -61,12 +79,32 @@ Adding or changing a type keyword touches each of these. Keep them in sync.
 - ffi.clj arg-coercer, one fn per type, chosen at binding time
 - ffi.clj narrow-ret, the return conversion for the boxed paths
 - binding.clj bits-ret-fn, the same table over raw long bits for the JVM path
-- ffi.clj sizes, array-carriers, exact-layout, ffi-type-codes
+- ffi.clj sizes, array-carriers, signature-layout, exact-layout, ffi-type-codes
 - the case tables in read, write and place
 - the callback return coercion in callback
 
 jvm-return-conversion-test checks narrow-ret and bits-ret-fn against each
 other through a callback that returns each type.
+
+signature-layout is what a descriptor names a type by, at the width C gives
+it. A carrier is what the call path moves it in. The two differ for every
+integer narrower than 64 bits, so a handle built from a descriptor is cast
+between them: carrier-handle for the generic invoker, struct-handle in
+binding.clj for the generated class, and explicitCastArguments onto
+signature-method-type for an upcall stub. Naming a narrow integer by its
+carrier reads the wrong bytes once arguments spill to the stack, which
+stack-arguments-test covers.
+
+A callback in a native image is the exception: it keeps the carrier shape,
+through carrier-descriptor, and narrows each value on arrival instead, in
+the in-c table in callback. babashka registers the upcall shapes an image
+can make when it builds it, from script/gen_ffi_metadata.clj, and one shape
+per width per position is not a set anything can register. The narrowing is
+what makes that sound, not the six-argument cap: a C caller writes the low
+half of the register and leaves the upper half zero, so a narrow integer
+read at its carrier width arrives without its sign, in a register as much
+as on the stack. narrow-int? lists the types this applies to, and
+narrow-ret does the conversion.
 
 ## Run the tests
 
@@ -80,6 +118,16 @@ Babashka, through its built-in copy of this namespace:
 
 ```sh
 bb test:bb
+```
+
+A native image, needs GRAALVM_HOME and a C compiler. This is the only run
+that exercises the branch's code on the trampolines and the upcall shapes an
+image registers. Running the suite against a released babashka does not:
+that binary carries the babashka.ffi it was built with, so `bb test:bb`
+reports on babashka's code, not on the tree.
+
+```sh
+bb test:native
 ```
 
 Node.js, needs Node.js 26.1 or newer on PATH. The three commands run
