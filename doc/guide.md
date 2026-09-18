@@ -1097,8 +1097,17 @@ The library includes call trampolines and reachability metadata.
     :aliases {:native {:extra-deps {org.graalvm.sdk/nativeimage {:mvn/version "25.0.2"}}}}}
    ```
 
-2. Compile the trampoline class. A git dependency does not compile Java
-   sources, so compile the file from the checkout of the library:
+2. Compile the Java trampoline classes from source.
+   For a git dependency, use the sources in the library checkout under `~/.gitlibs`.
+   For a Maven dependency, first extract the sources from the jar:
+
+   ```sh
+   unzip -o "$(clojure -Spath -A:native | tr ':' '\n' | grep 'ffi-.*\.jar')" \
+     'babashka/ffi/impl/*.java' -d src-java
+   ```
+
+   Replace `path/to/ffi/src-java` below with the source directory.
+   For sources extracted from the jar, use `src-java`.
 
    ```sh
    javac --release 25 -cp "$(clojure -Spath -A:native)" -d target/classes \

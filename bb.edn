@@ -1,7 +1,9 @@
-{:paths ["src"]
+{:paths ["src" "bb"]
  :deps {io.github.borkdude/quickdoc
         #_{:local/root "/Users/borkdude/dev/quickdoc"}
-        {:git/sha "5097746c91fbd6605792e7dc817a81d20b8d691a"}}
+        {:git/sha "5097746c91fbd6605792e7dc817a81d20b8d691a"}
+        ;; tools.build itself is built into babashka, so build.clj runs here
+        io.github.babashka/deps-deploy {:mvn/version "0.0.1"}}
  :tasks
  {test:bb {:doc "Run the tests through babashka's built-in babashka.ffi."
            :extra-paths ["test"]
@@ -49,4 +51,28 @@
                                                          Binding {:no-doc true}}})
                         :toc true
                         :var-links true
-                        :var-pattern :wikilinks})}}}
+                        :var-pattern :wikilinks})}
+
+  bump-release
+  {:doc "Bump the release counter, turn the Unreleased changelog header into the new version, commit, tag and push the tag"
+   :requires ([clojure.string :as str]
+              [utils])
+   :task (let [old-version (utils/format-version)
+               changelog (slurp "CHANGELOG.md")]
+           (when-not (str/includes? changelog "## Unreleased")
+             (throw (ex-info "CHANGELOG.md has no ## Unreleased header" {})))
+           (utils/bump-version)
+           (let [new-version (utils/format-version)]
+             (spit "CHANGELOG.md" (str/replace-first changelog
+                                                     "## Unreleased"
+                                                     (str "## " new-version)))
+             (spit "README.md" (str/replace (slurp "README.md") old-version new-version))
+             (shell "git add version.edn README.md CHANGELOG.md")
+             (shell "git commit -m" (str "v" new-version))
+             (shell "git tag" (str "v" new-version))
+             (shell "git push --tags")))}
+
+  publish
+  {:doc "Build the jar and deploy it to Clojars. Pass --bump to bump the release counter first"
+   :extra-paths ["."]
+   :exec-fn tasks/publish}}}
