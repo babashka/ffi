@@ -6,11 +6,11 @@
 Call C libraries from Clojure, [babashka](https://github.com/babashka/babashka)
 and Node.js.
 
-This library is the `babashka.ffi` namespace that ships inside babashka,
-extracted so that JVM Clojure and Node.js programs can use it too. It has no
-dependencies beyond JDK 25. Babashka consumes this repository as a submodule.
+Babashka embeds this library as a built-in and consumes the repository as a
+submodule.
+The library has no dependencies beyond JDK 25.
 
-Status: experimental. The API can still change.
+Status: experimental. The API can still change (although no changes are planned).
 
 ``` clojure
 org.babashka/ffi {:mvn/version "0.1.2"}
