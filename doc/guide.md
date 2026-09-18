@@ -1114,17 +1114,17 @@ namespaces at build time.
 
 See `script/native_test.sh` for a complete build example.
 
-For a Windows image, compile `FfiTrampolineOrdered.java` in step 2 too, and
-add these options in step 4:
+For a Windows image, add these options in step 4:
 
 ```sh
 -H:+UnlockExperimentalVMOptions
 -H:ConfigurationResourceRoots=babashka/ffi/native-image-windows
 ```
 
-Windows assigns argument registers by position, so its image uses a
-trampoline per argument order. The options register the callback shapes
-that only Windows needs.
+Windows assigns argument registers by position, so its image uses
+`FfiTrampolineOrdered`, a trampoline per argument order. Other images use
+`FfiTrampoline` and leave the other class out. The options register the
+callback shapes that only Windows needs.
 
 The limits in [In a babashka native binary](#in-a-babashka-native-binary)
 and [Callbacks](#callbacks) apply. This build does not link libffi. Binding
