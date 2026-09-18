@@ -7,3 +7,4 @@ node_modules/
 .shadow-cljs/
 cljs-test-runner-out/
 target/native/
+bin/
