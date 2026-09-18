@@ -6,27 +6,30 @@ This library is the `babashka.ffi` namespace that ships inside babashka,
 extracted so that JVM Clojure programs can use it too. Babashka consumes this
 repository as a submodule.
 
-Status: work in progress, not yet released.
+Status: experimental. The API can still change.
 
-## Requirements
+``` clojure
+org.babashka/ffi {:mvn/version "0.1.0"}
+```
 
-On the JVM:
+## Platforms
 
-- JDK 25 or newer. The library uses the Java FFM API.
-- Start the JVM with `--enable-native-access=ALL-UNNAMED`, or set the
-  `Enable-Native-Access` manifest attribute in an uberjar. Without the flag,
-  modern JDKs warn, and a future JDK release refuses the calls.
+| Platform | Requirement | Notes |
+|---|---|---|
+| JVM | JDK 25 or newer | Uses the Java FFM API. A scalar call is 3 to 6 ns. |
+| babashka | 1.13.220 or newer | Built in, no dependency needed. |
+| GraalVM native image | GraalVM 25 or newer | Compiled trampolines, libffi for the rest. See [Build your own native image](doc/guide.md#build-your-own-native-image). |
+| Node.js | 26.1 or newer | Uses `node:ffi`. For [nbb](https://github.com/babashka/nbb), ClojureScript and shadow-cljs. See [On Node.js](doc/guide.md#on-nodejs). |
+
+Bun and Deno are not supported. Each has an FFI of its own rather than
+`node:ffi`, and the two differ from it and from each other in how they
+represent a pointer.
+
+On the JVM, start with `--enable-native-access=ALL-UNNAMED`, or set the
+`Enable-Native-Access` manifest attribute in an uberjar. Without the flag,
+modern JDKs warn, and a future JDK release refuses the calls.
 
 In babashka the namespace is built in: `(require '[babashka.ffi :as ffi])`.
-
-To build a GraalVM native image, see
-[Build your own native image](doc/guide.md#build-your-own-native-image).
-
-On Node.js, experimental:
-
-- Node.js 26.1 or newer. The library uses `node:ffi`.
-- [nbb](https://github.com/babashka/nbb), ClojureScript or shadow-cljs. See
-  [On Node.js](doc/guide.md#on-nodejs) for differences from the JVM.
 
 ## Libraries built on it
 
