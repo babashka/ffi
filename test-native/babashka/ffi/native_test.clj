@@ -106,6 +106,13 @@
             (check "qsort calls back into the image"
                    [1 2 3 5 7 9] (mapv #(ffi/read p :int (* 4 %)) (range (count xs))))))))
 
+    (println "the image leaves out what only the JVM calls")
+    (check "the FFM struct and variadic paths are not defined"
+           [false false false]
+           (mapv #(bound? (find-var %))
+                 '[babashka.ffi/struct-ffm-cfn babashka.ffi/variadic-ffm-cfn
+                   babashka.ffi/variadic-handle-cfn]))
+
     (println "memory, which needs no linker at all")
     (ffi/with-open [arena (ffi/confined-arena)]
       (let [point [:struct [[:x :int] [:y :int]]]

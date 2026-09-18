@@ -29,6 +29,9 @@ API listing is API.md, and the decisions are in doc/ai/adr/.
   loads them with requiring-resolve, and only in an image built with
   BABASHKA_FEATURE_LIBFFI=true, so an image without libffi never reaches
   the class and links without it. babashka builds them from here.
+  libffi_version.clj holds ffi_get_version apart, for bb describe. It
+  arrived in libffi 3.5, the libffi of macOS and of Ubuntu is older, and
+  ffi.clj never loads that namespace, so an image links against those.
 - test-native/babashka/ffi/native_test.clj: what only a native image
   decides, the trampolines and the registered upcall shapes. Plain
   assertions, no framework, built and run by script/native_test.clj.
@@ -64,6 +67,12 @@ names it as :babashka.ffi/backend.
 | variadic, tail inferred per call | cached binding per tail shape, about 55 ns more than a declared tail | libffi |
 | variadic, tail declared | generated class with firstVariadicArg | libffi |
 | more than 20 args, fixed or variadic | FFM handle with invokeWithArguments | libffi |
+
+The FFM struct path and the FFM variadic paths are JVM only, and ffi.clj
+wraps them in (when-not native-image? ...). An image initializes the
+namespace when it is built, skips those forms and does not carry the code,
+33 KB in babashka, measured. Code that only the JVM calls goes inside such
+a form, and its call site asks native-image? first.
 
 Every type keyword has a carrier: :long, :double, :float or :void. The
 A trampoline takes every argument as a long, which is not the width C gives

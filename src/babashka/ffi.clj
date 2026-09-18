@@ -898,28 +898,31 @@
           (apply f args)))
       {:babashka.ffi/backend :libffi} sym (conj fixed :&) rettype)))
 
-(defn- variadic-handle-cfn
-  "Creates a variadic JVM binding for more than 20 arguments.
-  address is a delay containing the resolved symbol."
-  [address sym all-types rettype nf]
-  (let [n (count all-types)
-        handle (delay (carrier-handle
-                       (.downcallHandle
-                        ^Linker @linker*
-                        ^MemorySegment @address
-                        (descriptor all-types rettype)
-                        (into-array java.lang.foreign.Linker$Option
-                                    [(java.lang.foreign.Linker$Option/firstVariadicArg nf)]))
-                       all-types rettype))
-        coercers ^objects (object-array (map arg-coercer all-types))]
-    (fn [& args]
-      (when-not (= n (count args))
-        (throw (arity-ex sym n (count args))))
-      (with-string-args all-types (vec args)
-        (fn [args]
-          (let [^objects arr (object-array args)]
-            (dotimes [i n] (aset arr i ((aget coercers i) (aget arr i))))
-            (narrow-ret rettype (.invokeWithArguments ^MethodHandle @handle arr))))))))
+;; JVM only. A native image initializes this namespace when it is built and
+;; skips the form, so the image does not carry code it never calls.
+(when-not native-image?
+  (defn- variadic-handle-cfn
+    "Creates a variadic JVM binding for more than 20 arguments.
+    address is a delay containing the resolved symbol."
+    [address sym all-types rettype nf]
+    (let [n (count all-types)
+          handle (delay (carrier-handle
+                         (.downcallHandle
+                          ^Linker @linker*
+                          ^MemorySegment @address
+                          (descriptor all-types rettype)
+                          (into-array java.lang.foreign.Linker$Option
+                                      [(java.lang.foreign.Linker$Option/firstVariadicArg nf)]))
+                         all-types rettype))
+          coercers ^objects (object-array (map arg-coercer all-types))]
+      (fn [& args]
+        (when-not (= n (count args))
+          (throw (arity-ex sym n (count args))))
+        (with-string-args all-types (vec args)
+          (fn [args]
+            (let [^objects arr (object-array args)]
+              (dotimes [i n] (aset arr i ((aget coercers i) (aget arr i))))
+              (narrow-ret rettype (.invokeWithArguments ^MethodHandle @handle arr)))))))))
 
 ;; AFn supports invoke methods with up to 20 arguments.
 (def ^:private max-class-arity 20)
@@ -968,60 +971,63 @@
     :else (throw (unsupported-ex sym argtypes rettype
                                  "a variadic call in a native image goes through libffi, and this build has none"))))
 
-(defn- tail-shape-key
-  "Returns the variadic tail shape as a long, or nil for more than 30 values."
-  [tail]
-  (loop [s (seq tail) k 1 n 0]
-    (cond (nil? s) k
-          (== n 30) nil
-          :else (let [v (first s)
-                      code (cond (instance? Long v) 1
-                                 (instance? Double v) 2
-                                 (string? v) 3
-                                 :else (case (tail-type v) :long 1 :double 2 :string 3))]
-                  (recur (next s) (+ (* 4 k) (long code)) (inc n))))))
+;; JVM only. A native image initializes this namespace when it is built and
+;; skips the form, so the image does not carry code it never calls.
+(when-not native-image?
+  (defn- tail-shape-key
+    "Returns the variadic tail shape as a long, or nil for more than 30 values."
+    [tail]
+    (loop [s (seq tail) k 1 n 0]
+      (cond (nil? s) k
+            (== n 30) nil
+            :else (let [v (first s)
+                        code (cond (instance? Long v) 1
+                                   (instance? Double v) 2
+                                   (string? v) 3
+                                   :else (case (tail-type v) :long 1 :double 2 :string 3))]
+                    (recur (next s) (+ (* 4 k) (long code)) (inc n))))))
 
-(defn- variadic-ffm-cfn
-  "Creates a variadic JVM binding that infers tail types per call."
-  [lib sym fixed rettype]
-  (let [nf (count fixed)
-        cache (atom {})
-        last-hit (volatile! nil)
-        shown (conj fixed :&)
-        ;; Resolve the symbol once for all tail shapes.
-        address (delay (require-symbol lib sym))
-        binding-for
-        (fn [k tail]
-          (or (get @cache k)
-              (let [all-types (into fixed (map tail-type) tail)
-                    f (if (<= (count all-types) max-class-arity)
-                        (jvm-cfn nil @address all-types rettype
-                                 {:first-variadic nf :sym sym :argtypes shown})
-                        (variadic-handle-cfn address sym all-types rettype nf))]
-                (swap! cache (fn [m] (assoc (if (>= (count m) 64) {} m) k f)))
-                f)))]
-    (binding-with-meta
-      (fn [& args]
-        (let [n (count args)]
-          (when (< n nf)
-            (throw (ex-info (str "babashka.ffi: " sym " expects at least " nf
-                                 " args, got " n)
-                            {:symbol sym})))
-          (let [tail (nthnext args nf)
-                k (or (tail-shape-key tail) (mapv tail-type tail))
-                hit @last-hit
-                f (if (and hit (= k (aget ^objects hit 0)))
-                    (aget ^objects hit 1)
-                    (let [f (binding-for k tail)]
-                      (vreset! last-hit (object-array [k f]))
-                      f))]
-            (case n
-              1 (f (first args))
-              2 (f (first args) (second args))
-              3 (f (first args) (second args) (nth args 2))
-              4 (f (first args) (second args) (nth args 2) (nth args 3))
-              (apply f args)))))
-      {:babashka.ffi/backend :ffm} sym shown rettype)))
+  (defn- variadic-ffm-cfn
+    "Creates a variadic JVM binding that infers tail types per call."
+    [lib sym fixed rettype]
+    (let [nf (count fixed)
+          cache (atom {})
+          last-hit (volatile! nil)
+          shown (conj fixed :&)
+          ;; Resolve the symbol once for all tail shapes.
+          address (delay (require-symbol lib sym))
+          binding-for
+          (fn [k tail]
+            (or (get @cache k)
+                (let [all-types (into fixed (map tail-type) tail)
+                      f (if (<= (count all-types) max-class-arity)
+                          (jvm-cfn nil @address all-types rettype
+                                   {:first-variadic nf :sym sym :argtypes shown})
+                          (variadic-handle-cfn address sym all-types rettype nf))]
+                  (swap! cache (fn [m] (assoc (if (>= (count m) 64) {} m) k f)))
+                  f)))]
+      (binding-with-meta
+        (fn [& args]
+          (let [n (count args)]
+            (when (< n nf)
+              (throw (ex-info (str "babashka.ffi: " sym " expects at least " nf
+                                   " args, got " n)
+                              {:symbol sym})))
+            (let [tail (nthnext args nf)
+                  k (or (tail-shape-key tail) (mapv tail-type tail))
+                  hit @last-hit
+                  f (if (and hit (= k (aget ^objects hit 0)))
+                      (aget ^objects hit 1)
+                      (let [f (binding-for k tail)]
+                        (vreset! last-hit (object-array [k f]))
+                        f))]
+              (case n
+                1 (f (first args))
+                2 (f (first args) (second args))
+                3 (f (first args) (second args) (nth args 2))
+                4 (f (first args) (second args) (nth args 2) (nth args 3))
+                (apply f args)))))
+        {:babashka.ffi/backend :ffm} sym shown rettype))))
 
 (defn cfn
   "Creates a Clojure function that calls the C function sym. sym is a C symbol
@@ -2238,175 +2244,178 @@
 ;; whole layout, which no finite set of registrations covers. There the call
 ;; goes through libffi.
 
-(def ^:private exact-layout
-  "The FFM layout of each primitive type, at the width C gives it. A scalar
-  ARGUMENT still travels as its carrier, the same widening every other FFM
-  call uses, but a struct member keeps its own width."
-  {:int ValueLayout/JAVA_INT :uint ValueLayout/JAVA_INT
-   :int32 ValueLayout/JAVA_INT :uint32 ValueLayout/JAVA_INT
-   :long ValueLayout/JAVA_LONG :ulong ValueLayout/JAVA_LONG
-   :int64 ValueLayout/JAVA_LONG :uint64 ValueLayout/JAVA_LONG
-   :size_t ValueLayout/JAVA_LONG :ssize_t ValueLayout/JAVA_LONG
-   :int16 ValueLayout/JAVA_SHORT :uint16 ValueLayout/JAVA_SHORT
-   :int8 ValueLayout/JAVA_BYTE :uint8 ValueLayout/JAVA_BYTE
-   :byte ValueLayout/JAVA_BYTE :char ValueLayout/JAVA_BYTE
-   :bool ValueLayout/JAVA_BYTE
-   :float ValueLayout/JAVA_FLOAT :double ValueLayout/JAVA_DOUBLE
-   :pointer ValueLayout/ADDRESS :string ValueLayout/ADDRESS})
+;; JVM only. A native image initializes this namespace when it is built and
+;; skips the form, so the image does not carry code it never calls.
+(when-not native-image?
+  (def ^:private exact-layout
+    "The FFM layout of each primitive type, at the width C gives it. A scalar
+    ARGUMENT still travels as its carrier, the same widening every other FFM
+    call uses, but a struct member keeps its own width."
+    {:int ValueLayout/JAVA_INT :uint ValueLayout/JAVA_INT
+     :int32 ValueLayout/JAVA_INT :uint32 ValueLayout/JAVA_INT
+     :long ValueLayout/JAVA_LONG :ulong ValueLayout/JAVA_LONG
+     :int64 ValueLayout/JAVA_LONG :uint64 ValueLayout/JAVA_LONG
+     :size_t ValueLayout/JAVA_LONG :ssize_t ValueLayout/JAVA_LONG
+     :int16 ValueLayout/JAVA_SHORT :uint16 ValueLayout/JAVA_SHORT
+     :int8 ValueLayout/JAVA_BYTE :uint8 ValueLayout/JAVA_BYTE
+     :byte ValueLayout/JAVA_BYTE :char ValueLayout/JAVA_BYTE
+     :bool ValueLayout/JAVA_BYTE
+     :float ValueLayout/JAVA_FLOAT :double ValueLayout/JAVA_DOUBLE
+     :pointer ValueLayout/ADDRESS :string ValueLayout/ADDRESS})
 
-(defn- ffm-layout
-  "The FFM MemoryLayout of a resolved layout map. A struct becomes a
-  structLayout whose padding puts every member on the offset that layout-of
-  computed, so babashka.ffi and the linker describe the same struct."
-  ^MemoryLayout [lay]
-  (case (:type lay)
-    :union (throw (ex-info "babashka.ffi: a union is not passed by value" {:layout lay}))
-    ;; A nested array flattens to one sequence of the innermost element: the
-    ;; bytes are the same, and the JDK misclassifies a nested sequence layout
-    ;; on macOS AArch64, where struct{ seq(2, seq(2, double)) } arrives as
-    ;; garbage while seq(4, double) arrives in the four FP registers.
-    :array
-    (loop [n (long (:count lay)) el (:elem lay)]
-      (if (= :array (:type el))
-        (recur (* n (long (:count el))) (:elem el))
-        (MemoryLayout/sequenceLayout n (ffm-layout el))))
+  (defn- ffm-layout
+    "The FFM MemoryLayout of a resolved layout map. A struct becomes a
+    structLayout whose padding puts every member on the offset that layout-of
+    computed, so babashka.ffi and the linker describe the same struct."
+    ^MemoryLayout [lay]
+    (case (:type lay)
+      :union (throw (ex-info "babashka.ffi: a union is not passed by value" {:layout lay}))
+      ;; A nested array flattens to one sequence of the innermost element: the
+      ;; bytes are the same, and the JDK misclassifies a nested sequence layout
+      ;; on macOS AArch64, where struct{ seq(2, seq(2, double)) } arrives as
+      ;; garbage while seq(4, double) arrives in the four FP registers.
+      :array
+      (loop [n (long (:count lay)) el (:elem lay)]
+        (if (= :array (:type el))
+          (recur (* n (long (:count el))) (:elem el))
+          (MemoryLayout/sequenceLayout n (ffm-layout el))))
 
-    :struct
-    (let [members (loop [acc [] off 0 fs (seq (:fields lay))]
-                    (if-let [f (first fs)]
-                      (let [at (long (:offset f))
-                            acc (cond-> acc
-                                  (> at off) (conj (MemoryLayout/paddingLayout (- at off))))]
-                        (recur (conj acc (ffm-layout f))
-                               (+ at (long (:size f)))
-                               (next fs)))
-                      (let [size (long (:size lay))]
-                        (cond-> acc
-                          (> size off) (conj (MemoryLayout/paddingLayout (- size off)))))))]
-      (MemoryLayout/structLayout (into-array MemoryLayout members)))
+      :struct
+      (let [members (loop [acc [] off 0 fs (seq (:fields lay))]
+                      (if-let [f (first fs)]
+                        (let [at (long (:offset f))
+                              acc (cond-> acc
+                                    (> at off) (conj (MemoryLayout/paddingLayout (- at off))))]
+                          (recur (conj acc (ffm-layout f))
+                                 (+ at (long (:size f)))
+                                 (next fs)))
+                        (let [size (long (:size lay))]
+                          (cond-> acc
+                            (> size off) (conj (MemoryLayout/paddingLayout (- size off)))))))]
+        (MemoryLayout/structLayout (into-array MemoryLayout members)))
 
-    (or (exact-layout (:type lay))
-        (throw (ex-info (str "babashka.ffi: unknown type " (:type lay))
-                        {:type (:type lay)})))))
+      (or (exact-layout (:type lay))
+          (throw (ex-info (str "babashka.ffi: unknown type " (:type lay))
+                          {:type (:type lay)})))))
 
-(defn- struct-descriptor
-  "The FunctionDescriptor of a signature that passes a struct by value. A
-  struct position gets its own layout, a scalar position the width C gives
-  it. rlay is nil for a :void return."
-  ^FunctionDescriptor [alays rlay]
-  (let [lay-of (fn [lay]
-                 (if (= :struct (:type lay))
-                   (ffm-layout lay)
-                   (signature-layout (:type lay))))
-        args (into-array MemoryLayout (map lay-of alays))]
-    (if rlay
-      (FunctionDescriptor/of (lay-of rlay) args)
-      (FunctionDescriptor/ofVoid args))))
+  (defn- struct-descriptor
+    "The FunctionDescriptor of a signature that passes a struct by value. A
+    struct position gets its own layout, a scalar position the width C gives
+    it. rlay is nil for a :void return."
+    ^FunctionDescriptor [alays rlay]
+    (let [lay-of (fn [lay]
+                   (if (= :struct (:type lay))
+                     (ffm-layout lay)
+                     (signature-layout (:type lay))))
+          args (into-array MemoryLayout (map lay-of alays))]
+      (if rlay
+        (FunctionDescriptor/of (lay-of rlay) args)
+        (FunctionDescriptor/ofVoid args))))
 
-(defn- struct-ffm-cfn
-  "Returns an FFM binding for a signature that passes a struct by value. Each
-  call takes a confined arena, which holds the struct arguments, the
-  temporary C strings, and the returned struct. The return is decoded before
-  the arena closes."
-  [lib sym argtypes rettype]
-  (let [n (count argtypes)
-        void? (= :void rettype)
-        alays (mapv layout-of argtypes)
-        rlay (when-not void? (layout-of rettype))
-        struct-ret? (boolean (and rlay (= :struct (:type rlay))))
-        struct-arg? (fn [lay] (= :struct (:type lay)))
-        ^objects encs (object-array
-                       (map #(when (struct-arg? %) (cached-codec :encode %)) alays))
-        ^objects coercers (object-array
-                           (map (fn [t lay] (when-not (struct-arg? lay) (arg-coercer t)))
-                                argtypes alays))
-        ^longs byte-sizes (long-array (map #(long (:size %)) alays))
-        ^longs aligns (long-array (map #(long (:align %)) alays))
-        ^booleans string-arg? (boolean-array (map #(= :string %) argtypes))
-        decode (when struct-ret? (cached-codec :decode rlay))
-        handle (delay (.downcallHandle ^Linker @linker*
-                                       (require-symbol lib sym)
-                                       (struct-descriptor alays rlay)
-                                       (make-array java.lang.foreign.Linker$Option 0)))
-        ;; a struct return needs somewhere to land, which the handle takes as
-        ;; its first argument
-        base (if struct-ret? 1 0)
-        ;; one slot per handle parameter, so a generated class can call it
-        ;; with invokeExact instead of the generic invokeWithArguments
-        slots (into (if struct-ret? [:allocator] [])
-                    (map #(if (struct-arg? %) :segment :long))
-                    alays)
-        slot-types (into (if struct-ret? [nil] []) argtypes)
-        ret-kind (cond struct-ret? :segment void? :void :else :long)
-        exact (when jvm-struct-invoker
-                (jvm-struct-invoker handle slots slot-types ret-kind rettype))
-        ;; the generic invoker takes the boxed value of a carrier, and the
-        ;; descriptor names a scalar at the width C gives it
-        generic (delay (MethodHandles/explicitCastArguments
-                        ^MethodHandle @handle
-                        (MethodType/methodType
-                         ^Class (cond struct-ret? MemorySegment
-                                      void? Void/TYPE
-                                      :else (carrier-class rettype))
-                         ^"[Ljava.lang.Class;"
-                         (into-array Class (map (fn [slot t]
-                                                  (case slot
-                                                    :allocator SegmentAllocator
-                                                    :segment MemorySegment
-                                                    :long (carrier-class t)))
-                                                slots slot-types)))))
-        arity-error (fn [got]
-                      (throw (ex-info (str "babashka.ffi: " sym " expects " n
-                                           " args, got " got)
-                                      {:symbol sym})))
-        ;; the arguments as the handle takes them: a segment per struct, the
-        ;; caller's value per scalar, and a temporary C string per :string
-        prepare (fn [^Arena a ^objects arr args]
-                  (dotimes [i n]
-                    (let [v (nth args i)
-                          enc (aget encs i)]
-                      (aset arr (+ base i)
-                            (cond
-                              enc (let [seg (.allocate a (aget byte-sizes i) (aget aligns i))]
-                                    (enc a seg v)
-                                    seg)
-                              (and (aget string-arg? i) (string? v))
-                              (.address (.allocateFrom a ^String v))
-                              :else v)))))
-        ;; the call itself, from the array the prepare filled, at a fixed
-        ;; arity so that nothing allocates an argument seq per call
-        ^clojure.lang.IFn f exact
-        call (when exact
-               (case (+ base n)
-                 1 (fn [^objects a] (.invoke f (aget a 0)))
-                 2 (fn [^objects a] (.invoke f (aget a 0) (aget a 1)))
-                 3 (fn [^objects a] (.invoke f (aget a 0) (aget a 1) (aget a 2)))
-                 4 (fn [^objects a] (.invoke f (aget a 0) (aget a 1) (aget a 2) (aget a 3)))
-                 5 (fn [^objects a] (.invoke f (aget a 0) (aget a 1) (aget a 2) (aget a 3)
-                                             (aget a 4)))
-                 6 (fn [^objects a] (.invoke f (aget a 0) (aget a 1) (aget a 2) (aget a 3)
-                                             (aget a 4) (aget a 5)))
-                 (fn [^objects a] (.applyTo f (clojure.lang.ArraySeq/create a)))))]
-    (binding-with-meta
-      (fn [& args]
-        (let [args (vec args)]
-          (when-not (= n (count args)) (arity-error (count args)))
-          (clojure.core/with-open [a (Arena/ofConfined)]
-            (let [^objects arr (object-array (+ base n))]
-              (when struct-ret? (aset arr 0 a))
-              (prepare a arr args)
-              (if call
-                (let [r (call arr)]
-                  (if struct-ret? (decode r) r))
-                ;; more parameters than a generated class takes
-                (do (dotimes [i n]
-                      (when-not (aget encs i)
-                        (aset arr (+ base i) ((aget coercers i) (aget arr (+ base i))))))
-                    (let [raw (.invokeWithArguments ^MethodHandle @generic arr)]
-                      (cond struct-ret? (decode raw)
-                            void? nil
-                            :else (narrow-ret rettype raw)))))))))
-      {:babashka.ffi/backend :ffm} sym argtypes rettype)))
+  (defn- struct-ffm-cfn
+    "Returns an FFM binding for a signature that passes a struct by value. Each
+    call takes a confined arena, which holds the struct arguments, the
+    temporary C strings, and the returned struct. The return is decoded before
+    the arena closes."
+    [lib sym argtypes rettype]
+    (let [n (count argtypes)
+          void? (= :void rettype)
+          alays (mapv layout-of argtypes)
+          rlay (when-not void? (layout-of rettype))
+          struct-ret? (boolean (and rlay (= :struct (:type rlay))))
+          struct-arg? (fn [lay] (= :struct (:type lay)))
+          ^objects encs (object-array
+                         (map #(when (struct-arg? %) (cached-codec :encode %)) alays))
+          ^objects coercers (object-array
+                             (map (fn [t lay] (when-not (struct-arg? lay) (arg-coercer t)))
+                                  argtypes alays))
+          ^longs byte-sizes (long-array (map #(long (:size %)) alays))
+          ^longs aligns (long-array (map #(long (:align %)) alays))
+          ^booleans string-arg? (boolean-array (map #(= :string %) argtypes))
+          decode (when struct-ret? (cached-codec :decode rlay))
+          handle (delay (.downcallHandle ^Linker @linker*
+                                         (require-symbol lib sym)
+                                         (struct-descriptor alays rlay)
+                                         (make-array java.lang.foreign.Linker$Option 0)))
+          ;; a struct return needs somewhere to land, which the handle takes as
+          ;; its first argument
+          base (if struct-ret? 1 0)
+          ;; one slot per handle parameter, so a generated class can call it
+          ;; with invokeExact instead of the generic invokeWithArguments
+          slots (into (if struct-ret? [:allocator] [])
+                      (map #(if (struct-arg? %) :segment :long))
+                      alays)
+          slot-types (into (if struct-ret? [nil] []) argtypes)
+          ret-kind (cond struct-ret? :segment void? :void :else :long)
+          exact (when jvm-struct-invoker
+                  (jvm-struct-invoker handle slots slot-types ret-kind rettype))
+          ;; the generic invoker takes the boxed value of a carrier, and the
+          ;; descriptor names a scalar at the width C gives it
+          generic (delay (MethodHandles/explicitCastArguments
+                          ^MethodHandle @handle
+                          (MethodType/methodType
+                           ^Class (cond struct-ret? MemorySegment
+                                        void? Void/TYPE
+                                        :else (carrier-class rettype))
+                           ^"[Ljava.lang.Class;"
+                           (into-array Class (map (fn [slot t]
+                                                    (case slot
+                                                      :allocator SegmentAllocator
+                                                      :segment MemorySegment
+                                                      :long (carrier-class t)))
+                                                  slots slot-types)))))
+          arity-error (fn [got]
+                        (throw (ex-info (str "babashka.ffi: " sym " expects " n
+                                             " args, got " got)
+                                        {:symbol sym})))
+          ;; the arguments as the handle takes them: a segment per struct, the
+          ;; caller's value per scalar, and a temporary C string per :string
+          prepare (fn [^Arena a ^objects arr args]
+                    (dotimes [i n]
+                      (let [v (nth args i)
+                            enc (aget encs i)]
+                        (aset arr (+ base i)
+                              (cond
+                                enc (let [seg (.allocate a (aget byte-sizes i) (aget aligns i))]
+                                      (enc a seg v)
+                                      seg)
+                                (and (aget string-arg? i) (string? v))
+                                (.address (.allocateFrom a ^String v))
+                                :else v)))))
+          ;; the call itself, from the array the prepare filled, at a fixed
+          ;; arity so that nothing allocates an argument seq per call
+          ^clojure.lang.IFn f exact
+          call (when exact
+                 (case (+ base n)
+                   1 (fn [^objects a] (.invoke f (aget a 0)))
+                   2 (fn [^objects a] (.invoke f (aget a 0) (aget a 1)))
+                   3 (fn [^objects a] (.invoke f (aget a 0) (aget a 1) (aget a 2)))
+                   4 (fn [^objects a] (.invoke f (aget a 0) (aget a 1) (aget a 2) (aget a 3)))
+                   5 (fn [^objects a] (.invoke f (aget a 0) (aget a 1) (aget a 2) (aget a 3)
+                                               (aget a 4)))
+                   6 (fn [^objects a] (.invoke f (aget a 0) (aget a 1) (aget a 2) (aget a 3)
+                                               (aget a 4) (aget a 5)))
+                   (fn [^objects a] (.applyTo f (clojure.lang.ArraySeq/create a)))))]
+      (binding-with-meta
+        (fn [& args]
+          (let [args (vec args)]
+            (when-not (= n (count args)) (arity-error (count args)))
+            (clojure.core/with-open [a (Arena/ofConfined)]
+              (let [^objects arr (object-array (+ base n))]
+                (when struct-ret? (aset arr 0 a))
+                (prepare a arr args)
+                (if call
+                  (let [r (call arr)]
+                    (if struct-ret? (decode r) r))
+                  ;; more parameters than a generated class takes
+                  (do (dotimes [i n]
+                        (when-not (aget encs i)
+                          (aset arr (+ base i) ((aget coercers i) (aget arr (+ base i))))))
+                      (let [raw (.invokeWithArguments ^MethodHandle @generic arr)]
+                        (cond struct-ret? (decode raw)
+                              void? nil
+                              :else (narrow-ret rettype raw)))))))))
+        {:babashka.ffi/backend :ffm} sym argtypes rettype))))
 
 (defn- libffi-cfn
   "Returns a libffi binding: a struct signature on any platform, and in a

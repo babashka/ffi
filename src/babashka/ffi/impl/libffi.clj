@@ -8,11 +8,6 @@
 
 (set! *warn-on-reflection* true)
 
-(defn version
-  "Returns the version of the linked libffi."
-  []
-  (Libffi/version))
-
 (defn prep-cif
   "Calls ffi_prep_cif and returns its status code."
   [cif abi nargs rtype atypes]
