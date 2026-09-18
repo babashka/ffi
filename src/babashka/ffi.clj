@@ -27,6 +27,7 @@
   Use reinterpret to specify their size before access.
 
   :bool represents a one-byte C boolean and returns true or false.
+  For predicates declared to return C int, use :int and test with zero?.
 
   A layout describes memory: [:struct [[name type] ...]] for a struct and
   [:array type n] for a fixed array. read returns a struct as a map and an
