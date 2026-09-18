@@ -1161,7 +1161,8 @@ outside the trampoline set throw when the binding is made. babashka links
 libffi in its own build.
 
 On macOS on AArch64, a signature with a type narrower than 8 bytes after the
-eighth argument does not use a trampoline.
+eighth argument does not use a trampoline. Without libffi it throws when the
+binding is made.
 
 ## Examples
 

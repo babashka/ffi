@@ -50,6 +50,10 @@
 ;; place of an int moves the arguments after it. AArch64 passes eight
 ;; integers in registers, so a shape that stays inside them is sound, and a
 ;; wider one is not and goes through libffi at about a microsecond.
+;; babashka.ffi counts arguments, not integer arguments, when it declines a
+;; trampoline on macOS on AArch64 (narrow-on-stack? in ffi.clj). That is the
+;; same thing while only pure-integer shapes pass eight arguments. A mixed
+;; shape past eight needs that count taken over the integer arguments.
 (def max-int-args
   ;; The shape set is the same on every platform, so the generated sources
   ;; are too and can be committed. Where a shape of this width would put an
