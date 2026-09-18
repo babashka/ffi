@@ -42,12 +42,20 @@
   - a function pointer as the symbol. Bind a function by name."
   (:refer-clojure :exclude [clone])
   ;; The ClojureScript compiler takes defcfn and with-open from ffi.clj, so
-  ;; its JVM needs JDK 25 or newer. nbb uses the defmacros in this file.
+  ;; its JVM needs JDK 25 or newer. nbb uses the defmacros in this file when
+  ;; it interprets it. The compiler emits nothing for a defmacro here, so a
+  ;; compiled build that hands the namespace to SCI, as nbb does with its
+  ;; built-in module, makes the two macros from defcfn-form and
+  ;; with-open-form.
   (:require-macros [babashka.ffi])
   (:require [clojure.string :as str]))
 
 ;; getBuiltinModule loads node:ffi in both CommonJS and ESM.
 (def ^:private ^js nffi (js/process.getBuiltinModule "node:ffi"))
+
+(when-not nffi
+  (throw (ex-info "babashka.ffi: needs Node.js 26.1 or newer, node:ffi is missing"
+                  {:node (.-version js/process)})))
 (def ^:private ^js node-fs (js/process.getBuiltinModule "node:fs"))
 
 ;; Default externs preserve the close field name in advanced builds.
@@ -570,53 +578,10 @@
          general)
        {:babashka.ffi/backend :node}))))
 
-(defmacro defcfn
-  "Defines name as a C function binding created by cfn:
-
-      (defcfn sqlite3-open \"sqlite3_open\" [:string :pointer] :int)
-
-      (defcfn sqlite3-open
-        \"Opens the database at path, storing the handle in out-param pp.\"
-        \"sqlite3_open\" [:string :pointer] :int)
-
-  An optional docstring and attribute map can precede the C symbol. The final
-  three arguments are the C symbol, argument types, and return type. defcfn
-  preserves all metadata on name. This metadata includes ^:private.
-
-  The :library key in the attribute map selects a library for cfn:
-
-      (def sqlite (delay (ffi/load-library (extract-bundled-library!))))
-      (defcfn sqlite3-open {:library sqlite} \"sqlite3_open\"
-        [:string :pointer] :int)
-
-  The value can be a library map or a function that returns one. It can also
-  be an IDeref object that holds a library map.
-
-  Without :library, a binding searches all loaded libraries. Then it searches
-  the default system lookup. A system library with the same name can supply
-  the symbol.
-
-  The wrapper form binds the raw C function to a local name and defines name
-  as the wrapper:
-
-      (defcfn open-db
-        \"sqlite3_open_v2\" [:string :pointer :int :string] :int
-        open-native
-        [filename flags]
-        (ffi/with-open [arena (ffi/confined-arena)]
-          (let [pdb (ffi/alloc arena :pointer)
-                code (open-native filename pdb flags nil)]
-            (if (zero? code)
-              (ffi/read pdb :pointer)
-              (throw (ex-info \"open failed\" {:code code}))))))
-
-  The symbol after the return type names the raw binding. Only the wrapper
-  body can use this name. The forms after the raw name are a normal fn tail.
-  The wrapper can have multiple arities. Its argument lists can differ from
-  the C function. The raw name does not enter the namespace. The wrapper
-  form needs a literal argtypes vector. Only the plain form accepts an
-  argtypes expression."
-  [name & args]
+(defn ^:no-doc defcfn-form
+  "The form defcfn expands to. A function, so a compiled build has it: see
+  the ns form."
+  [name args]
   (when (< (count args) 3)
     (throw (ex-info "babashka.ffi: defcfn needs a C symbol, argtypes and a return type"
                     {:name name})))
@@ -667,6 +632,55 @@
              (fn ~name ~@fn-tail)))
         `(def ~name ~binding-form)))))
 
+(defmacro defcfn
+  "Defines name as a C function binding created by cfn:
+
+      (defcfn sqlite3-open \"sqlite3_open\" [:string :pointer] :int)
+
+      (defcfn sqlite3-open
+        \"Opens the database at path, storing the handle in out-param pp.\"
+        \"sqlite3_open\" [:string :pointer] :int)
+
+  An optional docstring and attribute map can precede the C symbol. The final
+  three arguments are the C symbol, argument types, and return type. defcfn
+  preserves all metadata on name. This metadata includes ^:private.
+
+  The :library key in the attribute map selects a library for cfn:
+
+      (def sqlite (delay (ffi/load-library (extract-bundled-library!))))
+      (defcfn sqlite3-open {:library sqlite} \"sqlite3_open\"
+        [:string :pointer] :int)
+
+  The value can be a library map or a function that returns one. It can also
+  be an IDeref object that holds a library map.
+
+  Without :library, a binding searches all loaded libraries. Then it searches
+  the default system lookup. A system library with the same name can supply
+  the symbol.
+
+  The wrapper form binds the raw C function to a local name and defines name
+  as the wrapper:
+
+      (defcfn open-db
+        \"sqlite3_open_v2\" [:string :pointer :int :string] :int
+        open-native
+        [filename flags]
+        (ffi/with-open [arena (ffi/confined-arena)]
+          (let [pdb (ffi/alloc arena :pointer)
+                code (open-native filename pdb flags nil)]
+            (if (zero? code)
+              (ffi/read pdb :pointer)
+              (throw (ex-info \"open failed\" {:code code}))))))
+
+  The symbol after the return type names the raw binding. Only the wrapper
+  body can use this name. The forms after the raw name are a normal fn tail.
+  The wrapper can have multiple arities. Its argument lists can differ from
+  the C function. The raw name does not enter the namespace. The wrapper
+  form needs a literal argtypes vector. Only the plain form accepts an
+  argtypes expression."
+  [name & args]
+  (defcfn-form name args))
+
 ;; -- arenas -------------------------------------------------------------------
 
 ;; Arenas retain allocation Buffers until close.
@@ -713,6 +727,16 @@
   []
   @the-global-arena)
 
+(defn ^:no-doc with-open-form
+  "The form with-open expands to. A function, so a compiled build has it."
+  [bindings body]
+  (if (zero? (count bindings))
+    `(do ~@body)
+    `(let [~(nth bindings 0) ~(nth bindings 1)]
+       (try
+         (babashka.ffi/with-open ~(subvec bindings 2) ~@body)
+         (finally (.close ~(nth bindings 0)))))))
+
 (defmacro with-open
   "Evaluates body with each name bound to its value. Calls .close on each
   value in reverse order when body returns or throws.
@@ -720,12 +744,7 @@
   CAUTION: On Node.js the arena closes when body returns. Do not return a
   promise that still uses it."
   [bindings & body]
-  (if (zero? (count bindings))
-    `(do ~@body)
-    `(let [~(nth bindings 0) ~(nth bindings 1)]
-       (try
-         (babashka.ffi/with-open ~(subvec bindings 2) ~@body)
-         (finally (.close ~(nth bindings 0)))))))
+  (with-open-form bindings body))
 
 (defn- arena? [x]
   (instance? Arena x))

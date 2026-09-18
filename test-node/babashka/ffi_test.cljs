@@ -494,6 +494,32 @@
 (defcfn twice-abs "abs" [:int] :int
   raw [x] (* 2 (raw x)))
 
+(deftest macro-form-test
+  (testing "defcfn-form is a function, so a compiled build can make the macro from it"
+    (let [form (ffi/defcfn-form 'c-abs '("The absolute value." "abs" [:int] :int))]
+      (is (= 'def (first form)))
+      (is (= 'c-abs (second form)))
+      (is (= "The absolute value." (:doc (meta (second form)))))
+      (is (= '(babashka.ffi/cfn nil "abs" [:int] :int) (nth form 2)))))
+  (testing "the wrapper form binds the raw name around a fn"
+    (let [form (ffi/defcfn-form 'twice '("abs" [:int] :int raw [x] (* 2 (raw x))))
+          [_let [raw binding] [_fn fname & tail]] (nth form 2)]
+      (is (= 'raw raw))
+      (is (= '(babashka.ffi/cfn nil "abs" [:int] :int) binding))
+      (is (= 'twice fname))
+      (is (= '([x] (* 2 (raw x))) tail))))
+  (testing "it validates as the macro does"
+    (is (thrown-with-msg? js/Error #"needs a C symbol, argtypes and a return type"
+                          (ffi/defcfn-form 'f '("abs" [:int]))))
+    (is (thrown-with-msg? js/Error #"raw binding name must differ"
+                          (ffi/defcfn-form 'f '("abs" [:int] :int f [x] x)))))
+  (testing "with-open-form closes in reverse order through the macro of the same name"
+    (is (= '(do 1 2) (ffi/with-open-form [] '(1 2))))
+    (let [[_let bindings [_try inner [_finally close]]] (ffi/with-open-form '[a (mk) b (mk2)] '(body))]
+      (is (= '[a (mk)] bindings))
+      (is (= '(babashka.ffi/with-open [b (mk2)] body) inner))
+      (is (= '(.close a) close)))))
+
 (deftest defcfn-test
   (testing "a docstring and the wrapper form"
     (is (= 5 (c-abs -5)))

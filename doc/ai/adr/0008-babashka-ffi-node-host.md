@@ -48,7 +48,13 @@ embeds it. The layout code is duplicated, not shared through a `.cljc`.
   `with-open` too: clojure.core's on the JVM, a try and finally around
   `.close` when it expands for ClojureScript. One script closes arenas the
   same way on every host. The compiler's JVM loads `ffi.clj` and needs JDK
-  25 or newer. nbb uses the defmacros in `ffi.cljs`.
+  25 or newer. nbb uses the defmacros in `ffi.cljs` when it interprets the
+  file. A compiled build has no defmacro of a `.cljs` file, the compiler
+  emits nothing for one, so each macro body is a public `:no-doc` function,
+  `defcfn-form` and `with-open-form`. nbb compiles `babashka.ffi` into a
+  built-in module and makes its two SCI macros from those.
+- Requiring the namespace on a Node.js without node:ffi throws a message
+  that names the version, rather than failing on the first field read.
 - An arena is `(deftype Arena [kind closed bufs cleanups close])`. `close`
   is a field that holds a function, because nbb's deftype takes no methods. An allocation is
   a zeroed `Buffer`, over-allocated for alignment, and its address comes
