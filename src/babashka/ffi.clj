@@ -297,6 +297,27 @@
       (FunctionDescriptor/ofVoid args)
       (FunctionDescriptor/of (signature-layout rettype) args))))
 
+(def ^:private carrier-value-layout
+  {:long ValueLayout/JAVA_LONG :double ValueLayout/JAVA_DOUBLE
+   :float ValueLayout/JAVA_FLOAT})
+
+(defn- carrier-descriptor
+  "The FunctionDescriptor of a signature in carriers, every integer widened
+  to a long.
+
+  A native image registers the upcall shapes it can make when it is built.
+  One shape per width per position is not a set anything can register, so a
+  callback there keeps the carrier shape. It is sound because a callback in
+  an image takes at most six arguments, which every ABI here passes in
+  registers, and an argument that never reaches the stack is read from its
+  low bits whatever width it was declared at."
+  ^FunctionDescriptor [argtypes rettype]
+  (let [lay #(carrier-value-layout (carrier %))
+        args (into-array MemoryLayout (map lay argtypes))]
+    (if (= :void rettype)
+      (FunctionDescriptor/ofVoid args)
+      (FunctionDescriptor/of (lay rettype) args))))
+
 ;; On the SysV x86-64 and AArch64 ABIs, integer and floating-point arguments
 ;; are assigned registers from two independent sequences (GP and FP), so
 ;; argument order BETWEEN those classes does not affect the calling
@@ -2524,9 +2545,15 @@
                (.bindTo f)
                (.asType target-type))
         ;; the stub takes each type at the width C gives it, as the
-        ;; descriptor says, while everything above works in carriers
-        mh (MethodHandles/explicitCastArguments mh (signature-method-type argtypes rettype))
-        stub (.upcallStub ^Linker @linker* mh (descriptor argtypes rettype)
+        ;; descriptor says, while everything above works in carriers. A
+        ;; native image keeps the carrier shape, which is what it registered.
+        mh (if native-image?
+             mh
+             (MethodHandles/explicitCastArguments mh (signature-method-type argtypes rettype)))
+        stub (.upcallStub ^Linker @linker* mh
+                          (if native-image?
+                            (carrier-descriptor argtypes rettype)
+                            (descriptor argtypes rettype))
                           ^Arena arena
                           (make-array java.lang.foreign.Linker$Option 0))]
     stub))

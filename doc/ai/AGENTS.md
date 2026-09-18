@@ -77,6 +77,13 @@ signature-method-type for an upcall stub. Naming a narrow integer by its
 carrier reads the wrong bytes once arguments spill to the stack, which
 stack-arguments-test covers.
 
+A callback in a native image is the exception: it keeps the carrier shape,
+through carrier-descriptor. babashka registers the upcall shapes an image
+can make when it builds it, in script/gen_ffi_metadata.clj, and one shape
+per width per position is not a set anything can register. It is sound
+because an image caps a callback at six arguments, which every ABI here
+passes in registers. Widen that cap and this has to be settled first.
+
 ## Run the tests
 
 JVM, needs JDK 25 or newer, the alias enables native access:
