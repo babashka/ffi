@@ -1,7 +1,7 @@
 (ns babashka.ffi.native-test
   "The checks a native image is the only place to make: the trampolines, the
   upcall shapes it registered, and the errors it gives for what it cannot
-  call. Built and run by script/native_test.sh.
+  call. Built and run by script/native_test.clj.
 
   Plain assertions and no test framework, so the image carries this
   namespace, babashka.ffi and nothing else. The suite in test/ covers what

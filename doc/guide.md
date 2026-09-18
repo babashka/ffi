@@ -1112,7 +1112,7 @@ The library includes call trampolines and reachability metadata.
 Use `graal-build-time` to initialize `babashka.ffi` and the other Clojure
 namespaces at build time.
 
-See `script/native_test.sh` for a complete build example.
+See `script/native_test.clj` for a complete build example.
 
 For a Windows image, add these options in step 4:
 

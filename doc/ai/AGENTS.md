@@ -26,7 +26,7 @@ API listing is API.md, and the decisions are in doc/ai/adr/.
   ffi_test.clj case by case, without what node:ffi cannot call.
 - test-native/babashka/ffi/native_test.clj: what only a native image
   decides, the trampolines and the registered upcall shapes. Plain
-  assertions, no framework, built and run by script/native_test.sh.
+  assertions, no framework, built and run by script/native_test.clj.
 - script/gen_ffi_metadata.clj: generates the trampolines and the
   reachability metadata into src, src-java and resources, all committed.
   babashka builds them straight from here, so the shape set and the code
