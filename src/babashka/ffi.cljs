@@ -295,13 +295,9 @@
   (when-not (contains? node-type t)
     (throw (ex-info (str "babashka.ffi: unknown type " t) {:type t}))))
 
-(defn- signature
-  "The node:ffi signature. A :bool return is read as an int32: it is what a
-  C predicate is declared as, and one such as isalpha returns an int whose
-  low byte can be zero when the int is not."
-  [argtypes rettype]
+(defn- signature [argtypes rettype]
   #js {:arguments (to-array (map node-type argtypes))
-       :return (if (= :bool rettype) "int32" (node-type rettype))})
+       :return (node-type rettype)})
 
 ;; -- libraries ----------------------------------------------------------------
 

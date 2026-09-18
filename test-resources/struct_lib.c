@@ -18,6 +18,9 @@ typedef struct { P2 lo; P2 hi; } Rect;       /* nested */
 typedef struct { int32_t id; const char *name; } Named;  /* a pointer field */
 
 EXPORT int32_t p2_sum(P2 p) { return p.x + p.y; }
+/* bound as a bool return: bit 10 stands for what a callee leaves in the
+ * register above the byte a C bool is */
+EXPORT int32_t p2_same(P2 p) { return 0x400 | (p.x == p.y); }
 EXPORT double  v3_sum(V3 v) { return v.x + v.y + v.z; }
 EXPORT int64_t big_sum(Big b) { return b.a + b.b + b.c + b.d; }
 EXPORT double  pad_sum(Pad p) { return p.c + p.d; }

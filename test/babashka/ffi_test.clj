@@ -34,11 +34,19 @@
   (cond
     (not @default-lookup?)
     (println "bool return skipped: this build has no default lookup")
-    (str/starts-with? (System/getProperty "os.name") "Windows")
-    (println "bool return skipped: isalpha is not in the Windows default lookup")
+    ;; babashka reads the whole register until it carries this code
+    (System/getProperty "babashka.version")
+    (println "bool return skipped: babashka carries its own babashka.ffi")
     :else
-    (testing "a :bool return reads the whole int a C predicate returns, glibc answers 1024 for a letter"
-      (is (= [true false] (mapv (ffi/cfn "isalpha" [:int] :bool) [97 49]))))))
+    (do
+      (testing "a :bool return is the low byte, the rest of the register is not part of a C bool"
+        (is (= [false false true true]
+               (mapv (ffi/cfn "abs" [:int] :bool) [0 1024 1025 1]))))
+      (if (str/starts-with? (System/getProperty "os.name") "Windows")
+        (println "isalpha skipped: it is not in the Windows default lookup")
+        (testing "a predicate that returns an int is declared :int, glibc answers 1024 for a letter"
+          (is (= [true false]
+                 (mapv (comp not zero? (ffi/cfn "isalpha" [:int] :int)) [97 49]))))))))
 
 (def native-image?
   (boolean (System/getProperty "org.graalvm.nativeimage.imagecode")))
@@ -284,6 +292,10 @@
     (do
       (testing "each ABI class of struct argument"
         (is (= 7 ((ffi/cfn "p2_sum" [p2] :int) {:x 3 :y 4})))
+        (when-not (System/getProperty "babashka.version")
+          (testing "a :bool return next to a struct argument is the low byte"
+            (is (= [true false]
+                   (mapv (ffi/cfn "p2_same" [p2] :bool) [{:x 3 :y 3} {:x 3 :y 4}])))))
         (is (= 6.0 ((ffi/cfn "v3_sum" [v3] :double) {:x 1.0 :y 2.0 :z 3.0})))
         (is (= 10 ((ffi/cfn "big_sum" [big] :long) {:a 1 :b 2 :c 3 :d 4})))
         (is (= 9.5 ((ffi/cfn "pad_sum" [pad] :double) {:c 7 :d 2.5})))

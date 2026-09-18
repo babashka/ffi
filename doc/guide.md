@@ -324,6 +324,16 @@ A `:bool` argument uses Clojure truthiness. A `:bool` return value is
 A `:uint8` return value is a number. In Clojure, both `0` and `1` are
 truthy.
 
+`:bool` reads one byte, which is what a C `bool` is. A predicate that C
+declares as `int`, such as `isalpha` and the rest of `ctype.h`, is an `:int`.
+Test the result for zero. glibc answers 1024 for a letter, and the low byte of
+1024 is zero, so `:bool` would answer `false`:
+
+```clojure
+(defcfn isalpha "isalpha" [:int] :int)
+(not (zero? (isalpha 97))) ;;=> true
+```
+
 A `:string` argument points to temporary memory. The pointer is valid only
 until the C function returns.
 
