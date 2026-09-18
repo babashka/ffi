@@ -789,21 +789,28 @@
 ;; argument in a register is read from its low bits, so the difference does
 ;; not show. One on the stack does show it where the ABI packs a stack slot
 ;; to the width of the argument, which macOS on AArch64 does and the others
-;; here do not. AArch64 passes eight integers in registers, so a wider shape
-;; is left to libffi there.
-(def ^:private packed-stack-slots?
+;; here do not. AArch64 passes eight integers in registers, so a shape with a
+;; narrow type after the eighth argument is left to libffi there. The check
+;; reads os.arch when the image is built, so it holds for a build on the
+;; machine it targets and not for a cross build.
+(def ^:private apple-aarch64?
   (and (= "aarch64" (System/getProperty "os.arch"))
        (= :mac (os-key))))
 
-(def ^:private max-register-args 8)
-
 (declare ^:private shape-key)
+
+(defn- narrow-on-stack?
+  "True when one of types, past the eight that AArch64 passes in registers,
+  is narrower than the long a trampoline passes it as."
+  [types]
+  (boolean (some #(< (.byteSize ^ValueLayout (signature-layout %)) 8)
+                 (drop 8 types))))
 
 (defn- trampoline-id
   "The trampoline for this shape, or nil when it has none or cannot use the
   one it has."
   [types* rettype]
-  (when-not (and packed-stack-slots? (> (count types*) max-register-args))
+  (when-not (and apple-aarch64? (narrow-on-stack? types*))
     (get trampoline-ids (shape-key types* rettype))))
 
 (defn- shape-key [types* rettype]

@@ -325,10 +325,14 @@
     (when-not (str/starts-with? (System/getProperty "os.name") "Windows")
       (testing "the committed generated sources match the generator"
         (let [before (mapv slurp generated-files)]
-          (load-file "script/gen_ffi_metadata.clj")
-          (doseq [[f b] (map vector generated-files before)]
-            (is (= b (slurp f))
-                (str f ": run bb script/gen_ffi_metadata.clj and commit the result")))))
+          (try
+            (load-file "script/gen_ffi_metadata.clj")
+            (doseq [[f b] (map vector generated-files before)]
+              (is (= b (slurp f))
+                  (str f ": run bb script/gen_ffi_metadata.clj and commit the result")))
+            (finally
+              (doseq [[f b] (map vector generated-files before)]
+                (spit f b))))))
       (testing "windows mode: ordered trampolines, no fixed FFM descriptors"
         (let [before (mapv slurp generated-files)
               parse (resolve 'cheshire.core/parse-string)]

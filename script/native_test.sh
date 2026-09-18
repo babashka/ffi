@@ -32,9 +32,6 @@ mkdir -p "$classes" target
 echo "== the fixture"
 cc -shared -fPIC -o "$lib" test-resources/struct_lib.c
 
-echo "== the generated trampolines and metadata"
-bb script/gen_ffi_metadata.clj
-
 echo "== javac"
 sdk=$(clojure -Spath -A:native)
 "$GRAALVM_HOME/bin/javac" --release 25 -cp "$sdk" -d "$classes" \

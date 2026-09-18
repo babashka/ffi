@@ -130,3 +130,10 @@ EXPORT int32_t eight_int_sum(int32_t a1, int32_t a2, int32_t a3, int32_t a4,
                              int32_t a5, int32_t a6, int32_t a7, int32_t a8) {
   return a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8;
 }
+
+/* ten 64-bit parameters: the ones on the stack are as wide as the long a
+ * trampoline passes them as, so a trampoline serves this on every ABI */
+EXPORT int64_t ten_long_sum(int64_t a1, int64_t a2, int64_t a3, int64_t a4, int64_t a5,
+                            int64_t a6, int64_t a7, int64_t a8, int64_t a9, int64_t a10) {
+  return a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10;
+}

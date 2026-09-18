@@ -11,6 +11,10 @@
 
 (def ^:private failures (atom 0))
 
+(def ^:private apple-aarch64?
+  (and (= "aarch64" (System/getProperty "os.arch"))
+       (.startsWith (System/getProperty "os.name") "Mac")))
+
 (defn- check [what expected actual]
   (if (= expected actual)
     (println "  ok  " what)
@@ -45,18 +49,19 @@
       (check "eight int arguments take a trampoline"
              :trampoline (:babashka.ffi/backend (meta eight)))
       (check "and all of them arrive" 36 (apply eight (range 1 9))))
-    ;; a shape whose arguments reach the stack gets a trampoline only where
-    ;; the ABI gives a stack slot eight bytes, which macOS on AArch64 does
-    ;; not. Where it does, the call has to be right; where it does not, the
-    ;; shape is left to libffi, and this build links none, so making the
-    ;; binding is where it says so.
-    (let [made (try {:f (ffi/cfn "ten_int_sum" (vec (repeat 10 :int)) :int)}
-                    (catch Throwable e {:error (ex-message e)}))]
-      (if-let [ten (:f made)]
-        (check "ten int arguments, on an ABI that trampolines them"
-               55 (apply ten (range 1 11)))
-        (check "ten int arguments fall off the trampolines here, and say so"
-               true (boolean (re-find #"libffi" (str (:error made)))))))
+    (let [ten (ffi/cfn "ten_long_sum" (vec (repeat 10 :long)) :long)]
+      (check "ten long arguments take a trampoline on every ABI"
+             :trampoline (:babashka.ffi/backend (meta ten)))
+      (check "and all of them arrive" 55 (apply ten (range 1 11))))
+    ;; macOS on AArch64 packs a stack slot to the argument, so narrow
+    ;; arguments past the registers go to libffi, which this build lacks
+    (if apple-aarch64?
+      (check-throws "ten int arguments are declined here, and say so"
+                    #"libffi" #(ffi/cfn "ten_int_sum" (vec (repeat 10 :int)) :int))
+      (let [ten (ffi/cfn "ten_int_sum" (vec (repeat 10 :int)) :int)]
+        (check "ten int arguments take a trampoline here"
+               :trampoline (:babashka.ffi/backend (meta ten)))
+        (check "and all of them arrive" 55 (apply ten (range 1 11)))))
 
     (println "a callback, which an image serves from the shapes it registered")
     (let [arena (ffi/global-arena)]

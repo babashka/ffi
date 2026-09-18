@@ -58,8 +58,10 @@ a narrow integer. That shows only once an argument reaches the stack, and
 only where the ABI packs a stack slot to the width of the argument, which
 macOS on AArch64 does. The shape set is the same everywhere, so the
 generated sources are too and can be committed; trampoline-id declines a
-shape wider than the argument registers at run time instead, and the call
-goes to libffi. packed-stack-slots? and max-register-args hold that rule.
+shape with a narrow type past the eighth argument at run time instead, and
+the call goes to libffi. apple-aarch64? and narrow-on-stack? hold that rule.
+It reads os.arch when the image is built, so it does not survive a cross
+build.
 
 trampoline set and the generated class bytes are keyed on carriers, not
 types. The generated class passes every argument and result as a long,
