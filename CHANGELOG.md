@@ -3,9 +3,9 @@
 [babashka.ffi](https://github.com/babashka/ffi): call C libraries from
 Clojure, babashka and Node.js.
 
-## 0.1.1
+## Unreleased
 
-## 0.1.0
+## 0.1.1
 
 First standalone release of `babashka.ffi`, available on Clojars for JVM
 Clojure, ClojureScript and nbb. The library is also built into babashka
