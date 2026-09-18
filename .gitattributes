@@ -1,0 +1,7 @@
+# written by script/gen_ffi_metadata.clj, collapsed in diffs
+src-java/babashka/ffi/impl/FfiTrampoline.java linguist-generated
+src-java/babashka/ffi/impl/FfiTrampolineOrdered.java linguist-generated
+src/babashka/ffi/impl/ffi_trampolines.clj linguist-generated
+src/babashka/ffi/impl/ffi_trampolines_ordered.clj linguist-generated
+resources/META-INF/native-image/babashka/ffi/reachability-metadata.json linguist-generated
+resources/babashka/ffi/native-image-windows/reachability-metadata.json linguist-generated

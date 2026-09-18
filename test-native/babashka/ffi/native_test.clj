@@ -1,7 +1,7 @@
 (ns babashka.ffi.native-test
   "The checks a native image is the only place to make: the trampolines, the
   upcall shapes it registered, and the errors it gives for what it cannot
-  call. Built and run by script/native_test.sh.
+  call. Built and run by script/native_test.clj.
 
   Plain assertions and no test framework, so the image carries this
   namespace, babashka.ffi and nothing else. The suite in test/ covers what
@@ -62,6 +62,14 @@
         (check "ten int arguments take a trampoline here"
                :trampoline (:babashka.ffi/backend (meta ten)))
         (check "and all of them arrive" 55 (apply ten (range 1 11)))))
+
+    (println "a double before an integer, which is a shape of its own on Windows")
+    (let [f (ffi/cfn "double_then_long" [:double :long] :double)]
+      (check "takes a trampoline" :trampoline (:babashka.ffi/backend (meta f)))
+      (check "and both arguments arrive" 3.5 (f 1.5 2)))
+    (let [cb (ffi/callback (ffi/global-arena) (fn [d l] (+ d l)) [:double :long] :double)]
+      (check "and a callback of that shape is registered"
+             3.5 ((ffi/cfn "call_double_then_long" [:pointer] :double) cb)))
 
     (println "a callback, which an image serves from the shapes it registered")
     (let [arena (ffi/global-arena)]

@@ -1091,7 +1091,8 @@ The library includes call trampolines and reachability metadata.
 
    ```sh
    javac --release 25 -cp "$(clojure -Spath -A:native)" -d target/classes \
-     path/to/ffi/src-java/babashka/ffi/impl/FfiTrampoline.java
+     path/to/ffi/src-java/babashka/ffi/impl/FfiTrampoline.java \
+     path/to/ffi/src-java/babashka/ffi/impl/FfiTrampolineOrdered.java
    ```
 
 3. Compile your namespaces ahead of time into `target/classes`.
@@ -1111,11 +1112,19 @@ The library includes call trampolines and reachability metadata.
 Use `graal-build-time` to initialize `babashka.ffi` and the other Clojure
 namespaces at build time.
 
-See `script/native_test.sh` for a complete build example.
+See `script/native_test.clj` for a complete build example.
 
-For a Windows image, run `bb script/gen_ffi_metadata.clj windows` in the
-checkout before step 2. Windows assigns argument registers by position, so
-it needs a trampoline per argument order.
+For a Windows image, add these options in step 4:
+
+```sh
+-H:+UnlockExperimentalVMOptions
+-H:ConfigurationResourceRoots=babashka/ffi/native-image-windows
+```
+
+Windows assigns argument registers by position, so its image uses
+`FfiTrampolineOrdered`, a trampoline per argument order. Other images use
+`FfiTrampoline` and leave the other class out. The options register the
+callback shapes that only Windows needs.
 
 The limits in [In a babashka native binary](#in-a-babashka-native-binary)
 and [Callbacks](#callbacks) apply. This build does not link libffi. Binding

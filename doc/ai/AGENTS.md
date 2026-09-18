@@ -26,12 +26,20 @@ API listing is API.md, and the decisions are in doc/ai/adr/.
   ffi_test.clj case by case, without what node:ffi cannot call.
 - test-native/babashka/ffi/native_test.clj: what only a native image
   decides, the trampolines and the registered upcall shapes. Plain
-  assertions, no framework, built and run by script/native_test.sh.
+  assertions, no framework, built and run by script/native_test.clj.
 - script/gen_ffi_metadata.clj: generates the trampolines and the
   reachability metadata into src, src-java and resources, all committed.
   babashka builds them straight from here, so the shape set and the code
   that assumes it live in one place. Regenerate and commit after changing
-  the generator; metadata-generated-test fails otherwise.
+  the generator; metadata-generated-test fails otherwise. There are two
+  trampoline sets, sorted and ordered, and ffi.clj loads the ordered one on
+  Windows when the image is built, so no build runs the generator. The 39
+  upcall shapes only Windows needs are in
+  resources/babashka/ffi/native-image-windows, which native-image reads only
+  when -H:ConfigurationResourceRoots names it. An image elsewhere is the same
+  size with or without them, measured: 16,340,144 bytes against 16,389,824
+  with the flag. GraalVM 25 refuses a condition on a foreign call, which
+  would have kept this to one file.
 - test-resources/struct_lib.c: fixture for struct-by-value tests, compiled
   into target/ when cc or cl is on PATH.
 - examples/: runnable scripts, each on both hosts.

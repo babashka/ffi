@@ -314,8 +314,11 @@
 
 (def ^:private generated-files
   ["resources/META-INF/native-image/babashka/ffi/reachability-metadata.json"
+   "resources/babashka/ffi/native-image-windows/reachability-metadata.json"
    "src-java/babashka/ffi/impl/FfiTrampoline.java"
-   "src/babashka/ffi/impl/ffi_trampolines.clj"])
+   "src-java/babashka/ffi/impl/FfiTrampolineOrdered.java"
+   "src/babashka/ffi/impl/ffi_trampolines.clj"
+   "src/babashka/ffi/impl/ffi_trampolines_ordered.clj"])
 
 (deftest metadata-generated-test
   ;; babashka only: the generator is a babashka script and reads JSON with
@@ -333,28 +336,25 @@
             (finally
               (doseq [[f b] (map vector generated-files before)]
                 (spit f b))))))
-      (testing "windows mode: ordered trampolines, no fixed FFM descriptors"
-        (let [before (mapv slurp generated-files)
-              parse (resolve 'cheshire.core/parse-string)]
-          (try
-            (binding [*command-line-args* '("windows")]
-              (load-file "script/gen_ffi_metadata.clj"))
-            (let [meta (parse (slurp (first generated-files)))
-                  downcalls (get-in meta ["foreign" "downcalls"])
-                  java-src (slurp (second generated-files))]
-              (testing "no FFM downcall descriptors: a trampoline or libffi makes every call"
-                (is (empty? downcalls)))
-              (testing "upcalls respect the 2-double family limit"
-                (is (every? #(<= (count (filter #{"jdouble"} (get % "parameterTypes"))) 2)
-                            (get-in meta ["foreign" "upcalls"]))))
-              (testing "ordered shapes get trampolines, out-of-family ones do not"
-                (is (str/includes? java-src "interface F_D_DJ "))
-                (is (str/includes? java-src "interface F_J_JJJJJJJJJJ "))
-                (is (str/includes? java-src "interface F_V_JJDDDD "))
-                (is (not (str/includes? java-src "interface F_V_DDDFJ ")))))
-            (finally
-              (doseq [[f b] (map vector generated-files before)]
-                (spit f b)))))))))
+      (testing "the ordered set, which a Windows image loads"
+        (let [parse (resolve 'cheshire.core/parse-string)
+              base (parse (slurp (nth generated-files 0)))
+              windows (parse (slurp (nth generated-files 1)))
+              java-src (slurp (nth generated-files 3))
+              upcalls (concat (get-in base ["foreign" "upcalls"])
+                              (get-in windows ["foreign" "upcalls"]))]
+          (testing "no FFM downcall descriptors: a trampoline or libffi makes every call"
+            (is (empty? (get-in base ["foreign" "downcalls"]))))
+          (testing "upcalls respect the 2-double family limit"
+            (is (every? #(<= (count (filter #{"jdouble"} (get % "parameterTypes"))) 2)
+                        upcalls)))
+          (testing "the Windows file holds only what the base file lacks"
+            (is (= 81 (count upcalls) (count (distinct upcalls)))))
+          (testing "ordered shapes get trampolines, out-of-family ones do not"
+            (is (str/includes? java-src "interface F_D_DJ "))
+            (is (str/includes? java-src "interface F_J_JJJJJJJJJJ "))
+            (is (str/includes? java-src "interface F_V_JJDDDD "))
+            (is (not (str/includes? java-src "interface F_V_DDDFJ ")))))))))
 
 (deftest stack-arguments-test
   ;; An argument that runs out of registers travels on the stack, and macOS
