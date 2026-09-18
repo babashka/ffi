@@ -3,11 +3,12 @@
 [![Clojars Project](https://img.shields.io/clojars/v/org.babashka/ffi.svg)](https://clojars.org/org.babashka/ffi)
 [![bb built-in](https://raw.githubusercontent.com/babashka/babashka/master/logo/built-in-badge.svg)](https://book.babashka.org#badges)
 
-Call C libraries from Clojure and [babashka](https://github.com/babashka/babashka).
+Call C libraries from Clojure, [babashka](https://github.com/babashka/babashka)
+and Node.js.
 
 This library is the `babashka.ffi` namespace that ships inside babashka,
-extracted so that JVM Clojure programs can use it too. Babashka consumes this
-repository as a submodule.
+extracted so that JVM Clojure and Node.js programs can use it too. It has no
+dependencies beyond JDK 25. Babashka consumes this repository as a submodule.
 
 Status: experimental. The API can still change.
 
