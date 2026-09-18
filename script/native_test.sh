@@ -49,7 +49,6 @@ echo "== native-image"
   -cp "$cp" \
   --features=clj_easy.graal_build_time.InitClojureClasses \
   -H:+ForeignAPISupport \
-  --enable-preview \
   --enable-native-access=ALL-UNNAMED \
   --no-fallback \
   -O1 \

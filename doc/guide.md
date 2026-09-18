@@ -35,6 +35,7 @@ calls without these settings.
   - [On Node.js](#on-nodejs)
   - [String arguments](#string-arguments)
   - [Callbacks](#callbacks)
+- [Build your own native image](#build-your-own-native-image)
 - [Examples](#examples)
 
 ## Quickstart
@@ -993,6 +994,10 @@ calls through a trampoline in about 30 nanoseconds. The set covers:
 
 Argument order does not change this set.
 
+On macOS on AArch64, a signature with a type narrower than 8 bytes after the
+eighth argument calls through libffi. A trampoline passes each argument as
+8 bytes, and that platform gives an argument on the stack its own width.
+
 Every shape in the set adds compiled code to the babashka binary. If a shape
 you need is missing, or a call you make often falls back to libffi, open an
 issue. The set can grow.
@@ -1088,6 +1093,75 @@ Callbacks do not use libffi on either host and keep these limits:
   For `:pointer`, return a pointer, or `nil` for null.
 
 If a C API needs a callback shape outside this set, open an issue.
+
+## Build your own native image
+
+Use this library in a GraalVM native image of your own program. babashka
+builds its binary from the same sources.
+
+The repository carries what an image needs:
+
+- `src/babashka/ffi/impl/ffi_trampolines.clj` and
+  `src-java/babashka/ffi/impl/FfiTrampoline.java`: the compiled call
+  trampolines. A fixed signature in the set calls C in about 30 nanoseconds.
+- `resources/META-INF/native-image/babashka/ffi/reachability-metadata.json`:
+  the callback shapes and the reflection entries. native-image reads it from
+  the classpath.
+
+Needs Oracle GraalVM 25 or newer.
+
+1. Add the library, the GraalVM SDK and
+   [graal-build-time](https://github.com/clj-easy/graal-build-time) to
+   `deps.edn`:
+
+   ```clojure
+   {:deps {io.github.babashka/ffi {:git/url "https://github.com/babashka/ffi"
+                                   :git/sha "..."}
+           com.github.clj-easy/graal-build-time {:mvn/version "1.0.5"}}
+    :aliases {:native {:extra-deps {org.graalvm.sdk/nativeimage {:mvn/version "25.0.2"}}}}}
+   ```
+
+2. Compile the trampoline class. A git dependency does not compile Java
+   sources, so compile the file from the checkout of the library:
+
+   ```sh
+   javac --release 25 -cp "$(clojure -Spath -A:native)" -d target/classes \
+     path/to/ffi/src-java/babashka/ffi/impl/FfiTrampoline.java
+   ```
+
+3. Compile your namespaces ahead of time into `target/classes`.
+
+4. Build the image:
+
+   ```sh
+   native-image \
+     -cp "$(clojure -Spath -A:native):target/classes" \
+     --features=clj_easy.graal_build_time.InitClojureClasses \
+     -H:+ForeignAPISupport \
+     --enable-native-access=ALL-UNNAMED \
+     --no-fallback \
+     -o my-program my.main
+   ```
+
+`babashka.ffi` must initialize at build time, which graal-build-time does
+for every Clojure namespace. It reads there that it runs in an image and
+selects the trampolines.
+
+`script/native_test.sh` in the repository runs these steps for the library's
+own test image. Use it as the working example.
+
+For a Windows image, run `bb script/gen_ffi_metadata.clj windows` in the
+checkout before step 2. Windows assigns argument registers by position, so
+it needs a trampoline per argument order.
+
+The limits in [In a babashka native binary](#in-a-babashka-native-binary)
+and [Callbacks](#callbacks) apply, with one difference: the library does not
+link libffi. A struct by value, a variadic signature and a fixed signature
+outside the trampoline set throw when the binding is made. babashka links
+libffi in its own build.
+
+On macOS on AArch64, a signature with a type narrower than 8 bytes after the
+eighth argument does not use a trampoline.
 
 ## Examples
 
