@@ -19,7 +19,8 @@
                           "--classpath" (str "src" fs/path-separator "test-node")
                           "-m" "babashka.ffi-test")}
   test:native {:doc "Build a native image of babashka.ffi and run test-native against it. Needs GRAALVM_HOME."
-               :task (shell "bb" "script/native_test.clj")}
+               :task (do (load-file "script/native_test.clj")
+                         ((resolve 'native-test/-main)))}
   test:cljs {:doc "Run the Node.js tests compiled with ClojureScript. Pass advanced for an :advanced build."
              :requires ([babashka.fs :as fs])
              :task (if (= "advanced" (first *command-line-args*))

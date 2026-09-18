@@ -56,7 +56,8 @@
 
   (step "the fixture")
   (if (fs/windows?)
-    (p/shell "cl" "/nologo" "/LD" fixture (str "/Fe:" lib) (str "/Fo:" lib ".obj"))
+    (p/shell "cl" "/nologo" "/LD" fixture (str "/Fe:" lib)
+             (str "/Fo:" (fs/path "target" "ffistructs.obj")))
     (p/shell "cc" "-shared" "-fPIC" "-o" lib fixture))
 
   (step "javac")
