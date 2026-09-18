@@ -1140,7 +1140,25 @@ callback shapes that only Windows needs.
 The limits in [In a babashka native binary](#in-a-babashka-native-binary)
 and [Callbacks](#callbacks) apply. This build does not link libffi. Binding
 fails for structs passed by value, variadic signatures, and fixed signatures
-outside the trampoline set. babashka links libffi in its own build.
+outside the trampoline set.
+
+To link libffi, as babashka does in its own build:
+
+1. Add `path/to/ffi/src-java/babashka/ffi/impl/Libffi.java` to the `javac`
+   command in step 2.
+2. Set `BABASHKA_FEATURE_LIBFFI=true` in the environment of `native-image`.
+3. Add these options in step 4. The last one can also be the path of a
+   static libffi archive:
+
+   ```sh
+   -EBABASHKA_FEATURE_LIBFFI
+   -H:+UnlockExperimentalVMOptions
+   -H:NativeLinkerOption=-lffi
+   ```
+
+`babashka.ffi` loads the libffi bindings only when the variable is `true`
+while the image is built. With the variable set and no libffi to link,
+the image does not link.
 
 On macOS on AArch64, a signature with a type narrower than 8 bytes after the
 eighth argument does not use a trampoline. Without libffi it throws when the
