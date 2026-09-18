@@ -1,5 +1,8 @@
 # babashka.ffi
 
+[![Clojars Project](https://img.shields.io/clojars/v/org.babashka/ffi.svg)](https://clojars.org/org.babashka/ffi)
+[![bb built-in](https://raw.githubusercontent.com/babashka/babashka/master/logo/built-in-badge.svg)](https://book.babashka.org#badges)
+
 Call C libraries from Clojure and [babashka](https://github.com/babashka/babashka).
 
 This library is the `babashka.ffi` namespace that ships inside babashka,

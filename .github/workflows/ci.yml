@@ -20,6 +20,16 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
+      # gitlibs for the test runner, so a repository hiccup cannot fail a run twice
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'bb.edn') }}
+          restore-keys: deps-${{ runner.os }}-
+
       # The download from objects.githubusercontent.com fails now and then
       # with curl exit 8, a reply curl cannot parse. Retrying clears it.
       - name: Install babashka dev build
@@ -60,6 +70,16 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ matrix.jdk }}
+
+      # Maven and gitlibs, so a repository hiccup cannot fail a run twice
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'bb.edn') }}
+          restore-keys: deps-${{ runner.os }}-
 
       - uses: DeLaGuardo/setup-clojure@13.4
         with:
@@ -116,6 +136,16 @@ jobs:
           distribution: graalvm
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Maven and gitlibs, so a repository hiccup cannot fail a run twice
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'bb.edn') }}
+          restore-keys: deps-${{ runner.os }}-
+
       - uses: DeLaGuardo/setup-clojure@13.4
         with:
           cli: latest
@@ -161,6 +191,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
+
+      # Maven and gitlibs, so a repository hiccup cannot fail a run twice
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'bb.edn') }}
+          restore-keys: deps-${{ runner.os }}-
 
       - uses: DeLaGuardo/setup-clojure@13.4
         with:
