@@ -95,7 +95,11 @@ jvm-return-conversion-test checks narrow-ret and bits-ret-fn against each
 other through a callback that returns each type.
 
 signature-layout is what a descriptor names a type by, at the width C gives
-it. A carrier is what the call path moves it in. The two differ for every
+it. :bool is one byte, as in FFM and node:ffi, and every conversion of a
+:bool masks to that byte: narrow-ret, bits-ret-fn and the callback argument.
+The rest of the register is not part of a C bool, a callee that ends in
+sete %al leaves it as it was, and a trampoline returns the whole register.
+A carrier is what the call path moves it in. The two differ for every
 integer narrower than 64 bits, so a handle built from a descriptor is cast
 between them: carrier-handle for the generic invoker, struct-handle in
 binding.clj for the generated class, and explicitCastArguments onto

@@ -94,7 +94,7 @@
   ;; Resolve the type once, keeping the raw result primitive until conversion.
   (case rettype
     :void (fn [^long _] nil)
-    :bool (fn [^long r] (not (zero? r)))
+    :bool (fn [^long r] (not (zero? (bit-and r 0xFF))))
     (:int :int32) (fn [^long r] (long (unchecked-int r)))
     (:uint :uint32) (fn [^long r] (bit-and r 0xFFFFFFFF))
     :int16 (fn [^long r] (long (unchecked-short r)))

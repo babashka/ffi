@@ -27,6 +27,7 @@
   Use reinterpret to specify their size before access.
 
   :bool represents a one-byte C boolean and returns true or false.
+  For predicates declared to return C int, use :int and test with zero?.
 
   A layout describes memory: [:struct [[name type] ...]] for a struct and
   [:array type n] for a fixed array. read returns a struct as a map and an
@@ -560,7 +561,9 @@
 (defn- narrow-ret [t raw]
   (case t
     :void nil
-    :bool (not (zero? (long raw)))
+    ;; a C bool is one byte, and the rest of the register is whatever the
+    ;; callee left there
+    :bool (not (zero? (bit-and (long raw) 0xFF)))
     (:int :int32) (long (unchecked-int (long raw)))
     (:uint :uint32) (bit-and (long raw) 0xFFFFFFFF)
     :int16 (long (unchecked-short (long raw)))
@@ -2539,7 +2542,7 @@
         ret-c (when-not (= :void rettype) (arg-coercer rettype))
         in-c (mapv (fn [t]
                      (cond
-                       (= :bool t) (fn [a] (not (zero? (long a))))
+                       (= :bool t) (fn [a] (narrow-ret :bool a))
                        (= :pointer t) (fn [a] (MemorySegment/ofAddress (long a)))
                        ;; the stub of a native image takes the carrier, so
                        ;; the sign of a narrow integer is in the low half

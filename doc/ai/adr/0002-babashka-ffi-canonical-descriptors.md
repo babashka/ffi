@@ -418,6 +418,36 @@ cast between the two. babashka is unaffected on the libffi path, which
 describes each type exactly, and wrong on the trampoline path, which takes
 every argument as a long. That fix belongs in the trampoline sources.
 
+## :bool is one byte, and an int predicate is an :int, 2026-09-18
+
+The width change made a `:bool` return one byte on the JVM, and babashka's
+`bool-test` went red on Linux: `(ffi/cfn "isalpha" [:int] :bool)` answered
+false for a letter. `isalpha` returns an int, glibc answers 1024, and the low
+byte of 1024 is zero. macOS answers 1, so no local run saw it, and a
+trampoline read the whole register, so no native run did either.
+
+Rejected: read a `:bool` return as an int. It fixes `isalpha` and breaks a
+real C `bool`. The x86-64 ABI defines the low byte of a bool return and
+leaves the rest of the register unspecified, and compilers use that. clang
+and gcc at -O2 end `return y == 5;` in `sete %al`, which writes one byte, so
+after a callee that computed 1024 the register holds 0x400 for false. Read
+as an int that is true, and whether it happens depends on the data. One
+keyword cannot read both kinds of function.
+
+Decided: `:bool` is one byte. That is FFM's `JAVA_BOOLEAN`, node:ffi's
+`"bool"`, measured on Node.js 26.9 to read 1024 as 0, the libffi
+convention of uint8, and what a `:bool` struct field already was. coffi has
+no bool type and declares such a predicate as an int. The wrong answer this
+leaves is for an int predicate declared `:bool`. It is the same on every
+call, and the guide says to declare it `:int`.
+
+The same fact was a bug on the trampoline path: `narrow-ret` tested the
+whole long a trampoline returns, so a native image on x86-64 could answer
+true for a false bool. Every conversion of a `:bool` now masks to the low
+byte: `narrow-ret`, `bits-ret-fn` and the callback argument. The tests bind
+`abs` as a `:bool` return and pass 1024, which puts the register content of
+the `sete %al` case there on every host and at every optimization level.
+
 ## Known gaps
 
 - Struct-by-value. DECIDED (2026-08-21), follow-up issue, not this branch:

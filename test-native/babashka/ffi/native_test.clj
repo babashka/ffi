@@ -42,6 +42,9 @@
       (check "a scalar call goes through a trampoline"
              :trampoline (:babashka.ffi/backend (meta abs)))
       (check "abs" 5 (abs -5))
+      (check "a :bool return is the low byte of what the trampoline returns"
+             [false false true true]
+             (mapv (ffi/cfn "abs" [:int] :bool) [0 1024 1025 1]))
       (check "strlen" 5 (strlen "hello")))
 
     (println "arguments up to and past the argument registers")

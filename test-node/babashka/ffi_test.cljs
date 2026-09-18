@@ -24,6 +24,12 @@
       (is (= 5 (llabs -5)))
       (is (= 5 (llabs (js/BigInt -5))))
       (is (= (js/BigInt "9007199254740993") (llabs (js/BigInt "-9007199254740993"))))))
+  (testing "a :bool return is the low byte, the rest of the register is not part of a C bool"
+    (is (= [false false true true]
+           (mapv (ffi/cfn "toupper" [:int] :bool) [0 1024 1025 1]))))
+  (testing "a predicate that returns an int is declared :int"
+    (is (= [true false]
+           (mapv (comp not zero? (ffi/cfn "isalpha" [:int] :int)) [97 49]))))
   (testing ":double, :float and :string returns"
     (is (= 3 ((ffi/cfn "sqrt" [:double] :double) 9)))
     (is (= 3 ((ffi/cfn "sqrtf" [:float] :float) 9)))
