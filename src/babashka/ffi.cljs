@@ -848,8 +848,18 @@
 ;; keeps the brackets. ClojureScript hashes the collection as it always did.
 (def ^:private squint? (string? :probe))
 
-(defn- cache-key [k]
-  (if squint? (pr-str k) k))
+;; A layout is data and does not change, so its printed form is remembered
+;; per object. JSON.stringify keeps the brackets and runs native; the
+;; WeakMap means a layout that is held in a var pays for it once.
+(def ^:private key-cache (when squint? (js/WeakMap.)))
+
+(defn- layout-key [t]
+  (if (and squint? (object? t))
+    (or (.get key-cache t)
+        (let [k (js/JSON.stringify t)]
+          (.set key-cache t k)
+          k))
+    t))
 
 (def ^:private layout-cache (atom {}))
 (def ^:private cache-limit 256)
@@ -916,7 +926,7 @@
   [t]
   (if (keyword? t)
     (layout-of* t)
-    (let [k (cache-key t)]
+    (let [k (layout-key t)]
       (or (get @layout-cache k)
           (let [v (layout-of* t)]
             (swap! layout-cache
@@ -1096,7 +1106,7 @@
 ;; key that holds a map matches any other, so [kind lay] would hand a nested
 ;; layout the codec of whatever was cached first.
 (defn- cached-codec [kind t lay]
-  (let [k (cache-key [kind t])]
+  (let [k (if squint? (str (name kind) "|" (layout-key t)) [kind t])]
     (or (get @codec-cache k)
         (let [v (case kind
                   :decode (decoder lay 0)
@@ -1322,7 +1332,7 @@
   ([t] (place t []))
   ([t path]
    (let [path (if (vector? path) path [path])
-         k (cache-key [t path])]
+         k (if squint? (str (layout-key t) "|" (js/JSON.stringify path)) [t path])]
      (or (get @place-cache k)
          (let [[off lay] (resolve-path (layout-of t) path)
                v (Place. t path (decoder lay off) (encoder lay off path) (+ off (:size lay)))]
