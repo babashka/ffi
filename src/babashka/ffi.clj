@@ -767,7 +767,7 @@
   (boolean (System/getProperty "org.graalvm.nativeimage.imagecode")))
 
 ;; In a native image, FFM downcall handles are interpreted (~3.4us/call);
-;; the generated trampolines (babashka.impl.FfiTrampoline) call through raw
+;; the generated trampolines (babashka.ffi.impl.FfiTrampoline) call through raw
 ;; function pointers as compiled direct calls (~2ns). One per canonical
 ;; shape; loaded only in the image, never on the JVM, where the FFM handle
 ;; path is JIT-compiled and fast.
@@ -2197,13 +2197,15 @@
 
 (def ^:private linked-libffi
   "The libffi that is linked into a native image. Calls use the @CFunction
-  bindings in babashka.impl.libffi. The value is resolved only when the build
-  links the archive. See BABASHKA_FEATURE_LIBFFI and script/libffi_archive.sh.
+  bindings in babashka.ffi.impl.libffi. The value is resolved only when the
+  build links libffi and says so with BABASHKA_FEATURE_LIBFFI=true, which the
+  builder has to see: pass -EBABASHKA_FEATURE_LIBFFI to native-image. An
+  image that loads the bindings without linking libffi does not link.
   The value is nil on the JVM."
   (when (and native-image? (= "true" (System/getenv "BABASHKA_FEATURE_LIBFFI")))
-    (try {:prep-cif @(requiring-resolve 'babashka.impl.libffi/prep-cif)
-          :prep-cif-var @(requiring-resolve 'babashka.impl.libffi/prep-cif-var)
-          :call @(requiring-resolve 'babashka.impl.libffi/call)}
+    (try {:prep-cif @(requiring-resolve 'babashka.ffi.impl.libffi/prep-cif)
+          :prep-cif-var @(requiring-resolve 'babashka.ffi.impl.libffi/prep-cif-var)
+          :call @(requiring-resolve 'babashka.ffi.impl.libffi/call)}
          (catch Throwable _ nil))))
 
 (def ^:private libffi

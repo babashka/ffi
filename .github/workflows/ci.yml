@@ -125,6 +125,30 @@ jobs:
       - name: Build and run the native image
         run: bb test:native
 
+      # Struct calls and variadic calls go through libffi in an image, so a
+      # second image links it. macOS carries libffi in its SDK.
+      - name: libffi, Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libffi-dev
+          echo "BABASHKA_LIBFFI=system" >> "$GITHUB_ENV"
+
+      - name: libffi, macOS
+        if: runner.os == 'macOS'
+        run: echo "BABASHKA_LIBFFI=system" >> "$GITHUB_ENV"
+
+      # a static libffi with the dynamic C runtime native-image links
+      - name: libffi, Windows
+        if: runner.os == 'Windows'
+        run: |
+          "$VCPKG_INSTALLATION_ROOT/vcpkg.exe" install libffi:x64-windows-static-md
+          lib="$(ls "$VCPKG_INSTALLATION_ROOT"/installed/x64-windows-static-md/lib/*ffi*.lib | head -1)"
+          echo "BABASHKA_LIBFFI=$(cygpath -w "$lib")" >> "$GITHUB_ENV"
+
+      - name: Build and run the native image with libffi
+        run: bb test:native
+
   cljs:
     name: ClojureScript and shadow-cljs
     runs-on: ubuntu-latest

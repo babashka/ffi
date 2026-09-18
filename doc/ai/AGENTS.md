@@ -24,6 +24,11 @@ API listing is API.md, and the decisions are in doc/ai/adr/.
 - test-jvm/babashka/ffi_binding_test.clj: the generated class, JVM only.
 - test-node/babashka/ffi_test.cljs: the Node.js suite. It follows
   ffi_test.clj case by case, without what node:ffi cannot call.
+- src/babashka/ffi/impl/libffi.clj and src-java/babashka/ffi/impl/Libffi.java:
+  the @CFunction bindings to a libffi linked into a native image. ffi.clj
+  loads them with requiring-resolve, and only in an image built with
+  BABASHKA_FEATURE_LIBFFI=true, so an image without libffi never reaches
+  the class and links without it. babashka builds them from here.
 - test-native/babashka/ffi/native_test.clj: what only a native image
   decides, the trampolines and the registered upcall shapes. Plain
   assertions, no framework, built and run by script/native_test.clj.
@@ -140,7 +145,13 @@ reports on babashka's code, not on the tree.
 
 ```sh
 bb test:native
+BABASHKA_LIBFFI=system bb test:native
 ```
+
+The first image links no libffi and checks that a struct call and a variadic
+signature are refused. The second links the libffi of the system with -lffi
+and checks that they are called. BABASHKA_LIBFFI can also be the path of an
+archive. CI runs both on Linux, macOS and Windows.
 
 Node.js, needs Node.js 26.1 or newer on PATH. The three commands run
 test-node under nbb, ClojureScript and shadow-cljs. The last two need JDK 25

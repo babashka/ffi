@@ -6,11 +6,15 @@
   is observable from the JVM suite, and running the tests against a released
   babashka only reports the babashka.ffi that binary was built with.
 
-  Needs GRAALVM_HOME and a C compiler, cc or on Windows cl. Without libffi,
-  which the build does not link, a struct call and a variadic signature are
-  expected to throw.
+  Needs GRAALVM_HOME and a C compiler, cc or on Windows cl.
 
-      bb test:native"
+  BABASHKA_LIBFFI decides whether the image links libffi. Unset or none, it
+  does not, and a struct call and a variadic signature are expected to
+  throw. Set to system, it links the libffi of the system with -lffi. Any
+  other value is the path of a libffi archive or import library.
+
+      bb test:native
+      BABASHKA_LIBFFI=system bb test:native"
   (:require [babashka.deps :as deps]
             [babashka.fs :as fs]
             [babashka.process :as p]
@@ -36,6 +40,10 @@
                       :else "libffistructs.so"))))
 
 (def fixture (str (fs/path "test-resources" "struct_lib.c")))
+
+(def libffi
+  (let [v (System/getenv "BABASHKA_LIBFFI")]
+    (when-not (contains? #{nil "" "none"} v) v)))
 
 (defn- step [title] (println "==" title))
 
@@ -65,15 +73,17 @@
         cp (str/join fs/path-separator [sdk "test-native" (str classes)])]
     (p/shell (graalvm-bin "javac") "--release" "25" "-cp" sdk "-d" (str classes)
              "src-java/babashka/ffi/impl/FfiTrampoline.java"
-             "src-java/babashka/ffi/impl/FfiTrampolineOrdered.java")
+             "src-java/babashka/ffi/impl/FfiTrampolineOrdered.java"
+             "src-java/babashka/ffi/impl/Libffi.java")
 
     (step "compiling the namespaces")
     (clojure "-Scp" cp "-J--enable-native-access=ALL-UNNAMED"
              "-e" (pr-str (list 'binding ['*compile-path* (str classes)]
                                 '(compile 'babashka.ffi.native-test))))
 
-    (step "native-image")
-    (apply p/shell (graalvm-bin "native-image")
+    (step (str "native-image, " (if libffi (str "with libffi: " libffi) "without libffi")))
+    (apply p/shell {:extra-env {"BABASHKA_FEATURE_LIBFFI" (str (boolean libffi))}}
+           (graalvm-bin "native-image")
            "-cp" cp
            "--features=clj_easy.graal_build_time.InitClojureClasses"
            "-H:+UnlockExperimentalVMOptions"
@@ -87,6 +97,12 @@
             ;; need are in a metadata file of their own
             (when (fs/windows?)
               ["-H:ConfigurationResourceRoots=babashka/ffi/native-image-windows"])
+            ;; babashka.ffi reads the variable when the image is built, and
+            ;; loads the libffi bindings only then
+            ["-EBABASHKA_FEATURE_LIBFFI"]
+            (when libffi
+              [(str "-H:NativeLinkerOption="
+                    (if (= "system" libffi) "-lffi" (str (fs/absolutize libffi))))])
             ["-o" (str (fs/path out "ffi-native-test"))
              "babashka.ffi.native_test"])))
 

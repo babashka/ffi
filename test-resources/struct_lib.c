@@ -2,6 +2,7 @@
  * are covered by libc div; nothing portable in libc takes a struct by
  * value, so these functions do. */
 
+#include <stdarg.h>
 #include <stdint.h>
 
 #ifdef _WIN32
@@ -147,3 +148,20 @@ EXPORT double double_then_long(double d, int64_t l) { return d + (double) l; }
 
 typedef double (*dl_cb)(double, int64_t);
 EXPORT double call_double_then_long(dl_cb f) { return f(1.5, 2); }
+
+/* variadic, for an image that has no snprintf in its default lookup: n
+ * ints, and n doubles, which Windows passes in two registers at once */
+EXPORT int64_t var_int_sum(int32_t n, ...) {
+  va_list ap; int64_t s = 0;
+  va_start(ap, n);
+  for (int32_t i = 0; i < n; i++) s += va_arg(ap, int32_t);
+  va_end(ap);
+  return s;
+}
+EXPORT double var_double_sum(int32_t n, ...) {
+  va_list ap; double s = 0;
+  va_start(ap, n);
+  for (int32_t i = 0; i < n; i++) s += va_arg(ap, double);
+  va_end(ap);
+  return s;
+}

@@ -15,6 +15,11 @@
   (and (= "aarch64" (System/getProperty "os.arch"))
        (.startsWith (System/getProperty "os.name") "Mac")))
 
+(def ^:private libffi?
+  "Whether the image links libffi. babashka.ffi reads the same variable, and
+  both read it when the image is built."
+  (= "true" (System/getenv "BABASHKA_FEATURE_LIBFFI")))
+
 (defn- check [what expected actual]
   (if (= expected actual)
     (println "  ok  " what)
@@ -57,13 +62,16 @@
              :trampoline (:babashka.ffi/backend (meta ten)))
       (check "and all of them arrive" 55 (apply ten (range 1 11))))
     ;; macOS on AArch64 packs a stack slot to the argument, so narrow
-    ;; arguments past the registers go to libffi, which this build lacks
-    (if apple-aarch64?
+    ;; arguments past the registers go to libffi
+    (if (and apple-aarch64? (not libffi?))
       (check-throws "ten int arguments are declined here, and say so"
                     #"libffi" #(ffi/cfn "ten_int_sum" (vec (repeat 10 :int)) :int))
       (let [ten (ffi/cfn "ten_int_sum" (vec (repeat 10 :int)) :int)]
-        (check "ten int arguments take a trampoline here"
-               :trampoline (:babashka.ffi/backend (meta ten)))
+        (check (if apple-aarch64?
+                 "ten int arguments go to libffi here"
+                 "ten int arguments take a trampoline here")
+               (if apple-aarch64? :libffi :trampoline)
+               (:babashka.ffi/backend (meta ten)))
         (check "and all of them arrive" 55 (apply ten (range 1 11)))))
 
     (println "a double before an integer, which is a shape of its own on Windows")
@@ -107,12 +115,36 @@
         (check "a string round trips"
                "hello" (ffi/ptr->string (ffi/string->ptr arena "hello")))))
 
-    (println "what a build without libffi refuses, rather than calling wrongly")
-    (check-throws "a struct by value" #"libffi"
-                  #(let [f (ffi/cfn "p2_sum" [[:struct [[:x :int] [:y :int]]]] :int)]
-                     (f {:x 1 :y 2})))
-    (check-throws "a variadic signature" #"libffi"
-                  #(ffi/cfn "snprintf" [:pointer :size_t :string :&] :int))
+    (if libffi?
+      (let [p2 [:struct [[:x :int] [:y :int]]]
+            v3 [:struct [[:x :double] [:y :double] [:z :double]]]]
+        (println "what libffi calls: structs by value and variadic signatures")
+        (let [f (ffi/cfn "p2_sum" [p2] :int)]
+          (check "a struct by value goes to libffi" :libffi (:babashka.ffi/backend (meta f)))
+          (check "and its fields arrive" 3 (f {:x 1 :y 2})))
+        (check "a struct between scalars"
+               22.5 ((ffi/cfn "mixed_sum" [:int p2 :double v3] :double)
+                     1 {:x 2 :y 3} 4.5 {:x 3.0 :y 4.0 :z 5.0}))
+        (check "a :bool return next to a struct argument is the low byte"
+               [true false]
+               (mapv (ffi/cfn "p2_same" [p2] :bool) [{:x 3 :y 3} {:x 3 :y 4}]))
+        (let [rect [:struct [[:lo p2] [:hi p2]]]]
+          (check "a struct argument and a struct return"
+                 {:lo {:x 3 :y 4} :hi {:x 1 :y 2}}
+                 ((ffi/cfn "rect_swap" [rect] rect) {:lo {:x 1 :y 2} :hi {:x 3 :y 4}})))
+        (let [inferred (ffi/cfn "var_int_sum" [:int :&] :long)
+              declared (ffi/cfn "var_double_sum" [:int :& :double :double] :double)]
+          (check "a variadic signature goes to libffi"
+                 :libffi (:babashka.ffi/backend (meta inferred)))
+          (check "a tail inferred per call" [6 -1] [(inferred 3 1 2 3) (inferred 2 -3 2)])
+          (check "a declared tail of doubles" 4.0 (declared 2 1.5 2.5))))
+      (do
+        (println "what a build without libffi refuses, rather than calling wrongly")
+        (check-throws "a struct by value" #"libffi"
+                      #(let [f (ffi/cfn "p2_sum" [[:struct [[:x :int] [:y :int]]]] :int)]
+                         (f {:x 1 :y 2})))
+        (check-throws "a variadic signature" #"libffi"
+                      #(ffi/cfn "var_int_sum" [:int :&] :long))))
 
     (println)
     (if (zero? @failures)
