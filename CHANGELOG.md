@@ -5,6 +5,8 @@ Clojure, babashka and Node.js.
 
 ## Unreleased
 
+- Squint compatibility
+
 ## 0.1.1
 
 First standalone release of `babashka.ffi`, available on Clojars for JVM
