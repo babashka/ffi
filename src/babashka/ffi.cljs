@@ -841,6 +841,16 @@
       (throw (ex-info (str "babashka.ffi: a " (name kind) " layout names a " what " twice: " (pr-str t))
                       {:layout t})))))
 
+;; squint compiles a collection to a plain JS value, and a map key that is
+;; one is coerced to a string: nesting flattens, so [:array [:array :int 2] 3]
+;; and [:array [:array :int 2 3]] are the same key there. Every cache below
+;; is keyed by a layout, so under squint the key is printed instead, which
+;; keeps the brackets. ClojureScript hashes the collection as it always did.
+(def ^:private squint? (string? :probe))
+
+(defn- cache-key [k]
+  (if squint? (pr-str k) k))
+
 (def ^:private layout-cache (atom {}))
 (def ^:private cache-limit 256)
 
@@ -906,11 +916,12 @@
   [t]
   (if (keyword? t)
     (layout-of* t)
-    (or (get @layout-cache t)
-        (let [v (layout-of* t)]
-          (swap! layout-cache
-                 (fn [m] (if (<= cache-limit (count m)) m (assoc m t v))))
-          v))))
+    (let [k (cache-key t)]
+      (or (get @layout-cache k)
+          (let [v (layout-of* t)]
+            (swap! layout-cache
+                   (fn [m] (if (<= cache-limit (count m)) m (assoc m k v))))
+            v)))))
 
 (defn sizeof
   "Returns the size of a type keyword or struct layout, in bytes. The size
@@ -1085,7 +1096,7 @@
 ;; key that holds a map matches any other, so [kind lay] would hand a nested
 ;; layout the codec of whatever was cached first.
 (defn- cached-codec [kind t lay]
-  (let [k [kind t]]
+  (let [k (cache-key [kind t])]
     (or (get @codec-cache k)
         (let [v (case kind
                   :decode (decoder lay 0)
@@ -1311,7 +1322,7 @@
   ([t] (place t []))
   ([t path]
    (let [path (if (vector? path) path [path])
-         k [t path]]
+         k (cache-key [t path])]
      (or (get @place-cache k)
          (let [[off lay] (resolve-path (layout-of t) path)
                v (Place. t path (decoder lay off) (encoder lay off path) (+ off (:size lay)))]
