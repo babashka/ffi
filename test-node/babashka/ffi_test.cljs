@@ -10,6 +10,10 @@
 
 (def windows? (= "win32" js/process.platform))
 
+;; squint compiles a keyword to a string and a symbol with it, so a symbol
+;; carries no metadata there and defcfn-form cannot name a var.
+(def squint? (string? :probe))
+
 (def point [:struct [[:x :int] [:y :int]]])
 
 (deftest call-test
@@ -167,7 +171,7 @@
     (testing "an invalid struct value reports the field"
       (ffi/with-open [arena (ffi/confined-arena)]
         (is (thrown-with-msg?
-             js/Error #"misses field :y"
+             js/Error #"misses field [:\"]?y\"?"
              (ffi/write (ffi/alloc arena point) point {:x 1})))))
     (testing "C fills a struct through a pointer, and the layout reads it"
       (if windows?
@@ -249,7 +253,7 @@
           (is (ffi/pointer? hit))
           (is (not (ffi/null? hit))))))
     (testing ":string is not a callback type"
-      (is (thrown-with-msg? js/Error #"not :string"
+      (is (thrown-with-msg? js/Error #"not [:\"]?string\"?"
                             (ffi/callback (ffi/global-arena) identity [:string] :void))))))
 
 (def p2 [:struct [[:x :int] [:y :int]]])
@@ -305,8 +309,8 @@
                               (ffi/write p [:array :int 4] 42))))))
   (testing "a malformed array layout is an error at resolve time"
     (is (thrown-with-msg? js/Error #"positive element count" (ffi/sizeof [:array :int 0])))
-    (is (thrown-with-msg? js/Error #"is \[:array elem n\]" (ffi/sizeof [:array :int])))
-    (is (thrown-with-msg? js/Error #":void is not an element" (ffi/sizeof [:array :void 2]))))
+    (is (thrown-with-msg? js/Error #"is \[[:\"]?array\"? elem n\]" (ffi/sizeof [:array :int])))
+    (is (thrown-with-msg? js/Error #"[:\"]?void\"? is not an element" (ffi/sizeof [:array :void 2]))))
   (testing "C passes an array as a pointer, so a bare array is not a signature type"
     (is (thrown-with-msg? js/Error #"C passes an array as a pointer"
                           (ffi/cfn "abs" [[:array :int 4]] :int)))
@@ -334,11 +338,11 @@
           (ffi/write p [:array :pointer 1] [s])
           (is (= [(js/BigInt (ffi/address s))] (vec (ffi/read-array p :pointer 1))))))
       (testing "unsupported array types report alternatives"
-        (is (thrown-with-msg? js/Error #"use read and write with \[:array"
+        (is (thrown-with-msg? js/Error #"use read and write with \[[:\"]?array\"?"
                               (ffi/read-array p [:struct [[:x :int]]] 2)))
         (is (thrown-with-msg? js/Error #"pointers to bytes elsewhere"
                               (ffi/read-array p :string 2)))
-        (is (thrown-with-msg? js/Error #":int needs Int32Array, got BigInt64Array"
+        (is (thrown-with-msg? js/Error #"[:\"]?int\"? needs Int32Array, got BigInt64Array"
                               (ffi/write-array p :int (js/BigInt64Array. 2)))))
       (testing "a copy past the end throws instead of reading on"
         (is (thrown? js/Error (ffi/read-array p :int 17)))
@@ -403,10 +407,10 @@
           (ffi/write p data [:result 9])
           (is (= 9 (ffi/read p :int)))
           (is (thrown-with-msg? js/Error #"is a pair \[member value\]" (ffi/write p data {:result 1})))
-          (is (thrown-with-msg? js/Error #"unknown member :nope" (ffi/write p data [:nope 1])))
+          (is (thrown-with-msg? js/Error #"unknown member [:\"]?nope\"?" (ffi/write p data [:nope 1])))
           (is (thrown-with-msg? js/Error #"is a pair" (ffi/write p data 5))))))
     (testing "a malformed union layout is an error at resolve time"
-      (is (thrown-with-msg? js/Error #"is \[:union members\]" (ffi/sizeof [:union [[:a :int]] :x])))
+      (is (thrown-with-msg? js/Error #"is \[[:\"]?union\"? members\]" (ffi/sizeof [:union [[:a :int]] :x])))
       (is (thrown-with-msg? js/Error #"names a member twice" (ffi/sizeof [:union [[:a :int] [:a :int]]]))))))
 
 (deftest nested-value-error-path-test
@@ -416,23 +420,23 @@
         ok {:msg 1 :easy nil :data [:result 0]}]
     (ffi/with-open [arena (ffi/confined-arena)]
       (let [p (ffi/alloc arena outer)]
-        (is (thrown-with-msg? js/Error #"at \[:msgs 0 :data\], union value is a pair"
+        (is (thrown-with-msg? js/Error #"at \[[:\"]?msgs\"? 0 [:\"]?data\"?\], union value is a pair"
                               (ffi/write p outer {:id 1 :msgs [(assoc ok :data [:foo 1 :baz 2]) ok]})))
-        (is (thrown-with-msg? js/Error #"at \[:msgs 1 :data\], union value names unknown member :foo"
+        (is (thrown-with-msg? js/Error #"at \[[:\"]?msgs\"? 1 [:\"]?data\"?\], union value names unknown member [:\"]?foo\"?"
                               (ffi/write p outer {:id 1 :msgs [ok (assoc ok :data [:foo 1])]})))
-        (is (thrown-with-msg? js/Error #"at \[:msgs 1\], struct value misses field :easy"
+        (is (thrown-with-msg? js/Error #"at \[[:\"]?msgs\"? 1\], struct value misses field [:\"]?easy\"?"
                               (ffi/write p outer {:id 1 :msgs [ok (dissoc ok :easy)]})))
-        (is (thrown-with-msg? js/Error #"at \[:msgs\], array value needs 2 elements"
+        (is (thrown-with-msg? js/Error #"at \[[:\"]?msgs\"?\], array value needs 2 elements"
                               (ffi/write p outer {:id 1 :msgs [ok]})))
         (let [item [:struct [[:id :int] [:name :string] [:q :pointer]]]
               bag [:struct [[:items [:array item 2]]]]
               fine {:id 1 :name (ffi/string->ptr arena "x") :q nil}
               b (ffi/alloc arena bag)]
-          (is (thrown-with-msg? js/Error #"at \[:items 0 :name\], a :string field holds a pointer"
+          (is (thrown-with-msg? js/Error #"at \[[:\"]?items\"? 0 [:\"]?name\"?\], a [:\"]?string\"? field holds a pointer"
                                 (ffi/write b bag {:items [(assoc fine :name "bare") fine]})))
-          (is (thrown-with-msg? js/Error #"at \[:items 1 :id\], a :int field cannot take \"two\""
+          (is (thrown-with-msg? js/Error #"at \[[:\"]?items\"? 1 [:\"]?id\"?\], a [:\"]?int\"? field cannot take \"two\""
                                 (ffi/write b bag {:items [fine (assoc fine :id "two")]})))
-          (is (thrown-with-msg? js/Error #"at \[:items 1 :q\], a :pointer field cannot take 42"
+          (is (thrown-with-msg? js/Error #"at \[[:\"]?items\"? 1 [:\"]?q\"?\], a [:\"]?pointer\"? field cannot take 42"
                                 (ffi/write b bag {:items [fine (assoc fine :q 42)]}))))
         (is (thrown-with-msg? js/Error #"^babashka.ffi: union value"
                               (ffi/write p data [:foo 1])))))))
@@ -476,18 +480,18 @@
           (is (thrown-with-msg? js/Error #"out of bounds"
                                 (ffi/read (ffi/slice p 0 32) parent))))
         (testing "an invalid path throws when the place is created"
-          (is (thrown-with-msg? js/Error #"no member :z; the members are \[:name :parent\]"
+          (is (thrown-with-msg? js/Error #"no member [:\"]?z\"?; the members are \[[:\"]?name\"? [:\"]?parent\"?\]"
                                 (ffi/place bone :z)))
-          (is (thrown-with-msg? js/Error #"no member :z at \[:msgs 1\]"
+          (is (thrown-with-msg? js/Error #"no member [:\"]?z\"? at \[[:\"]?msgs\"? 1\]"
                                 (ffi/place outer [:msgs 1 :z])))
-          (is (thrown-with-msg? js/Error #"2 is not an index into 2 elements at \[:msgs\]"
+          (is (thrown-with-msg? js/Error #"2 is not an index into 2 elements at \[[:\"]?msgs\"?\]"
                                 (ffi/place outer [:msgs 2 :msg])))
-          (is (thrown-with-msg? js/Error #"continues past :int at \[:id\]"
+          (is (thrown-with-msg? js/Error #"continues past [:\"]?int\"? at \[[:\"]?id\"?\]"
                                 (ffi/place outer [:id :x]))))
         (testing "an invalid value reports the place path"
-          (is (thrown-with-msg? js/Error #"at \[:msgs 1 :data\], union value is a pair"
+          (is (thrown-with-msg? js/Error #"at \[[:\"]?msgs\"? 1 [:\"]?data\"?\], union value is a pair"
                                 (ffi/write q (ffi/place outer [:msgs 1 :data]) {:result 1})))
-          (is (thrown-with-msg? js/Error #"at \[:msgs 1 :msg\], a :int field cannot take"
+          (is (thrown-with-msg? js/Error #"at \[[:\"]?msgs\"? 1 [:\"]?msg\"?\], a [:\"]?int\"? field cannot take"
                                 (ffi/write q (ffi/place outer [:msgs 1 :msg]) "x"))))))))
 
 (ffi/defcfn c-abs "The absolute value." "abs" [:int] :int)
@@ -495,6 +499,9 @@
   raw [x] (* 2 (raw x)))
 
 (deftest macro-form-test
+  (if squint?
+    (println "macro form skipped: squint has no metadata on a symbol")
+    (do
   (testing "defcfn-form is a function, so a compiled build can make the macro from it"
     (let [form (ffi/defcfn-form 'c-abs '("The absolute value." "abs" [:int] :int))]
       (is (= 'def (first form)))
@@ -518,7 +525,7 @@
     (let [[_let bindings [_try inner [_finally close]]] (ffi/with-open-form '[a (mk) b (mk2)] '(body))]
       (is (= '[a (mk)] bindings))
       (is (= '(babashka.ffi/with-open [b (mk2)] body) inner))
-      (is (= '(.close a) close)))))
+      (is (= '(.close a) close)))))))
 
 (deftest defcfn-test
   (testing "a docstring and the wrapper form"
@@ -531,7 +538,7 @@
         (is (string? (:path lib)))
         (is (string? ((ffi/cfn lib "zlibVersion" [] :string))))
         (is (string? ((ffi/cfn (delay lib) "zlibVersion" [] :string))))
-        (is (thrown-with-msg? js/Error #":library must be"
+        (is (thrown-with-msg? js/Error #"[:\"]?library\"? must be"
                               ((ffi/cfn :nope "zlibVersion" [] :string))))))))
 
 (defmethod t/report [:cljs.test/default :end-run-tests] [m]

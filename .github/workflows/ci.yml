@@ -219,3 +219,8 @@ jobs:
 
       - name: shadow-cljs
         run: bb test:shadow
+
+      # squint compiles the same suite to plain JS, where a collection is a
+      # JS value rather than a Clojure one
+      - name: squint
+        run: bb test:squint

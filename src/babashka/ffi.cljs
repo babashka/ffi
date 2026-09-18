@@ -267,6 +267,11 @@
         (bigint? a) (js/Number (js/BigInt.asIntN 32 a))
         :else (bit-or (to-number a) 0)))
 
+;; Each table below is also bound as a function of its key: the map itself
+;; on a host that can call one, a get on squint, which cannot. See lookup
+;; at the end of the file, after every table exists.
+(declare arg-coercer* ret-converter* sizes* scalar-get* scalar-set* array-carriers*)
+
 (def ^:private arg-coercer
   (let [i32 to-int32
         u32 (fn [a] (unsigned-bit-shift-right (to-int32 a) 0))
@@ -311,7 +316,7 @@
 
 (defn- signature [argtypes rettype]
   #js {:arguments (to-array (map node-type argtypes))
-       :return (node-type rettype)})
+       :return (get node-type rettype)})
 
 ;; -- libraries ----------------------------------------------------------------
 
@@ -551,7 +556,7 @@
    (let [n (count argtypes)
          coercers (to-array (map arg-coercer argtypes))
          [c0 c1 c2 c3] coercers
-         convert (or (ret-converter rettype) identity)
+         convert (or (ret-converter* rettype) identity)
          resolved (volatile! nil)
          native (fn [] (or @resolved (vreset! resolved (native-function lib sym argtypes rettype))))
          arity-error (fn [got]
@@ -841,6 +846,26 @@
       (throw (ex-info (str "babashka.ffi: a " (name kind) " layout names a " what " twice: " (pr-str t))
                       {:layout t})))))
 
+;; squint compiles a collection to a plain JS value, and a map key that is
+;; one is coerced to a string: nesting flattens, so [:array [:array :int 2] 3]
+;; and [:array [:array :int 2 3]] are the same key there. Every cache below
+;; is keyed by a layout, so under squint the key is printed instead, which
+;; keeps the brackets. ClojureScript hashes the collection as it always did.
+(def ^:private squint? (string? :probe))
+
+;; A layout is data and does not change, so its printed form is remembered
+;; per object. JSON.stringify keeps the brackets and runs native; the
+;; WeakMap means a layout that is held in a var pays for it once.
+(def ^:private key-cache (when squint? (js/WeakMap.)))
+
+(defn- layout-key [t]
+  (if (and squint? (object? t))
+    (or (.get key-cache t)
+        (let [k (js/JSON.stringify t)]
+          (.set key-cache t k)
+          k))
+    t))
+
 (def ^:private layout-cache (atom {}))
 (def ^:private cache-limit 256)
 
@@ -884,7 +909,7 @@
          :align (:align el) :size (* n (:size el))}))
 
     (keyword? t)
-    (if-let [size (sizes t)]
+    (if-let [size (sizes* t)]
       {:type t :size size :align size}
       (throw (ex-info (str "babashka.ffi: unknown type " t) {:type t})))
 
@@ -906,11 +931,12 @@
   [t]
   (if (keyword? t)
     (layout-of* t)
-    (or (get @layout-cache t)
-        (let [v (layout-of* t)]
-          (swap! layout-cache
-                 (fn [m] (if (<= cache-limit (count m)) m (assoc m t v))))
-          v))))
+    (let [k (layout-key t)]
+      (or (get @layout-cache k)
+          (let [v (layout-of* t)]
+            (swap! layout-cache
+                   (fn [m] (if (<= cache-limit (count m)) m (assoc m k v))))
+            v)))))
 
 (defn sizeof
   "Returns the size of a type keyword or struct layout, in bytes. The size
@@ -1038,9 +1064,9 @@
              (dotimes [i n] ((nth encs i) base (nth xs i))))))
 
        ;; a scalar: a value it cannot take gets the place and the type
-       (let [coerce (or (arg-coercer t)
+       (let [coerce (or (arg-coercer* t)
                         (throw (ex-info (str "babashka.ffi: cannot write type " t) {:type t})))
-             set-fn (scalar-set t)]
+             set-fn (scalar-set* t)]
          (fn [base v]
            (let [x (try (when (and (not= :bool t) (not= :pointer t)
                                    (not (or (number? v) (bigint? v) (nil? v) (instance? Pointer v))))
@@ -1074,15 +1100,18 @@
       (fn [p base]
         (zipmap names (map (fn [d] (d p base)) decs))))
 
-    (let [get-fn (or (scalar-get (:type lay))
+    (let [get-fn (or (scalar-get* (:type lay))
                      (throw (ex-info (str "babashka.ffi: cannot read type " (:type lay))
                                      {:type (:type lay)})))]
       (fn [_ base] (get-fn base offset)))))
 
 (def ^:private codec-cache (atom {}))
 
-(defn- cached-codec [kind lay]
-  (let [k [kind lay]]
+;; Keyed on the layout as written, never on the resolved map: a squint map
+;; key that holds a map matches any other, so [kind lay] would hand a nested
+;; layout the codec of whatever was cached first.
+(defn- cached-codec [kind t lay]
+  (let [k (if squint? (str (name kind) "|" (layout-key t)) [kind t])]
     (or (get @codec-cache k)
         (let [v (case kind
                   :decode (decoder lay 0)
@@ -1107,8 +1136,8 @@
   ([p t] (read p t 0))
   ([p t offset]
    (let [p (accessible p)]
-     (if-let [get-fn (when (keyword? t) (scalar-get t))]
-       (do (check-bounds p offset (sizes t))
+     (if-let [get-fn (when (keyword? t) (scalar-get* t))]
+       (do (check-bounds p offset (sizes* t))
            (get-fn (.-addr p) offset))
        (cond
          (instance? Place t)
@@ -1117,7 +1146,7 @@
          (layout-vector? t)
          (let [lay (layout-of t)]
            (check-bounds p offset (:size lay))
-           ((cached-codec :decode lay) p (+ (.-addr p) (js/BigInt offset))))
+           ((cached-codec :decode t lay) p (+ (.-addr p) (js/BigInt offset))))
          :else
          (throw (ex-info (str "babashka.ffi: cannot read type " t) {:type t})))))))
 
@@ -1132,9 +1161,9 @@
   ([p t v] (write p t v 0))
   ([p t v offset]
    (let [p (accessible p)]
-     (if-let [set-fn (when (keyword? t) (scalar-set t))]
-       (do (check-bounds p offset (sizes t))
-           (set-fn (.-addr p) offset ((arg-coercer t) v)))
+     (if-let [set-fn (when (keyword? t) (scalar-set* t))]
+       (do (check-bounds p offset (sizes* t))
+           (set-fn (.-addr p) offset ((arg-coercer* t) v)))
        (cond
          (instance? Place t)
          (do (check-bounds p offset (.-extent t))
@@ -1142,7 +1171,7 @@
          (layout-vector? t)
          (let [lay (layout-of t)]
            (check-bounds p offset (:size lay))
-           ((cached-codec :encode lay) (+ (.-addr p) (js/BigInt offset)) v))
+           ((cached-codec :encode t lay) (+ (.-addr p) (js/BigInt offset)) v))
          :else
          (throw (ex-info (str "babashka.ffi: cannot write type " t) {:type t}))))
      nil)))
@@ -1159,7 +1188,7 @@
      :float js/Float32Array :double js/Float64Array}))
 
 (defn- array-carrier [t]
-  (or (array-carriers t)
+  (or (array-carriers* t)
       (throw (ex-info (cond
                         (layout-vector? t)
                         (str "babashka.ffi: read-array and write-array copy scalars into a typed array;"
@@ -1186,7 +1215,7 @@
   ([p t n offset]
    (let [ctor (array-carrier t)
          p (accessible p)
-         bytes (* n (sizes t))]
+         bytes (* n (sizes* t))]
      (check-bounds p offset bytes)
      (if (zero? n)
        (new ctor 0)
@@ -1308,7 +1337,7 @@
   ([t] (place t []))
   ([t path]
    (let [path (if (vector? path) path [path])
-         k [t path]]
+         k (if squint? (str (layout-key t) "|" (js/JSON.stringify path)) [t path])]
      (or (get @place-cache k)
          (let [[off lay] (resolve-path (layout-of t) path)
                v (Place. t path (decoder lay off) (encoder lay off path) (+ off (:size lay)))]
@@ -1347,8 +1376,8 @@
   (when (.-closed arena)
     (throw (ex-info "babashka.ffi: the arena is closed" {:arena arena})))
   (let [n (count argtypes)
-        in (to-array (map #(get ret-converter %) argtypes))
-        out (when-not (= :void rettype) (arg-coercer rettype))
+        in (to-array (map #(ret-converter* %) argtypes))
+        out (when-not (= :void rettype) (arg-coercer* rettype))
         wrapper (fn [& args]
                   (let [arr (to-array args)]
                     (dotimes [i n]
@@ -1364,3 +1393,17 @@
       "auto" (.unrefCallback lib addr)
       (on-close arena (fn [] (.unregisterCallback lib addr))))
     (Pointer. addr 0 arena wrapper)))
+
+;; -- table lookups ------------------------------------------------------------
+
+(defn- lookup
+  "A table as a function of its key."
+  [m]
+  (if squint? (fn [k] (get m k)) m))
+
+(def ^:private arg-coercer* (lookup arg-coercer))
+(def ^:private ret-converter* (lookup ret-converter))
+(def ^:private sizes* (lookup sizes))
+(def ^:private scalar-get* (lookup scalar-get))
+(def ^:private scalar-set* (lookup scalar-set))
+(def ^:private array-carriers* (lookup array-carriers))
