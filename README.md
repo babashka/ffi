@@ -22,7 +22,7 @@ org.babashka/ffi {:mvn/version "0.1.2"}
 | JVM | JDK 25 or newer | Uses the Java FFM API. |
 | babashka | 1.13.220 or newer | Built in, no dependency needed. |
 | GraalVM native image | GraalVM 25 or newer | See [Build your own native image](doc/guide.md#build-your-own-native-image). |
-| Node.js | 26.1 or newer | Works with [nbb](https://github.com/babashka/nbb), ClojureScript and shadow-cljs through `node:ffi`. See [On Node.js](doc/guide.md#on-nodejs). |
+| Node.js | 26.1 or newer | Works with [nbb](https://github.com/babashka/nbb), ClojureScript, shadow-cljs and [squint](https://github.com/squint-cljs/squint) through `node:ffi`. See [On Node.js](doc/guide.md#on-nodejs). |
 
 Bun and Deno are not supported.
 
