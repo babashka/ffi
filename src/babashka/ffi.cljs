@@ -1081,8 +1081,11 @@
 
 (def ^:private codec-cache (atom {}))
 
-(defn- cached-codec [kind lay]
-  (let [k [kind lay]]
+;; Keyed on the layout as written, never on the resolved map: a squint map
+;; key that holds a map matches any other, so [kind lay] would hand a nested
+;; layout the codec of whatever was cached first.
+(defn- cached-codec [kind t lay]
+  (let [k [kind t]]
     (or (get @codec-cache k)
         (let [v (case kind
                   :decode (decoder lay 0)
@@ -1117,7 +1120,7 @@
          (layout-vector? t)
          (let [lay (layout-of t)]
            (check-bounds p offset (:size lay))
-           ((cached-codec :decode lay) p (+ (.-addr p) (js/BigInt offset))))
+           ((cached-codec :decode t lay) p (+ (.-addr p) (js/BigInt offset))))
          :else
          (throw (ex-info (str "babashka.ffi: cannot read type " t) {:type t})))))))
 
@@ -1142,7 +1145,7 @@
          (layout-vector? t)
          (let [lay (layout-of t)]
            (check-bounds p offset (:size lay))
-           ((cached-codec :encode lay) (+ (.-addr p) (js/BigInt offset)) v))
+           ((cached-codec :encode t lay) (+ (.-addr p) (js/BigInt offset)) v))
          :else
          (throw (ex-info (str "babashka.ffi: cannot write type " t) {:type t}))))
      nil)))
