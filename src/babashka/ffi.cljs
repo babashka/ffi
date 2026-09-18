@@ -311,7 +311,7 @@
 
 (defn- signature [argtypes rettype]
   #js {:arguments (to-array (map node-type argtypes))
-       :return (node-type rettype)})
+       :return (get node-type rettype)})
 
 ;; -- libraries ----------------------------------------------------------------
 
@@ -551,7 +551,7 @@
    (let [n (count argtypes)
          coercers (to-array (map arg-coercer argtypes))
          [c0 c1 c2 c3] coercers
-         convert (or (ret-converter rettype) identity)
+         convert (or (get ret-converter rettype) identity)
          resolved (volatile! nil)
          native (fn [] (or @resolved (vreset! resolved (native-function lib sym argtypes rettype))))
          arity-error (fn [got]
@@ -884,7 +884,7 @@
          :align (:align el) :size (* n (:size el))}))
 
     (keyword? t)
-    (if-let [size (sizes t)]
+    (if-let [size (get sizes t)]
       {:type t :size size :align size}
       (throw (ex-info (str "babashka.ffi: unknown type " t) {:type t})))
 
@@ -1038,9 +1038,9 @@
              (dotimes [i n] ((nth encs i) base (nth xs i))))))
 
        ;; a scalar: a value it cannot take gets the place and the type
-       (let [coerce (or (arg-coercer t)
+       (let [coerce (or (get arg-coercer t)
                         (throw (ex-info (str "babashka.ffi: cannot write type " t) {:type t})))
-             set-fn (scalar-set t)]
+             set-fn (get scalar-set t)]
          (fn [base v]
            (let [x (try (when (and (not= :bool t) (not= :pointer t)
                                    (not (or (number? v) (bigint? v) (nil? v) (instance? Pointer v))))
@@ -1074,7 +1074,7 @@
       (fn [p base]
         (zipmap names (map (fn [d] (d p base)) decs))))
 
-    (let [get-fn (or (scalar-get (:type lay))
+    (let [get-fn (or (get scalar-get (:type lay))
                      (throw (ex-info (str "babashka.ffi: cannot read type " (:type lay))
                                      {:type (:type lay)})))]
       (fn [_ base] (get-fn base offset)))))
@@ -1107,8 +1107,8 @@
   ([p t] (read p t 0))
   ([p t offset]
    (let [p (accessible p)]
-     (if-let [get-fn (when (keyword? t) (scalar-get t))]
-       (do (check-bounds p offset (sizes t))
+     (if-let [get-fn (when (keyword? t) (get scalar-get t))]
+       (do (check-bounds p offset (get sizes t))
            (get-fn (.-addr p) offset))
        (cond
          (instance? Place t)
@@ -1132,9 +1132,9 @@
   ([p t v] (write p t v 0))
   ([p t v offset]
    (let [p (accessible p)]
-     (if-let [set-fn (when (keyword? t) (scalar-set t))]
-       (do (check-bounds p offset (sizes t))
-           (set-fn (.-addr p) offset ((arg-coercer t) v)))
+     (if-let [set-fn (when (keyword? t) (get scalar-set t))]
+       (do (check-bounds p offset (get sizes t))
+           (set-fn (.-addr p) offset ((get arg-coercer t) v)))
        (cond
          (instance? Place t)
          (do (check-bounds p offset (.-extent t))
@@ -1159,7 +1159,7 @@
      :float js/Float32Array :double js/Float64Array}))
 
 (defn- array-carrier [t]
-  (or (array-carriers t)
+  (or (get array-carriers t)
       (throw (ex-info (cond
                         (layout-vector? t)
                         (str "babashka.ffi: read-array and write-array copy scalars into a typed array;"
@@ -1186,7 +1186,7 @@
   ([p t n offset]
    (let [ctor (array-carrier t)
          p (accessible p)
-         bytes (* n (sizes t))]
+         bytes (* n (get sizes t))]
      (check-bounds p offset bytes)
      (if (zero? n)
        (new ctor 0)
@@ -1348,7 +1348,7 @@
     (throw (ex-info "babashka.ffi: the arena is closed" {:arena arena})))
   (let [n (count argtypes)
         in (to-array (map #(get ret-converter %) argtypes))
-        out (when-not (= :void rettype) (arg-coercer rettype))
+        out (when-not (= :void rettype) (get arg-coercer rettype))
         wrapper (fn [& args]
                   (let [arr (to-array args)]
                     (dotimes [i n]
