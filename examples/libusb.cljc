@@ -1,3 +1,11 @@
+;; Lists the USB devices with their vendor and product IDs, like lsusb.
+;;
+;;   bb examples/libusb.cljc
+;;
+;; The script only reads. It opens each device to read its manufacturer and
+;; product strings, then closes it. It does not claim an interface, change a
+;; configuration or write to a device.
+
 (ns libusb)
 
 (require '[babashka.ffi :as ffi :refer [defcfn]])
