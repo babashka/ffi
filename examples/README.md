@@ -52,3 +52,6 @@ The guide in [doc/guide.md](../doc/guide.md) explains the API these use.
   SDL3 package of your distribution). On macOS the JVM run needs
   `-XstartOnFirstThread` as well, because SDL uses thread 0 for the Cocoa
   event loop.
+- `libusb.cljc` lists the USB devices with their IDs and names, like
+  `lsusb` (`brew install libusb`, or the libusb package of your
+  distribution).
