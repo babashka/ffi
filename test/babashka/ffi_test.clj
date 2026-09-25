@@ -958,3 +958,33 @@
       (is (= (:babashka.ffi/backend (meta c-abs))
              (:babashka.ffi/backend (meta (vary-meta c-abs assoc :x 1)))))
       (is (= 5 ((vary-meta c-abs assoc :x 1) -5)))))))
+
+(deftest c-locale-test
+  (if-not @default-lookup?
+    (println "C locale skipped: this build has no default lookup")
+    (let [os (System/getProperty "os.name")
+          windows? (str/starts-with? os "Windows")
+          _ (when windows? (ffi/load-library "ucrtbase.dll"))
+          lc-numeric (if (re-find #"(?i)linux" os) 1 4)
+          query (ffi/cfn "setlocale" [:int :pointer] :pointer)
+          setlocale (ffi/cfn "setlocale" [:int :string] :pointer)
+          strtod (ffi/cfn "strtod" [:string :pointer] :double)
+          current #(ffi/ptr->string (query lc-numeric ffi/null))]
+      (if windows?
+        (testing "LC_NUMERIC is \"C\" on Windows and strtod reads \"0.95\" as 0.95"
+          (is (= "C" (current)))
+          (is (= 0.95 (strtod "0.95" ffi/null))))
+        (let [env (some #(not-empty (System/getenv %)) ["LC_ALL" "LC_NUMERIC" "LANG"])
+              original (current)]
+          (testing "LC_NUMERIC equals LC_ALL, LC_NUMERIC or LANG from the environment"
+            (is (= (or env "C") original)))
+          (if (ffi/null? (setlocale lc-numeric "de_DE.UTF-8"))
+            (println "decimal comma skipped: de_DE.UTF-8 is not installed")
+            (try
+              (testing "strtod reads \"0.95\" as 0.0 in de_DE.UTF-8"
+                (is (= 0.0 (strtod "0.95" ffi/null))))
+              (testing "setlocale LC_NUMERIC \"C\" makes strtod read \"0.95\" as 0.95"
+                (setlocale lc-numeric "C")
+                (is (= 0.95 (strtod "0.95" ffi/null))))
+              (finally
+                (setlocale lc-numeric original)))))))))

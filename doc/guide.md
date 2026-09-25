@@ -28,6 +28,7 @@ Without either setting, the JDK warns about native access.
   - [Unions](#unions)
   - [Out parameters](#out-parameters)
 - [Create a callback](#create-a-callback)
+- [Set the C locale](#set-the-c-locale)
 - [Performance and limits](#performance-and-limits)
   - [On the JVM](#on-the-jvm)
   - [In a babashka native binary](#in-a-babashka-native-binary)
@@ -945,6 +946,31 @@ A `:bool` callback argument becomes `true` or `false`.
 
 > **_NOTE_** Do not let a callback throw an exception. Catch exceptions inside
 > the callback, or the process can stop.
+
+## Set the C locale
+
+Set `LC_NUMERIC` to `"C"` before you call C code that parses or prints
+floating-point numbers. On Linux and macOS, the JVM and babashka take the C
+locale from the environment. On Windows, the C locale stays `"C"`. In a locale with a decimal comma, such as `de_DE.UTF-8`,
+`strtod` reads `"0.95"` as `0.0` and `printf` writes `0,95`.
+
+On Linux and macOS, call `setlocale`:
+
+```clojure
+;; the value of LC_NUMERIC in locale.h: 1 on Linux, 4 on macOS
+(def lc-numeric
+  (if (re-find #"(?i)linux" (System/getProperty "os.name")) 1 4))
+
+(let [setlocale (ffi/cfn "setlocale" [:int :string] :pointer)]
+  (setlocale lc-numeric "C"))
+```
+
+Alternatively, set `LC_NUMERIC=C` in the environment before starting babashka.
+`LC_ALL` overrides `LC_NUMERIC`.
+
+```sh
+LC_NUMERIC=C bb script.clj
+```
 
 ## Performance and limits
 
