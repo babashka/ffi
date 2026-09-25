@@ -951,10 +951,16 @@ A `:bool` callback argument becomes `true` or `false`.
 
 Set `LC_NUMERIC` to `"C"` before you call C code that parses or prints
 floating-point numbers. On Linux and macOS, the JVM and babashka take the C
-locale from the environment. On Windows, the C locale stays `"C"`. In a locale with a decimal comma, such as `de_DE.UTF-8`,
-`strtod` reads `"0.95"` as `0.0` and `printf` writes `0,95`.
+locale from the environment. On Windows, the C locale stays `"C"`.
 
-On Linux and macOS, call `setlocale`:
+In a locale with a decimal comma, such as `de_DE.UTF-8`, every C function that
+parses or formats a floating-point number expects or writes a comma, and none of
+them reports an error. For example, `strtod` reads `"0.95"` as `0.0`, so a
+library that parses a JSON or glTF file gets wrong values. And `printf("%g",
+0.95)` writes `0,95`, so a CSV or JSON file that was written by C, no longer
+parses elsewhere.
+
+To fix this, on Linux and macOS, call `setlocale`:
 
 ```clojure
 ;; the value of LC_NUMERIC in locale.h: 1 on Linux, 4 on macOS
@@ -971,6 +977,10 @@ Alternatively, set `LC_NUMERIC=C` in the environment before starting babashka.
 ```sh
 LC_NUMERIC=C bb script.clj
 ```
+
+Unfortunately babashka.ffi cannot do this for you. The locale is shared by the
+whole process, and babashka.ffi cannot tell whether other code set it on
+purpose.
 
 ## Performance and limits
 
