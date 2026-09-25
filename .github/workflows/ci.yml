@@ -40,6 +40,11 @@ jobs:
           done
           exit 1
 
+      # a decimal-comma locale for c-locale-test
+      - name: Install de_DE.UTF-8
+        if: runner.os == 'Linux'
+        run: sudo locale-gen de_DE.UTF-8
+
       # Runs the suite through babashka's built-in babashka.ffi, so the calls
       # go through the compiled trampolines instead of FFM handles.
       - name: Run tests
@@ -84,6 +89,11 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.4
         with:
           cli: latest
+
+      # a decimal-comma locale for c-locale-test
+      - name: Install de_DE.UTF-8
+        if: runner.os == 'Linux'
+        run: sudo locale-gen de_DE.UTF-8
 
       - name: Run tests
         run: clojure -M:test
