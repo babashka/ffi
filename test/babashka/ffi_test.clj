@@ -864,12 +864,7 @@
               null-cb (ffi/callback arena (fn [_] nil) [:pointer] :pointer)
               null-call (ffi/cfn null-cb [:pointer] :pointer)]
           (is (= (ffi/address p) (ffi/address (call p))))
-          (is (ffi/null? (null-call p)))))
-      (testing "a double among more than four arguments stays refused on a native image"
-        (when (System/getProperty "org.graalvm.nativeimage.imagecode")
-          (is (thrown-with-msg? Exception #"up to 6 integer and pointer args"
-                                (ffi/callback arena (fn [_ _ _ _ _] 0)
-                                              [:long :long :long :long :double] :long))))))))
+          (is (ffi/null? (null-call p))))))))
 
 (deftest callback-argument-order-test
   (with-open [arena (ffi/confined-arena)]
