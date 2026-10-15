@@ -901,6 +901,34 @@
             (is (= n (apply call args)) (str "arity " n))
             (is (= (mapv as-value types args) @seen)
                 (str "converted arguments at arity " n))))))))
+(deftest struct-callback-test
+  (when-not (System/getProperty "babashka.version")
+    (with-open [arena (ffi/confined-arena)]
+      (testing "a struct argument and a struct return in the shape of a QuickJS JSCFunction"
+        (let [js-value [:struct [[:u :int64] [:tag :int64]]]
+              sig [:pointer js-value :int :pointer]
+              cb (ffi/callback arena (fn [_ this argc _] {:u (+ (:u this) argc) :tag (:tag this)})
+                               sig js-value)]
+          (is (= {:u 42 :tag 7} ((ffi/cfn cb sig js-value) nil {:u 40 :tag 7} 2 nil)))))
+      (testing "a struct in memory, an HFA and a narrow integer"
+        (let [v3 [:struct [[:x :double] [:y :double] [:z :double]]]
+              big [:struct [[:a :long] [:b :long] [:c :long] [:d :long]]]
+              cb (ffi/callback arena (fn [a v b] {:a (:a b) :b (long (:z v)) :c a :d (:d b)})
+                               [:int8 v3 big] big)]
+          (is (= {:a 1 :b 5 :c -3 :d 4}
+                 ((ffi/cfn cb [:int8 v3 big] big) -3 {:x 3.0 :y 4.0 :z 5.0} {:a 1 :b 2 :c 3 :d 4})))))
+      (testing "a nested struct with an array field"
+        (let [quad [:struct [[:v [:array :int 4]]]]
+              pair [:struct [[:lo quad] [:hi quad]]]
+              cb (ffi/callback arena (fn [p] {:lo (:hi p) :hi (:lo p)}) [pair] pair)]
+          (is (= {:lo {:v [5 6 7 8]} :hi {:v [1 2 3 4]}}
+                 ((ffi/cfn cb [pair] pair) {:lo {:v [1 2 3 4]} :hi {:v [5 6 7 8]}})))))
+      (testing "a union and an array are refused"
+        (is (thrown-with-msg? Exception #"a union is not passed by value"
+                              (ffi/callback arena identity [[:union [[:a :int] [:b :double]]]] :void)))
+        (is (thrown-with-msg? Exception #"an array is not a C argument"
+                              (ffi/callback arena identity [[:array :int 2]] :void)))))))
+
 (deftest jvm-return-conversion-test
   (when-not (System/getProperty "babashka.version")
     (with-open [arena (ffi/confined-arena)]

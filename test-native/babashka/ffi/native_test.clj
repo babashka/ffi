@@ -108,9 +108,9 @@
 
     (println "the image leaves out what only the JVM calls")
     (check "the FFM struct and variadic paths are not defined"
-           [false false false]
+           [false false false false]
            (mapv #(bound? (find-var %))
-                 '[babashka.ffi/struct-ffm-cfn babashka.ffi/variadic-ffm-cfn
+                 '[babashka.ffi/struct-ffm-cfn babashka.ffi/struct-return-slot babashka.ffi/variadic-ffm-cfn
                    babashka.ffi/variadic-handle-cfn]))
 
     (println "memory, which needs no linker at all")
@@ -144,14 +144,48 @@
           (check "a variadic signature goes to libffi"
                  :libffi (:babashka.ffi/backend (meta inferred)))
           (check "a tail inferred per call" [6 -1] [(inferred 3 1 2 3) (inferred 2 -3 2)])
-          (check "a declared tail of doubles" 4.0 (declared 2 1.5 2.5))))
+          (check "a declared tail of doubles" 4.0 (declared 2 1.5 2.5)))
+        (println "what libffi calls back: structs by value and shapes the image did not register")
+        (let [js-value [:struct [[:u :int64] [:tag :int64]]]
+              sig [:pointer js-value :int :pointer]
+              cb (ffi/callback (ffi/global-arena)
+                               (fn [_ this argc _] {:u (+ (:u this) argc) :tag (:tag this)})
+                               sig js-value)]
+          (check "a struct argument and a struct return"
+                 {:u 42 :tag 7} ((ffi/cfn cb sig js-value) nil {:u 40 :tag 7} 2 nil)))
+        (let [big [:struct [[:a :long] [:b :long] [:c :long] [:d :long]]]
+              cb (ffi/callback (ffi/global-arena)
+                               (fn [a v b] {:a (:a b) :b (long (:z v)) :c a :d (:d b)})
+                               [:int8 v3 big] big)]
+          (check "a struct in memory, an HFA and a narrow integer"
+                 {:a 1 :b 5 :c -3 :d 4}
+                 ((ffi/cfn cb [:int8 v3 big] big) -3 {:x 3.0 :y 4.0 :z 5.0} {:a 1 :b 2 :c 3 :d 4})))
+        (let [cb (ffi/callback (ffi/global-arena) (fn [p] (- (:x p) (:y p))) [p2] :int)]
+          (check "a narrow integer return keeps its sign"
+                 -7 ((ffi/cfn cb [p2] :int) {:x -5 :y 2})))
+        (let [sig (vec (repeat 8 :int))
+              cb (ffi/callback (ffi/global-arena) (fn [& xs] (apply + xs)) sig :int)]
+          (check "eight int arguments"
+                 -36 (apply (ffi/cfn cb sig :int) (map - (range 1 9)))))
+        (let [cb (ffi/callback (ffi/global-arena) (fn [a b] (* a b)) [:float :double] :float)]
+          (check "a :float argument and a :float return"
+                 3.0 (double ((ffi/cfn cb [:float :double] :float) 1.5 2.0))))
+        (let [seen (atom nil)]
+          (ffi/with-open [arena (ffi/confined-arena)]
+            (let [cb (ffi/callback arena (fn [p] (reset! seen p)) [p2] :void)]
+              ((ffi/cfn cb [p2] :void) {:x 1 :y 2})))
+          (check "a callback in a confined arena receives its struct" {:x 1 :y 2} @seen)))
       (do
         (println "what a build without libffi refuses, rather than calling wrongly")
         (check-throws "a struct by value" #"libffi"
                       #(let [f (ffi/cfn "p2_sum" [[:struct [[:x :int] [:y :int]]]] :int)]
                          (f {:x 1 :y 2})))
         (check-throws "a variadic signature" #"libffi"
-                      #(ffi/cfn "var_int_sum" [:int :&] :long))))
+                      #(ffi/cfn "var_int_sum" [:int :&] :long))
+        (check-throws "a callback with a struct by value" #"libffi"
+                      #(ffi/callback (ffi/global-arena) identity [[:struct [[:x :int] [:y :int]]]] :int))
+        (check-throws "a callback with eight arguments" #"libffi"
+                      #(ffi/callback (ffi/global-arena) + (vec (repeat 8 :int)) :int))))
 
     (println)
     (if (zero? @failures)

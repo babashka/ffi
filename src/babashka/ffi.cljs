@@ -1362,6 +1362,8 @@
 
   CAUTION: Unregister the callback before its arena releases the pointer."
   [^Arena arena f argtypes rettype]
+  (when (or (vector? rettype) (some vector? argtypes))
+    (throw (unsupported-ex "callback" argtypes rettype "node:ffi does not pass a struct by value")))
   (run! check-type argtypes)
   (check-type rettype)
   (when (some #(= :void %) argtypes)

@@ -57,6 +57,8 @@
   (testing "unsupported signatures throw when the binding is created"
     (is (thrown-with-msg? js/Error #"does not pass a struct by value"
                           (ffi/cfn "div" [:int :int] [:struct [[:quot :int] [:rem :int]]])))
+    (is (thrown-with-msg? js/Error #"does not pass a struct by value"
+                          (ffi/callback (ffi/global-arena) identity [[:struct [[:x :int]]]] :void)))
     (is (thrown-with-msg? js/Error #"does not make variadic calls"
                           (ffi/cfn "printf" [:string :&] :int)))
     (is (thrown-with-msg? js/Error #"cannot call a function pointer"

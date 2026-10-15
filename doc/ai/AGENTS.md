@@ -94,8 +94,10 @@ types. The generated class passes every argument and result as a long,
 doubles and floats as raw bits, and resolves the symbol on the first call
 through a MutableCallSite.
 
-Callbacks use FFM upcall stubs on both hosts and keep the limits listed in
-doc/guide.md under Callbacks.
+Callbacks use FFM upcall stubs on both hosts. A native image with libffi
+makes a callback with a struct by value, or outside the registered shapes in
+doc/guide.md under Callbacks, a libffi closure whose handler is a registered
+upcall of four pointers. See ADR 0009.
 
 ## Type tables
 
@@ -107,7 +109,7 @@ Adding or changing a type keyword touches each of these. Keep them in sync.
 - binding.clj bits-ret-fn, the same table over raw long bits for the JVM path
 - ffi.clj sizes, array-carriers, signature-layout, exact-layout, ffi-type-codes
 - the case tables in read, write and place
-- the callback return coercion in callback
+- the callback return coercion in ffm-callback and libffi-callback
 
 jvm-return-conversion-test checks narrow-ret and bits-ret-fn against each
 other through a callback that returns each type.
@@ -121,13 +123,13 @@ A carrier is what the call path moves it in. The two differ for every
 integer narrower than 64 bits, so a handle built from a descriptor is cast
 between them: carrier-handle for the generic invoker, struct-handle in
 binding.clj for the generated class, and explicitCastArguments onto
-signature-method-type for an upcall stub. Naming a narrow integer by its
-carrier reads the wrong bytes once arguments spill to the stack, which
+the descriptor's method type for an upcall stub. Naming a narrow integer by
+its carrier reads the wrong bytes once arguments spill to the stack, which
 stack-arguments-test covers.
 
 A callback in a native image is the exception: it keeps the carrier shape,
 through carrier-descriptor, and narrows each value on arrival instead, in
-the in-c table in callback. babashka registers the upcall shapes an image
+the in-c table in ffm-callback. babashka registers the upcall shapes an image
 can make when it builds it, from script/gen_ffi_metadata.clj, and one shape
 per width per position is not a set anything can register. The narrowing is
 what makes that sound, not the six-argument cap: a C caller writes the low
