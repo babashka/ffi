@@ -228,7 +228,7 @@
   "The types a declared variadic tail may name. C promotes every variadic
   argument: a float becomes a double and an integer narrower than int
   becomes an int, so those widths cannot be passed and are refused with the
-  promoted type to use."
+  promoted type to use. A struct layout is also a tail type."
   #{:int :uint :int32 :uint32 :long :ulong :int64 :uint64 :size_t :ssize_t
     :pointer :string :double})
 
@@ -248,7 +248,8 @@
           (throw (ex-info "babashka.ffi: a variadic signature needs at least one fixed argtype before :&"
                           {:argtypes argtypes})))
         (doseq [t tail]
-          (when-not (contains? variadic-tail-types t)
+          ;; check-by-value! has already refused an array or a union layout
+          (when-not (or (vector? t) (contains? variadic-tail-types t))
             (throw (ex-info (str "babashka.ffi: " (pr-str t) " cannot be a variadic tail type: C promotes it"
                                  (case t
                                    :float " to :double"

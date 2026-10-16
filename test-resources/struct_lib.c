@@ -191,3 +191,18 @@ EXPORT int64_t var_p2_sum(P2 p, int32_t n, ...) {
   va_end(ap);
   return s;
 }
+/* structs after the fixed arguments */
+EXPORT int64_t var_p2_tail(int32_t n, ...) {
+  va_list ap; int64_t s = 0;
+  va_start(ap, n);
+  for (int32_t i = 0; i < n; i++) { P2 p = va_arg(ap, P2); s += p.x * 10 + p.y; }
+  va_end(ap);
+  return s;
+}
+EXPORT Val var_val_tail(int32_t n, ...) {
+  va_list ap; Val v = { 0, 0 };
+  va_start(ap, n);
+  for (int32_t i = 0; i < n; i++) { Val w = va_arg(ap, Val); v.u += w.u; v.tag += w.tag; }
+  va_end(ap);
+  return v;
+}
