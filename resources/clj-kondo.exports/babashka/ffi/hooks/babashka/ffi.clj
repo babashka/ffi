@@ -46,14 +46,14 @@
                                          (api/token-node nil)])]))
         ;; Match fixed and variadic C arities.
         arg-params (fn []
-                     (let [types (:children argtypes)
-                           variadic? (= :& (some-> (last types) api/sexpr))
-                           fixed (if variadic? (butlast types) types)]
+                     (let [[fixed [amp & tail]] (split-with #(not= :& (api/sexpr %))
+                                                            (:children argtypes))
+                           inferred-tail? (and amp (empty? tail))]
                        (api/vector-node
                         (cond-> (mapv (fn [i] (api/token-node (symbol (str "_arg" i))))
-                                      (range (count fixed)))
-                          variadic? (conj (api/token-node '&)
-                                          (api/token-node '_rest))))))]
+                                      (range (+ (count fixed) (count tail))))
+                          inferred-tail? (conj (api/token-node '&)
+                                               (api/token-node '_rest))))))]
     {:node
      (cond
        (seq wrapper)

@@ -829,6 +829,8 @@
                   (= 2 (f buf 16 "%d" 42))))
               (catch Throwable _ false))))
 
+(defcfn snprintf-int "snprintf" [:pointer :size_t :string :& :int] :int)
+
 (deftest declared-variadic-tail-test
   (if-not @declared-tail?
     (println "declared variadic tail skipped: this babashka predates it, or snprintf is not reachable")
@@ -841,6 +843,9 @@
           (is (= "42 and hello" (ffi/ptr->string buf 64)))
           (is (= (inferred buf 64 "%d and %s" 42 "hello") (declared buf 64 "%d and %s" 42 "hello")))
           (is (thrown-with-msg? Exception #"expects 5 args, got 4" (declared buf 64 "%d" 42))))
+        (testing "defcfn binds a declared tail with an exact arity"
+          (is (= 2 (snprintf-int buf 64 "%d" 42)))
+          (is (= "42" (ffi/ptr->string buf 64))))
         (testing "an inferred binding accepts different tail shapes"
           (let [out (fn [& args] (apply inferred buf 64 args) (ffi/ptr->string buf 64))]
             (is (= ["7" "x" "7 x" "plain" "8"]
