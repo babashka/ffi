@@ -1,6 +1,7 @@
 ;; Embedded QuickJS over babashka.ffi: load npm packages from node_modules,
 ;; compile ClojureScript with the squint compiler inside the engine, and
-;; evaluate the result. No Node.js.
+;; evaluate the result. JavaScript calls a registered bb function back. No
+;; Node.js.
 ;;
 ;;   git clone https://github.com/quickjs-ng/quickjs
 ;;   cmake -S quickjs -B quickjs/build -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release
@@ -37,10 +38,11 @@
 (defcfn to-cstring "JS_ToCStringLen2" [:pointer :pointer js-value :bool] :pointer)
 (defcfn free-cstring "JS_FreeCString" [:pointer :pointer] :void)
 (defcfn get-exception "JS_GetException" [:pointer] js-value)
-(defcfn new-error "JS_NewError" [:pointer] js-value)
+(defcfn throw-reference-error "JS_ThrowReferenceError" [:pointer :string :& :string] js-value)
 (defcfn new-string "JS_NewStringLen" [:pointer :string :size_t] js-value)
+(defcfn new-c-function "JS_NewCFunction2" [:pointer :pointer :string :int :int :int] js-value)
+(defcfn global-object "JS_GetGlobalObject" [:pointer] js-value)
 (defcfn set-property-str "JS_SetPropertyStr" [:pointer js-value :string js-value] :int)
-(defcfn js-throw "JS_Throw" [:pointer js-value] js-value)
 (defcfn execute-pending-job "JS_ExecutePendingJob" [:pointer :pointer] :int)
 (defcfn promise-state "JS_PromiseState" [:pointer js-value] :int)
 (defcfn promise-result "JS_PromiseResult" [:pointer js-value] js-value)
@@ -95,11 +97,10 @@
         2 (throw (ex-info (take-value (promise-result ctx v)) {:source source})))
       (finally (free-value ctx v)))))
 
-(defn throw-js-error! [message]
-  (let [e (new-error ctx)]
-    (set-property-str ctx e "message" (new-string ctx message (utf8-length message)))
-    (js-throw ctx e)
-    nil))
+(defn throw-js-error!
+  "Throws a ReferenceError in the context and returns the exception value."
+  [message]
+  (throw-reference-error ctx "%s" message))
 
 (def node-modules
   (fs/absolutize (or (first *command-line-args*) "node_modules")))
@@ -127,12 +128,10 @@
           (let [[_ package subpath] (re-find #"^((?:@[^/]+/)?[^/]+)/?(.*)$" module-name)]
             (package-file package subpath))))))
 
-(defn js-malloc-string [^String s]
-  (let [bs (.getBytes s "UTF-8")
-        n (alength bs)
-        p (ffi/reinterpret (js-malloc ctx (inc n)) (inc n))]
-    (ffi/write-array p :char bs)
-    (ffi/write p :char 0 n)
+(defn js-malloc-string [s]
+  (let [n (inc (utf8-length s))
+        p (ffi/reinterpret (js-malloc ctx n) n)]
+    (ffi/write-string p s)
     p))
 
 ;; JSModuleNormalizeFunc returns the specifier allocated with js_malloc.
@@ -145,7 +144,8 @@
                                          (ffi/ptr->string module-name)))
        (catch Exception e
          (throw-js-error! (str "Cannot resolve " (ffi/ptr->string module-name)
-                               ": " (ex-message e))))))
+                               ": " (ex-message e)))
+         nil)))
    [:pointer :pointer :pointer :pointer] :pointer))
 
 ;; The pointer of a compiled module value is its JSModuleDef.
@@ -161,7 +161,8 @@
              (free-value ctx v)
              (ffi/segment (:u v))))
          (catch Exception e
-           (throw-js-error! (str "Cannot load " file ": " (ex-message e)))))))
+           (throw-js-error! (str "Cannot load " file ": " (ex-message e)))
+           nil))))
    [:pointer :pointer :pointer] :pointer))
 
 (set-module-loader rt normalize loader ffi/null)
@@ -179,6 +180,35 @@
                 ", {context: 'expr', repl: true,"
                 " 'elide-imports': true, 'elide-exports': true})))")))
 
+(def js-value-size (ffi/sizeof js-value))
+
+;; JSCFunction: JSValue f(JSContext *, JSValueConst this, int argc, JSValueConst *argv).
+(defn register-fn!
+  "Installs f as a global JavaScript function named js-name. f takes the
+  arguments as strings and returns a string. An exception in f becomes a
+  ReferenceError in JavaScript."
+  [js-name f]
+  (let [callback
+        (ffi/callback
+         (ffi/global-arena)
+         (fn [c _this argc argv]
+           (try
+             (let [argv (ffi/reinterpret argv (* js-value-size argc))
+                   args (mapv #(value->str (ffi/read argv js-value (* js-value-size %)))
+                              (range argc))
+                   s (str (f args))]
+               (new-string c s (utf8-length s)))
+             (catch Exception e
+               (throw-js-error! (str js-name ": " (ex-message e))))))
+         [:pointer js-value :int :pointer] js-value)
+        global (global-object ctx)]
+    (try
+      (set-property-str ctx global js-name (new-c-function ctx callback js-name 1 0 0))
+      (finally (free-value ctx global)))))
+
+(register-fn! "bbUpper" (fn [[s]] (str/upper-case s)))
+(register-fn! "bbSlurp" (fn [[path]] (slurp path)))
+
 (println "javascript:  " (eval-js "[1,2,3].map(x => x * x).join(',')"))
 (println "promise:     " (eval-js "(async () => 6 * 7)()"))
 (println "squint:      " (eval-cljs '(->> (range 10) (map #(* % %)) (filter odd?) vec)))
@@ -187,5 +217,8 @@
 (eval-cljs '(def counter 41))
 (println "def:         " (eval-cljs '(inc counter)))
 
+(println "callback:    " (eval-cljs '(mapv js/bbUpper ["babashka" "quickjs"])))
+(println "throw:       " (try (eval-js "bbSlurp('/no/such/file')")
+                              (catch Exception e (ex-message e))))
 (println "error:       " (try (eval-js "import('no-such-package')")
                               (catch Exception e (ex-message e))))
