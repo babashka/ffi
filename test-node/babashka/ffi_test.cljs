@@ -57,6 +57,8 @@
   (testing "unsupported signatures throw when the binding is created"
     (is (thrown-with-msg? js/Error #"does not pass a struct by value"
                           (ffi/cfn "div" [:int :int] [:struct [[:quot :int] [:rem :int]]])))
+    (is (thrown-with-msg? js/Error #"does not pass a struct by value"
+                          (ffi/callback (ffi/global-arena) identity [[:struct [[:x :int]]]] :void)))
     (is (thrown-with-msg? js/Error #"does not make variadic calls"
                           (ffi/cfn "printf" [:string :&] :int)))
     (is (thrown-with-msg? js/Error #"cannot call a function pointer"
@@ -136,6 +138,33 @@
       (is (= "hello" (ffi/ptr->string (ffi/string->ptr arena "hello"))))
       (let [s (str "h" (js/String.fromCharCode 0xe9) "llo " (js/String.fromCharCode 0x2713))]
         (is (= s (ffi/ptr->string (ffi/string->ptr arena s))))))))
+
+(deftest write-string-test
+  (ffi/with-open [arena (ffi/confined-arena)]
+    (testing "write-string writes the bytes and a NUL byte"
+      (let [p (ffi/alloc arena 16)]
+        (ffi/write p :char 120 6)
+        (ffi/write-string p "hello")
+        (is (= "hello" (ffi/ptr->string p)))
+        (is (zero? (ffi/read p :char 5)))))
+    (testing "write-string writes at a byte offset"
+      (let [p (ffi/alloc arena 16)]
+        (ffi/write-string p "abc" 8)
+        (is (= "abc" (ffi/ptr->string (ffi/slice p 8))))))
+    (testing "write-string encodes UTF-8"
+      (let [s (str "h" (js/String.fromCharCode 0xe9) "llo " (js/String.fromCharCode 0x2713))
+            n (js/Buffer.byteLength s "utf8")
+            p (ffi/alloc arena (inc n))]
+        (ffi/write-string p s)
+        (is (= s (ffi/ptr->string p)))))
+    (testing "write-string rejects a write past the pointer size"
+      (let [p (ffi/alloc arena 5)]
+        (is (thrown-with-msg? js/Error #"out of bounds" (ffi/write-string p "hello")))
+        (testing "and leaves the memory unchanged"
+          (is (zero? (ffi/read p :char 0))))))
+    (testing "write-string rejects a zero-size pointer"
+      (is (thrown-with-msg? js/Error #"size 0"
+                            (ffi/write-string (ffi/segment (ffi/address (ffi/alloc arena 8))) "x"))))))
 
 (deftest struct-access-test
   (let [rect [:struct [[:lo point] [:hi point]]]]

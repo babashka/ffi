@@ -401,7 +401,8 @@ build made with `BABASHKA_LIBFFI=none`. `bb describe` shows the version under
 `:libffi/version`. In a binary without libffi, a struct binding causes an
 error.
 
-Structs are not supported in variadic signatures.
+A variadic signature takes structs as fixed arguments, as declared types
+after `:&`, and as the return type.
 
 A `:string` struct field follows the same [pointer-lifetime rules](#types) as a
 `:string` argument.
@@ -671,6 +672,22 @@ Use `string->ptr` to allocate a C string in an arena:
   (ffi/ptr->string (ffi/string->ptr arena "hello")))
 ;;=> "hello"
 ```
+
+Use `write-string` to write a C string into memory that C allocated, such as a
+buffer that C frees with its own allocator. Allocate the UTF-8 byte count plus
+one for the NUL byte:
+
+```clojure
+(def malloc (ffi/cfn "malloc" [:size_t] :pointer))
+
+(let [s "hello"
+      n (inc (alength (.getBytes s "UTF-8")))
+      p (ffi/reinterpret (malloc n) n)]
+  (ffi/write-string p s)
+  p)
+```
+
+On Node.js, count the bytes with `(js/Buffer.byteLength s "utf8")`.
 
 `ptr->string` reads a string at the specified address. It returns `nil` for
 the NULL address. A pointer returned by C has no size, so `ptr->string` reads
@@ -944,6 +961,20 @@ callback, unregister it.
 
 A `:bool` callback argument becomes `true` or `false`.
 
+Use a struct layout in a callback signature as in `cfn`. The callback receives
+a struct argument as a map and returns a struct as a map:
+
+```clojure
+(def js-value [:struct [[:u :int64] [:tag :int64]]])
+
+(ffi/callback (ffi/global-arena)
+              (fn [ctx this argc argv] {:u argc :tag 0})
+              [:pointer js-value :int :pointer]
+              js-value)
+```
+
+A native image calls a struct callback through libffi.
+
 > **_NOTE_** Do not let a callback throw an exception. Catch exceptions inside
 > the callback, or the process can stop.
 
@@ -1105,17 +1136,17 @@ per iteration.
 
 ### Callbacks
 
-In a native image, callbacks have these limits:
+A native image registers these callback shapes when it is built:
 
-- A callback can have up to 4 arguments, with up to 2 `:double` arguments
-  among them.
-- A callback with only integer and pointer arguments can have up to 6.
-  FSEvents calls back with 6 and GLFW's key callback with 5.
-- A callback cannot use `:float`.
-- A return type can be `:void`, an integer type, `:pointer`, or `:double`.
-  For `:pointer`, return a pointer, or `nil` for null.
+- Up to 4 arguments, with up to 2 `:double` arguments among them.
+- Up to 6 integer and pointer arguments. FSEvents calls back with 6 and
+  GLFW's key callback with 5.
+- No `:float`.
+- A `:void`, integer, `:pointer`, or `:double` return. For `:pointer`, return
+  a pointer, or `nil` for null.
 
-If a C API needs a callback shape outside this set, open an issue.
+A callback outside these shapes, or with a struct by value, goes through
+libffi. In a build without libffi, `callback` throws for it.
 
 ## Build your own native image
 
@@ -1185,7 +1216,8 @@ callback shapes that only Windows needs.
 The limits in [In a babashka native binary](#in-a-babashka-native-binary)
 and [Callbacks](#callbacks) apply. This build does not link libffi. Binding
 fails for structs passed by value, variadic signatures, and fixed signatures
-outside the trampoline set.
+outside the trampoline set. `callback` fails for structs passed by value and
+for shapes outside the registered set.
 
 To link libffi, as babashka does in its own build:
 

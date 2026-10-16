@@ -26,6 +26,17 @@ public final class Libffi {
                                                int nfixed, int ntotal,
                                                PointerBase rtype, PointerBase atypes);
 
+    @CFunction(value = "ffi_closure_alloc", transition = Transition.TO_NATIVE)
+    private static native PointerBase ffi_closure_alloc(long size, PointerBase code);
+
+    @CFunction(value = "ffi_prep_closure_loc", transition = Transition.TO_NATIVE)
+    private static native int ffi_prep_closure_loc(PointerBase closure, PointerBase cif,
+                                                   PointerBase fun, PointerBase userData,
+                                                   PointerBase codeloc);
+
+    @CFunction(value = "ffi_closure_free", transition = Transition.TO_NATIVE)
+    private static native void ffi_closure_free(PointerBase closure);
+
     // This leaf function returns a constant.
     @CFunction(value = "ffi_get_version", transition = Transition.NO_TRANSITION)
     private static native CCharPointer ffi_get_version();
@@ -49,5 +60,19 @@ public final class Libffi {
     public static void call(long cif, long fn, long rvalue, long avalues) {
         ffi_call(WordFactory.pointer(cif), WordFactory.pointer(fn),
                  WordFactory.pointer(rvalue), WordFactory.pointer(avalues));
+    }
+
+    public static long closureAlloc(long size, long code) {
+        return ffi_closure_alloc(size, WordFactory.pointer(code)).rawValue();
+    }
+
+    public static int prepClosureLoc(long closure, long cif, long fun, long codeloc) {
+        return ffi_prep_closure_loc(WordFactory.pointer(closure), WordFactory.pointer(cif),
+                                    WordFactory.pointer(fun), WordFactory.nullPointer(),
+                                    WordFactory.pointer(codeloc));
+    }
+
+    public static void closureFree(long closure) {
+        ffi_closure_free(WordFactory.pointer(closure));
     }
 }

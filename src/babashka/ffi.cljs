@@ -817,6 +817,22 @@
     (.exportString nffi s (.-addr p) n)
     p))
 
+(defn write-string
+  "Writes s to p as a NUL-terminated UTF-8 string at byte offset (default 0).
+  Returns nil.
+
+  The write takes the UTF-8 byte count of s plus one byte.
+  (js/Buffer.byteLength s \"utf8\") is that byte count without the NUL.
+  Checks the write against the size of p. Rejects a zero-size pointer.
+  reinterpret specifies a valid size."
+  ([p s] (write-string p s 0))
+  ([p s offset]
+   (let [p (accessible p)
+         n (inc (js/Buffer.byteLength s "utf8"))]
+     (check-bounds p offset n)
+     (.exportString nffi s (+ (.-addr p) (js/BigInt offset)) n)
+     nil)))
+
 ;; -- layouts ------------------------------------------------------------------
 
 (def ^:private sizes
@@ -1353,6 +1369,9 @@
   arguments as zero-size pointers and :bool arguments as booleans. For a
   :pointer return f returns a pointer, or nil for null.
 
+  node:ffi does not pass a struct by value. callback throws for a struct
+  layout.
+
   C must call the pointer on the JavaScript thread. f must not throw and
   must not return a promise.
 
@@ -1362,6 +1381,8 @@
 
   CAUTION: Unregister the callback before its arena releases the pointer."
   [^Arena arena f argtypes rettype]
+  (when (or (vector? rettype) (some vector? argtypes))
+    (throw (unsupported-ex "callback" argtypes rettype "node:ffi does not pass a struct by value")))
   (run! check-type argtypes)
   (check-type rettype)
   (when (some #(= :void %) argtypes)
