@@ -34,7 +34,8 @@ The guide in [doc/guide.md](../doc/guide.md) explains the API these use.
   libjavascriptcoregtk-4.1-0 package.
 - `quickjs.clj` embeds QuickJS: it loads squint from node_modules and
   compiles and evaluates ClojureScript inside the engine, without Node.js.
-  JavaScript calls a registered bb function back. It needs libqjs, built from quickjs-ng as the header of the script shows.
+  JavaScript calls a registered bb function back. It needs libqjs (`brew install quickjs-ng`, or the source build in the
+  header of the script).
 - `python.cljc` embeds CPython: it evaluates Python expressions and registers
   a Clojure function as a Python callable. It needs libpython3.
 - `helitorus.clj` draws a helix around a torus with raylib

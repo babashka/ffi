@@ -3,14 +3,19 @@
 ;; evaluate the result. JavaScript calls a registered bb function back. No
 ;; Node.js.
 ;;
+;;   brew install quickjs-ng
+;;   npm install squint-cljs
+;;   bb examples/quickjs.clj
+;;
+;; Without Homebrew, build the shared library from source and point
+;; QUICKJS_LIB at it:
+;;
 ;;   git clone https://github.com/quickjs-ng/quickjs
 ;;   cmake -S quickjs -B quickjs/build -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release
 ;;   cmake --build quickjs/build --target qjs
-;;   npm install squint-cljs
-;;   QUICKJS_LIB=quickjs/build/libqjs.dylib bb examples/quickjs.clj
+;;   QUICKJS_LIB=quickjs/build/libqjs.so bb examples/quickjs.clj
 ;;
-;; On Linux the library is quickjs/build/libqjs.so. Without QUICKJS_LIB the
-;; script loads libqjs from the system library path. An optional argument is
+;; On macOS the library is quickjs/build/libqjs.dylib. An optional argument is
 ;; the node_modules directory, node_modules by default.
 ;;
 ;; On the JVM, put cheshire and babashka.fs on the classpath.
