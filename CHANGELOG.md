@@ -9,6 +9,7 @@ Clojure, babashka and Node.js.
 - [#64](https://github.com/babashka/ffi/issues/64): `cfn` accepts structs in a variadic signature, as return type and as argument
 - [#63](https://github.com/babashka/ffi/issues/63): `callback` accepts struct layouts as argument and return types
 - In a native image with libffi, `callback` accepts shapes outside the registered upcall set, such as more than 6 arguments or `:float`
+- The clj-kondo hook checks the arity of a `defcfn` with types after `:&`
 - On the JVM, a `callback` receives a `:uint`, `:uint32`, `:uint16` or `:uint8` argument without sign extension
 
 ## 0.1.2
