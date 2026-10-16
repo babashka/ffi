@@ -1353,6 +1353,9 @@
   arguments as zero-size pointers and :bool arguments as booleans. For a
   :pointer return f returns a pointer, or nil for null.
 
+  node:ffi does not pass a struct by value. callback throws for a struct
+  layout.
+
   C must call the pointer on the JavaScript thread. f must not throw and
   must not return a promise.
 

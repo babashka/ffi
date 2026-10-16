@@ -167,6 +167,20 @@
               cb (ffi/callback (ffi/global-arena) (fn [& xs] (apply + xs)) sig :int)]
           (check "eight int arguments"
                  -36 (apply (ffi/cfn cb sig :int) (map - (range 1 9)))))
+        (let [seen (atom nil)
+              sig (into (vec (repeat 8 :long)) [:int8 :int16])
+              cb (ffi/callback (ffi/global-arena)
+                               (fn [& xs] (reset! seen (vec (drop 8 xs))) (apply + xs)) sig :long)]
+          (check "narrow arguments past the registers"
+                 29 (apply (ffi/cfn cb sig :long) (concat (range 1 9) [-3 -4])))
+          (check "and the callback saw them signed" [-3 -4] @seen))
+        (doseq [[what lay v w] [["a 1-byte struct" [:struct [[:x :int8]]] {:x -2} {:x -1}]
+                                ["a 12-byte struct" [:struct [[:a :int] [:b :int] [:c :int]]]
+                                 {:a 1 :b 2 :c 3} {:a 2 :b 3 :c 4}]
+                                ["a float HFA" [:struct [[:x :float] [:y :float]]]
+                                 {:x 1.5 :y 2.5} {:x 2.5 :y 3.5}]]]
+          (let [cb (ffi/callback (ffi/global-arena) (fn [s] (update-vals s inc)) [lay] lay)]
+            (check (str what " as argument and return") w ((ffi/cfn cb [lay] lay) v))))
         (let [cb (ffi/callback (ffi/global-arena) (fn [a b] (* a b)) [:float :double] :float)]
           (check "a :float argument and a :float return"
                  3.0 (double ((ffi/cfn cb [:float :double] :float) 1.5 2.0))))

@@ -938,6 +938,15 @@
       ((ffi/cfn cb sig :long) 4294967295 65535 255)
       (is (= [4294967295 65535 255] @seen)))))
 
+(deftest narrow-callback-arguments-on-the-stack-test
+  (when-not (System/getProperty "babashka.version")
+    (with-open [arena (ffi/confined-arena)]
+      (let [seen (atom nil)
+            sig (into (vec (repeat 8 :long)) [:int8 :int16])
+            cb (ffi/callback arena (fn [& xs] (reset! seen (vec (drop 8 xs))) (apply + xs)) sig :long)]
+        (is (= 29 (apply (ffi/cfn cb sig :long) (concat (range 1 9) [-3 -4]))))
+        (is (= [-3 -4] @seen))))))
+
 (deftest jvm-return-conversion-test
   (when-not (System/getProperty "babashka.version")
     (with-open [arena (ffi/confined-arena)]
