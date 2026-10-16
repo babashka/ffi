@@ -44,6 +44,9 @@ Its index and count would leave `read-array` with two unrelated shapes.
 The numbers follow `System/arraycopy`: source position, destination
 position, length.
 
+`read-into!` returns arr, as `read-array` returns its new array, so a call
+can be threaded. The caller knows the count it passed.
+
 `write-string` is not `write-bytes`, which jolt has without a NUL byte.
 The reading side stays `ptr->string`, because `read-string` shadows
 `clojure.core/read-string` for a caller who refers the namespace.
@@ -52,6 +55,6 @@ The reading side stays `ptr->string`, because `read-string` shadows
 
 `read-into!` and the `write-array` tail match jolt in name and argument
 order. The return values differ. jolt returns the element count from both,
-and babashka returns nil from `write-array`. The last arity of each takes
+and babashka returns arr from `read-into!` and nil from `write-array`. The last arity of each takes
 `index` and `n` side by side, where a swap throws only if it leaves the
 array.
