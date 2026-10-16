@@ -218,7 +218,7 @@ automatic arena only when your reference outlives every call that C can make.
 
 CAUTION: Unregister the callback before its arena releases the pointer.
 Catch exceptions inside f. An uncaught exception can stop the process.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L2689-L2729">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L2692-L2732">Source</a></sub></p>
 
 ## <a name="babashka.ffi/cfn">`cfn`</a>
 ``` clojure
@@ -404,7 +404,7 @@ names such as libz.so.1. Returns the same library map as load-library.
 
 
 The NULL pointer.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1783-L1785">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1786-L1788">Source</a></sub></p>
 
 ## <a name="babashka.ffi/null?">`null?`</a>
 ``` clojure
@@ -413,7 +413,7 @@ The NULL pointer.
 Function.
 
 Returns true for a NULL pointer. Returns false for all other pointers.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1787-L1790">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1790-L1793">Source</a></sub></p>
 
 ## <a name="babashka.ffi/place">`place`</a>
 ``` clojure
@@ -657,4 +657,4 @@ The write takes the UTF-8 byte count of s plus one byte.
 (alength (.getBytes s "UTF-8")) is that byte count without the NUL.
 Checks the write against the size of p. Rejects a zero-size pointer.
 reinterpret specifies a valid size.
-<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1769-L1781">Source</a></sub></p>
+<p><sub><a href="https://github.com/babashka/ffi/blob/main/src/babashka/ffi.clj#L1769-L1784">Source</a></sub></p>
