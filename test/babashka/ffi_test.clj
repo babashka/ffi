@@ -822,12 +822,50 @@
           (is (thrown-with-msg? Exception #"promotes it to :double; declare :double"
                                 (ffi/cfn "snprintf" [:pointer :size_t :string :& :float] :int)))
           (is (thrown-with-msg? Exception #"promotes it to :int; declare :int"
-                                (ffi/cfn "snprintf" [:pointer :size_t :string :& :int8] :int)))
-          (is (thrown-with-msg? Exception #"cannot be a variadic tail type"
-                                (ffi/cfn "snprintf" [:pointer :size_t :string :& [:struct [[:x :int]]]] :int))))
+                                (ffi/cfn "snprintf" [:pointer :size_t :string :& :int8] :int))))
         (testing "the marker rules"
           (is (thrown-with-msg? Exception #"appears twice" (ffi/cfn "snprintf" [:string :& :int :&] :int)))
           (is (thrown-with-msg? Exception #"at least one fixed" (ffi/cfn "snprintf" [:& :int] :int))))))))
+
+(def val-layout [:struct [[:u :int64] [:tag :int64]]])
+
+(deftest variadic-struct-test
+  (cond
+    (System/getProperty "babashka.version")
+    (println "variadic structs skipped: babashka carries an older babashka.ffi")
+    (not (true? @struct-lib))
+    (println "variadic structs skipped:" (if (string? @struct-lib) @struct-lib "unknown reason"))
+    :else
+    (do
+      (testing "a variadic function returns a struct with an inferred tail"
+        (let [f (ffi/cfn "var_val" [:long :int :&] val-layout)]
+          (is (= {:u 6 :tag 3} (f 3 3 1 2 3)))
+          (is (= {:u 0 :tag 4} (f 4 0)))
+          (is (= {:u 5 :tag 1} (f 1 2 nil 5)))
+          (is (= {:u 190 :tag 9} (apply f 9 20 (range 20))))
+          (is (str/includes? (pr-str f) "var_val [:long :int :&]"))))
+      (testing "a variadic function returns a struct with a declared tail"
+        (is (= {:u 30 :tag 5} ((ffi/cfn "var_val" [:long :int :& :long :long] val-layout) 5 2 10 20))))
+      (testing "a :string tail reaches a variadic function with a struct return"
+        (with-open [arena (ffi/confined-arena)]
+          (let [buf (ffi/alloc arena 64)]
+            (is (= {:u 6 :tag 7}
+                   ((ffi/cfn "var_format" [:pointer :string :&] val-layout) buf "%s-%d" "abc" 42)))
+            (is (= "abc-42" (ffi/ptr->string buf 64)))
+            (is (= {:u 2 :tag 7}
+                   ((ffi/cfn "var_format" [:pointer :string :& :string] val-layout) buf "%s" "hi"))))))
+      (testing "a struct argument before :& reaches a variadic function"
+        (is (= 10 ((ffi/cfn "var_p2_sum" [p2 :int :&] :long) {:x 1 :y 2} 2 3 4)))
+        (is (= 10 ((ffi/cfn "var_p2_sum" [p2 :int :& :long] :long) {:x 1 :y 2} 1 7))))
+      (testing "a declared tail passes structs after :&"
+        (is (= 46 ((ffi/cfn "var_p2_tail" [:int :& p2 p2] :long) 2 {:x 1 :y 2} {:x 3 :y 4})))
+        (is (= {:u 4 :tag 6}
+               ((ffi/cfn "var_val_tail" [:int :& val-layout val-layout] val-layout)
+                2 {:u 1 :tag 2} {:u 3 :tag 4})))
+        (let [f2 [:struct [[:a :float] [:b :float]]]]
+          (is (= 46.0 ((ffi/cfn "var_f2_tail" [:int :& f2 f2] :double) 2 {:a 1.0 :b 2.0} {:a 3.0 :b 4.0}))))
+        (is (thrown-with-msg? Exception #"cannot infer variadic tail type"
+                              ((ffi/cfn "var_p2_tail" [:int :&] :long) 1 {:x 1 :y 2})))))))
 
 
 ;; -- callbacks with five and six integer arguments ----------------------------

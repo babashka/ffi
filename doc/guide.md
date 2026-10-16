@@ -401,7 +401,8 @@ build made with `BABASHKA_LIBFFI=none`. `bb describe` shows the version under
 `:libffi/version`. In a binary without libffi, a struct binding causes an
 error.
 
-Structs are not supported in variadic signatures.
+A variadic signature takes structs as fixed arguments, as declared types
+after `:&`, and as the return type.
 
 A `:string` struct field follows the same [pointer-lifetime rules](#types) as a
 `:string` argument.

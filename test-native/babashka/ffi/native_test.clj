@@ -145,6 +145,22 @@
                  :libffi (:babashka.ffi/backend (meta inferred)))
           (check "a tail inferred per call" [6 -1] [(inferred 3 1 2 3) (inferred 2 -3 2)])
           (check "a declared tail of doubles" 4.0 (declared 2 1.5 2.5)))
+        (let [js-value [:struct [[:u :int64] [:tag :int64]]]]
+          (check "a variadic struct return with a tail inferred per call"
+                 {:u 6 :tag 3} ((ffi/cfn "var_val" [:long :int :&] js-value) 3 3 1 2 3))
+          (check "a variadic struct return with a declared tail"
+                 {:u 30 :tag 5} ((ffi/cfn "var_val" [:long :int :& :long :long] js-value) 5 2 10 20))
+          (check "a struct argument before :&"
+                 10 ((ffi/cfn "var_p2_sum" [p2 :int :&] :long) {:x 1 :y 2} 2 3 4))
+          (check "struct arguments after :&"
+                 46 ((ffi/cfn "var_p2_tail" [:int :& p2 p2] :long) 2 {:x 1 :y 2} {:x 3 :y 4}))
+          (check "16-byte struct arguments after :& and a struct return"
+                 {:u 4 :tag 6}
+                 ((ffi/cfn "var_val_tail" [:int :& js-value js-value] js-value)
+                  2 {:u 1 :tag 2} {:u 3 :tag 4}))
+          (let [f2 [:struct [[:a :float] [:b :float]]]]
+            (check "float HFA arguments after :&"
+                   46.0 ((ffi/cfn "var_f2_tail" [:int :& f2 f2] :double) 2 {:a 1.0 :b 2.0} {:a 3.0 :b 4.0}))))
         (println "what libffi calls back: structs by value and shapes the image did not register")
         (let [js-value [:struct [[:u :int64] [:tag :int64]]]
               sig [:pointer js-value :int :pointer]

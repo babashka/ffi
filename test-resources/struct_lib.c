@@ -4,6 +4,7 @@
 
 #include <stdarg.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #ifdef _WIN32
 #define EXPORT __declspec(dllexport)
@@ -162,6 +163,54 @@ EXPORT double var_double_sum(int32_t n, ...) {
   va_list ap; double s = 0;
   va_start(ap, n);
   for (int32_t i = 0; i < n; i++) s += va_arg(ap, double);
+  va_end(ap);
+  return s;
+}
+
+/* a struct return from a variadic function, shaped like a QuickJS JSValue */
+typedef struct { int64_t u; int64_t tag; } Val;
+EXPORT Val var_val(int64_t tag, int32_t n, ...) {
+  va_list ap; Val v = { 0, tag };
+  va_start(ap, n);
+  for (int32_t i = 0; i < n; i++) v.u += va_arg(ap, int64_t);
+  va_end(ap);
+  return v;
+}
+EXPORT Val var_format(char *buf, const char *fmt, ...) {
+  va_list ap; Val v = { 0, 7 };
+  va_start(ap, fmt);
+  v.u = vsnprintf(buf, 64, fmt, ap);
+  va_end(ap);
+  return v;
+}
+/* a struct argument before the variadic arguments */
+EXPORT int64_t var_p2_sum(P2 p, int32_t n, ...) {
+  va_list ap; int64_t s = p.x + p.y;
+  va_start(ap, n);
+  for (int32_t i = 0; i < n; i++) s += va_arg(ap, int64_t);
+  va_end(ap);
+  return s;
+}
+/* structs after the fixed arguments */
+EXPORT int64_t var_p2_tail(int32_t n, ...) {
+  va_list ap; int64_t s = 0;
+  va_start(ap, n);
+  for (int32_t i = 0; i < n; i++) { P2 p = va_arg(ap, P2); s += p.x * 10 + p.y; }
+  va_end(ap);
+  return s;
+}
+EXPORT Val var_val_tail(int32_t n, ...) {
+  va_list ap; Val v = { 0, 0 };
+  va_start(ap, n);
+  for (int32_t i = 0; i < n; i++) { Val w = va_arg(ap, Val); v.u += w.u; v.tag += w.tag; }
+  va_end(ap);
+  return v;
+}
+typedef struct { float a, b; } F2;  /* a float HFA */
+EXPORT double var_f2_tail(int32_t n, ...) {
+  va_list ap; double s = 0;
+  va_start(ap, n);
+  for (int32_t i = 0; i < n; i++) { F2 p = va_arg(ap, F2); s += p.a * 10 + p.b; }
   va_end(ap);
   return s;
 }
