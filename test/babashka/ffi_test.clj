@@ -829,7 +829,8 @@
                   (= 2 (f buf 16 "%d" 42))))
               (catch Throwable _ false))))
 
-(defcfn snprintf-int "snprintf" [:pointer :size_t :string :& :int] :int)
+(when @declared-tail?
+  (defcfn snprintf-int "snprintf" [:pointer :size_t :string :& :int] :int))
 
 (deftest declared-variadic-tail-test
   (if-not @declared-tail?
