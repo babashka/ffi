@@ -2550,6 +2550,8 @@
                        (vector? t) (cached-codec :decode (layout-of t))
                        (= :bool t) (fn [a] (narrow-ret :bool a))
                        (= :pointer t) (fn [a] (MemorySegment/ofAddress (long a)))
+                       ;; the JVM stub widens a narrow integer with its sign
+                       (contains? #{:uint :uint32 :uint16 :uint8} t) (fn [a] (narrow-ret t a))
                        ;; the stub of a native image takes the carrier, so
                        ;; the sign of a narrow integer is in the low half
                        ;; and the upper half is whatever C left there

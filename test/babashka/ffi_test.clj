@@ -918,11 +918,25 @@
               cb (ffi/callback arena (fn [p] {:lo (:hi p) :hi (:lo p)}) [pair] pair)]
           (is (= {:lo {:v [5 6 7 8]} :hi {:v [1 2 3 4]}}
                  ((ffi/cfn cb [pair] pair) {:lo {:v [1 2 3 4]} :hi {:v [5 6 7 8]}})))))
+      (testing "a 1-byte struct, a 12-byte struct and a float HFA"
+        (doseq [[lay v w] [[[:struct [[:x :int8]]] {:x -2} {:x -1}]
+                           [[:struct [[:a :int] [:b :int] [:c :int]]] {:a 1 :b 2 :c 3} {:a 2 :b 3 :c 4}]
+                           [[:struct [[:x :float] [:y :float]]] {:x 1.5 :y 2.5} {:x 2.5 :y 3.5}]]]
+          (let [cb (ffi/callback arena (fn [s] (update-vals s inc)) [lay] lay)]
+            (is (= w ((ffi/cfn cb [lay] lay) v)) (pr-str lay)))))
       (testing "a union and an array are refused"
         (is (thrown-with-msg? Exception #"a union is not passed by value"
                               (ffi/callback arena identity [[:union [[:a :int] [:b :double]]]] :void)))
         (is (thrown-with-msg? Exception #"an array is not a C argument"
                               (ffi/callback arena identity [[:array :int 2]] :void)))))))
+
+(deftest unsigned-callback-argument-test
+  (with-open [arena (ffi/confined-arena)]
+    (let [seen (atom nil)
+          sig [:uint :uint16 :uint8]
+          cb (ffi/callback arena (fn [a b c] (reset! seen [a b c]) 0) sig :long)]
+      ((ffi/cfn cb sig :long) 4294967295 65535 255)
+      (is (= [4294967295 65535 255] @seen)))))
 
 (deftest jvm-return-conversion-test
   (when-not (System/getProperty "babashka.version")
