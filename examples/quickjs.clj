@@ -16,8 +16,11 @@
 ;;   cmake --build quickjs/build --target qjs
 ;;   QUICKJS_LIB=quickjs/build/libqjs.so bb examples/quickjs.clj
 ;;
-;; On macOS the library is quickjs/build/libqjs.dylib. An optional argument is
-;; the node_modules directory, node_modules by default.
+;; On macOS the library is quickjs/build/libqjs.dylib.
+;;
+;; A package resolves as in Node.js, from node_modules next to the importing
+;; file or the working directory, or in one of their parents. An optional
+;; argument is a node_modules directory to search first.
 ;;
 ;; On the JVM, put cheshire and babashka.fs on the classpath.
 
@@ -114,16 +117,25 @@
   [message]
   (throw-reference-error ctx "%s" message))
 
-(def node-modules
-  (fs/absolutize (or (first *command-line-args*) "node_modules")))
+(defn ancestors-of [dir]
+  (take-while some? (iterate fs/parent (fs/absolutize dir))))
+
+(defn node-modules-dirs [base-name]
+  (concat (some-> (first *command-line-args*) fs/absolutize vector)
+          (map #(fs/path % "node_modules")
+               (concat (some-> (fs/parent base-name) ancestors-of)
+                       (ancestors-of (fs/cwd))))))
 
 (defn export-target [entry]
   (if (map? entry)
     (some #(some-> (get entry %) export-target) ["import" "module" "default"])
     entry))
 
-(defn package-file [package subpath]
-  (let [dir (fs/path node-modules package)
+(defn package-file [base-name package subpath]
+  (let [dir (or (some #(let [dir (fs/path % package)]
+                         (when (fs/exists? (fs/path dir "package.json")) dir))
+                      (node-modules-dirs base-name))
+                (throw (ex-info "not found in any node_modules directory" {:package package})))
         manifest (json/parse-string (slurp (str (fs/path dir "package.json"))))
         k (if (str/blank? subpath) "." (str "./" subpath))
         exports (get manifest "exports")
@@ -138,7 +150,7 @@
         (if (re-find #"^\.\.?/" module-name)
           (fs/path (or (fs/parent base-name) ".") module-name)
           (let [[_ package subpath] (re-find #"^((?:@[^/]+/)?[^/]+)/?(.*)$" module-name)]
-            (package-file package subpath))))))
+            (package-file base-name package subpath))))))
 
 (defn js-malloc-string [s]
   (let [n (inc (utf8-length s))
