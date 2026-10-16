@@ -50,6 +50,8 @@ The reading side stays `ptr->string`, because `read-string` shadows
 
 ## Consequences
 
-`read-into!` and the `write-array` tail match jolt, so code moves between
-the two without renames. The last arity of each takes `index` and `n` side
-by side, where a swap throws only if it leaves the array.
+`read-into!` and the `write-array` tail match jolt in name and argument
+order. The return values differ. jolt returns the element count from both,
+and babashka returns nil from `write-array`. The last arity of each takes
+`index` and `n` side by side, where a swap throws only if it leaves the
+array.

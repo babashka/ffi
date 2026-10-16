@@ -1776,8 +1776,11 @@
   reinterpret specifies a valid size."
   ([p s] (write-string p s 0))
   ([p ^String s offset]
-   (let [^MemorySegment seg (accessible p)]
-     (.setString seg (long offset) s)
+   (let [bs (.getBytes s java.nio.charset.StandardCharsets/UTF_8)
+         n (alength bs)
+         dst (.asSlice ^MemorySegment (accessible p) (long offset) (inc n))]
+     (MemorySegment/copy bs 0 dst ValueLayout/JAVA_BYTE 0 n)
+     (set-i8 dst n 0)
      nil)))
 
 (def null

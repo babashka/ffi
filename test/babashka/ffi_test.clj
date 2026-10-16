@@ -114,7 +114,10 @@
           (ffi/write-string p s)
           (is (= s (ffi/ptr->string p)))))
       (testing "write-string rejects a write past the pointer size"
-        (is (thrown? Exception (ffi/write-string (ffi/alloc arena 5) "hello"))))
+        (let [p (ffi/alloc arena 5)]
+          (is (thrown? Exception (ffi/write-string p "hello")))
+          (testing "and leaves the memory unchanged"
+            (is (zero? (ffi/read p :char 0))))))
       (testing "write-string rejects a zero-size pointer"
         (is (thrown-with-msg? Exception #"size 0"
                               (ffi/write-string (ffi/segment (ffi/address (ffi/alloc arena 8))) "x")))))))
