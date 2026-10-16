@@ -190,21 +190,6 @@
 
 (declare ^:private signature-layout)
 
-(defn- signature-class
-  "The Java type of a signature position, taken from its layout so the two
-  cannot drift apart."
-  ^Class [t]
-  (if (= :void t)
-    Void/TYPE
-    (.carrier ^ValueLayout (signature-layout t))))
-
-(defn- signature-method-type
-  "The MethodType an upcall stub of this signature has."
-  ^MethodType [argtypes rettype]
-  (MethodType/methodType ^Class (signature-class rettype)
-                         ^"[Ljava.lang.Class;"
-                         (into-array Class (map signature-class argtypes))))
-
 (defn- carrier-handle
   "Adapts downcall handle h so that its parameters and result are the
   carriers. The descriptor names each type at the width C gives it, and the
@@ -1029,6 +1014,26 @@
                 (apply f args)))))
         {:babashka.ffi/backend :ffm} sym shown rettype))))
 
+(defn- check-by-value!
+  "Throws if a type in argtypes or rettype is an array or holds a union."
+  [argtypes rettype]
+  ;; C never passes an array by value: a parameter declared as one is a
+  ;; pointer to its first element, and a function cannot return one
+  (doseq [t (cons rettype argtypes)]
+    (when (array-layout? t)
+      (throw (ex-info (str "babashka.ffi: an array is not a C argument or return type: " (pr-str t)
+                           ". C passes an array as a pointer, so declare :pointer."
+                           " A struct that holds an array is passed by value as usual.")
+                      {:argtypes argtypes :rettype rettype})))
+    ;; libffi has no union type, and a largest-member stand-in gets the
+    ;; register class wrong when the members differ in class, so a union
+    ;; is not passed by value on either host. See ADR 0005.
+    (when (and (vector? t) (holds-union? (layout-of t)))
+      (throw (ex-info (str "babashka.ffi: a union is not passed by value: " (pr-str t)
+                           ". Declare :pointer and read the union from memory."
+                           " A struct that holds a union is not passed by value either.")
+                      {:argtypes argtypes :rettype rettype})))))
+
 (defn cfn
   "Creates a Clojure function that calls the C function sym. sym is a C symbol
   name or a function pointer. argtypes is a vector of argument types. rettype
@@ -1070,22 +1075,7 @@
                             ". Make sure that argtypes and the return type are in the correct order: "
                             (pr-str argtypes))
                        {:argtypes argtypes :rettype rettype}))))
-   ;; C never passes an array by value: a parameter declared as one is a
-   ;; pointer to its first element, and a function cannot return one
-   (doseq [t (cons rettype argtypes)]
-     (when (array-layout? t)
-       (throw (ex-info (str "babashka.ffi: an array is not a C argument or return type: " (pr-str t)
-                            ". C passes an array as a pointer, so declare :pointer."
-                            " A struct that holds an array is passed by value as usual.")
-                       {:argtypes argtypes :rettype rettype})))
-     ;; libffi has no union type, and a largest-member stand-in gets the
-     ;; register class wrong when the members differ in class, so a union
-     ;; is not passed by value on either host. See ADR 0005.
-     (when (and (vector? t) (holds-union? (layout-of t)))
-       (throw (ex-info (str "babashka.ffi: a union is not passed by value: " (pr-str t)
-                            ". Declare :pointer and read the union from memory."
-                            " A struct that holds a union is not passed by value either.")
-                       {:argtypes argtypes :rettype rettype}))))
+   (check-by-value! argtypes rettype)
    (let [[fixed tail :as variadic] (check-variadic-marker argtypes)
          ;; any vector on a type position is a layout; layout-of says which
          ;; kinds exist
@@ -2211,7 +2201,10 @@
   (when (and native-image? (= "true" (System/getenv "BABASHKA_FEATURE_LIBFFI")))
     (try {:prep-cif @(requiring-resolve 'babashka.ffi.impl.libffi/prep-cif)
           :prep-cif-var @(requiring-resolve 'babashka.ffi.impl.libffi/prep-cif-var)
-          :call @(requiring-resolve 'babashka.ffi.impl.libffi/call)}
+          :call @(requiring-resolve 'babashka.ffi.impl.libffi/call)
+          :closure-alloc @(requiring-resolve 'babashka.ffi.impl.libffi/closure-alloc)
+          :prep-closure-loc @(requiring-resolve 'babashka.ffi.impl.libffi/prep-closure-loc)
+          :closure-free @(requiring-resolve 'babashka.ffi.impl.libffi/closure-free)}
          (catch Throwable _ nil))))
 
 (def ^:private libffi
@@ -2311,6 +2304,20 @@
       (if rlay
         (FunctionDescriptor/of (lay-of rlay) args)
         (FunctionDescriptor/ofVoid args))))
+
+  (defn- struct-return-slot
+    "Returns a function that writes a struct value of layout lay to a segment
+    of this thread and returns the segment. The upcall stub copies the
+    segment before the thread can call again."
+    [lay]
+    (let [enc (cached-codec :encode lay)
+          slot (ThreadLocal/withInitial
+                (reify java.util.function.Supplier
+                  (get [_] (.allocate (Arena/ofAuto) (long (:size lay)) (long (:align lay))))))]
+      (fn [v]
+        (let [seg (.get slot)]
+          (enc nil seg v)
+          seg))))
 
   (defn- struct-ffm-cfn
     "Returns an FFM binding for a signature that passes a struct by value. Each
@@ -2417,6 +2424,31 @@
                               :else (narrow-ret rettype raw)))))))))
         {:babashka.ffi/backend :ffm} sym argtypes rettype))))
 
+(defn- libffi-cif
+  "Returns an ffi_cif for argtypes and rettype, allocated in arena together
+  with its ffi_type trees. alays are the resolved argument layouts. nfixed is
+  the number of declared parameters of a variadic call, or nil.
+  Throws if libffi lays out a struct differently."
+  ^MemorySegment [^Arena arena sym argtypes rettype alays nfixed]
+  (let [{:keys [prep-cif prep-cif-var]} @libffi
+        n (count argtypes)
+        atypes (mapv #(ffi-type! arena %) argtypes)
+        rtype (ffi-type! arena rettype)
+        atypes-arr (.allocate arena (long (* 8 (max 1 n))) 8)
+        cif (.allocate arena (long cif-bytes) 16)
+        cif-addr (.address cif)]
+    (dotimes [i n] (write atypes-arr :pointer (nth atypes i) (* 8 i)))
+    (let [status (long (if nfixed
+                         (prep-cif-var cif-addr @default-abi (long nfixed) n
+                                       (.address rtype) (.address atypes-arr))
+                         (prep-cif cif-addr @default-abi n (.address rtype) (.address atypes-arr))))]
+      (when-not (zero? status)
+        (throw (ex-info (str "babashka.ffi: ffi_prep_cif failed for " sym)
+                        {:symbol sym :status status}))))
+    (dotimes [i n] (check-layout! (nth alays i) (nth atypes i)))
+    (when-not (= :void rettype) (check-layout! (layout-of rettype) rtype))
+    cif))
+
 (defn- libffi-cfn
   "Returns a libffi binding: a struct signature on any platform, and in a
   native image every fixed signature without a trampoline and every variadic
@@ -2433,63 +2465,48 @@
         ;; where there is no libffi
         alays (mapv layout-of argtypes)
         rlay (if void? {:type :void :size 8 :align 8} (layout-of rettype))
-        {:keys [prep-cif prep-cif-var call]} @libffi
+        {:keys [call]} @libffi
         ;; the garbage collector releases this arena when the binding
         ;; becomes unreachable: the call below holds the cif segment, and a
         ;; segment keeps its arena reachable
-        arena (Arena/ofAuto)
-        atypes (mapv #(ffi-type! arena %) argtypes)
-        rtype (ffi-type! arena rettype)
-        atypes-arr (.allocate arena (long (* 8 (max 1 n))) 8)
-        ^MemorySegment cif (.allocate arena (long cif-bytes) 16)
-        cif-addr (.address cif)]
-    (dotimes [i n] (write atypes-arr :pointer (nth atypes i) (* 8 i)))
-    (let [status (long (if nfixed
-                         (prep-cif-var cif-addr @default-abi (long nfixed) n
-                                       (.address rtype) (.address atypes-arr))
-                         (prep-cif cif-addr @default-abi n (.address rtype) (.address atypes-arr))))]
-      (when-not (zero? status)
-        (throw (ex-info (str "babashka.ffi: ffi_prep_cif failed for " sym)
-                        {:symbol sym :status status}))))
-    (dotimes [i n] (check-layout! (nth alays i) (nth atypes i)))
-    (when-not void? (check-layout! rlay rtype))
-    (let [slot-size (fn ^long [^long s] (align-up (max 8 s) 8))
-          slot-sizes (mapv #(slot-size (long (:size %))) alays)
-          rvalue-off (* 8 (max 1 n))
-          ;; libffi widens an integer return to ffi_arg, so the return slot
-          ;; is never smaller than a word
-          base-off (+ rvalue-off (slot-size (long (:size rlay))))
-          slot-offs (long-array (butlast (reductions + base-off slot-sizes)))
-          total (long (reduce + base-off slot-sizes))
-          ^objects encs (object-array (map-indexed (fn [i lay] (encoder lay (aget slot-offs i)))
-                                                   alays))
-          decode (when-not void? (decoder rlay rvalue-off))
-          ;; a variadic binding shares one address delay over its tail
-          ;; shapes, so a :library function is asked once per binding
-          fnp (or fnp0 (delay (.address (require-symbol lib sym))))
-          arity-error (fn [got]
-                        (throw (ex-info (str "babashka.ffi: " sym " expects " n
-                                             " args, got " got)
-                                        {:symbol sym})))]
-      (binding-with-meta
-        ;; Each call uses a confined arena for scratch memory. Thus, threads
-        ;; can share a binding and a call can re-enter it.
-        (fn [& args]
-          (let [args (vec args)]
-            (when-not (= n (count args)) (arity-error (count args)))
-            (clojure.core/with-open [a (Arena/ofConfined)]
-              (let [scratch (.allocate a total 16)
-                    base (.address scratch)]
-                (dotimes [i n]
-                  (write scratch :long (+ base (aget slot-offs i)) (* 8 i))
-                  ((aget encs i) a scratch (nth args i)))
-                ;; the fence keeps the cif segment, and with it the arena,
-                ;; reachable while libffi reads them: without it the VM may
-                ;; collect the binding during its own call
-                (try (call (.address cif) @fnp (+ base rvalue-off) base)
-                     (finally (java.lang.ref.Reference/reachabilityFence cif)))
-                (when decode (decode scratch))))))
-        {:babashka.ffi/backend :libffi} sym argtypes rettype)))))
+        cif (libffi-cif (Arena/ofAuto) sym argtypes rettype alays nfixed)
+        slot-size (fn ^long [^long s] (align-up (max 8 s) 8))
+        slot-sizes (mapv #(slot-size (long (:size %))) alays)
+        rvalue-off (* 8 (max 1 n))
+        ;; libffi widens an integer return to ffi_arg, so the return slot
+        ;; is never smaller than a word
+        base-off (+ rvalue-off (slot-size (long (:size rlay))))
+        slot-offs (long-array (butlast (reductions + base-off slot-sizes)))
+        total (long (reduce + base-off slot-sizes))
+        ^objects encs (object-array (map-indexed (fn [i lay] (encoder lay (aget slot-offs i)))
+                                                 alays))
+        decode (when-not void? (decoder rlay rvalue-off))
+        ;; a variadic binding shares one address delay over its tail
+        ;; shapes, so a :library function is asked once per binding
+        fnp (or fnp0 (delay (.address (require-symbol lib sym))))
+        arity-error (fn [got]
+                      (throw (ex-info (str "babashka.ffi: " sym " expects " n
+                                           " args, got " got)
+                                      {:symbol sym})))]
+    (binding-with-meta
+      ;; Each call uses a confined arena for scratch memory. Thus, threads
+      ;; can share a binding and a call can re-enter it.
+      (fn [& args]
+        (let [args (vec args)]
+          (when-not (= n (count args)) (arity-error (count args)))
+          (clojure.core/with-open [a (Arena/ofConfined)]
+            (let [scratch (.allocate a total 16)
+                  base (.address scratch)]
+              (dotimes [i n]
+                (write scratch :long (+ base (aget slot-offs i)) (* 8 i))
+                ((aget encs i) a scratch (nth args i)))
+              ;; the fence keeps the cif segment, and with it the arena,
+              ;; reachable while libffi reads them: without it the VM may
+              ;; collect the binding during its own call
+              (try (call (.address cif) @fnp (+ base rvalue-off) base)
+                   (finally (java.lang.ref.Reference/reachabilityFence cif)))
+              (when decode (decode scratch))))))
+      {:babashka.ffi/backend :libffi} sym argtypes rettype))))
 
 ;; -- callbacks ----------------------------------------------------------------
 
@@ -2506,55 +2523,35 @@
       6 (fn [u v w x y z] (ret (f (a u) (b v) (c w) (d x) (e y) (g z))))
       nil)))
 
-(defn callback
-  "Creates a C function pointer that invokes f. arena owns the pointer, which
-  is valid until the arena releases it.
-  argtypes and rettype use the cfn type keywords. f receives :pointer arguments
-  as zero-size pointers and :bool arguments as booleans. Numeric arguments
-  are passed as numbers. For a :pointer return, f must return a pointer or
-  nil for NULL.
+(defn- registered-upcall?
+  "Returns true if a native image registers the upcall shape of argtypes and
+  rettype when it is built."
+  [argtypes rettype]
+  (let [n (count argtypes)
+        doubles (count (filter #(= :double (carrier %)) argtypes))]
+    (not (or (> n 6)
+             (and (> n 4) (pos? doubles))
+             (some #(= :float (carrier %)) argtypes)
+             (> doubles 2)
+             (= :float (carrier rettype))))))
 
-  Choose the arena for the thread that calls back:
-
-      (ffi/callback (ffi/shared-arena) f [:pointer] :void)
-
-  A shared arena allows C to invoke the callback from any thread, including a
-  thread that your code did not create. Use it for asynchronous callbacks, such
-  as event-loop notifications. A confined arena accepts a call from its own
-  thread only. Use it for synchronous callbacks, such as a comparison
-  function. A global arena never releases the pointer.
-
-  An automatic arena releases the pointer once the pointer itself becomes
-  unreachable. The garbage collector cannot see the copy that C holds. Use an
-  automatic arena only when your reference outlives every call that C can make.
-
-  CAUTION: Unregister the callback before its arena releases the pointer.
-  Catch exceptions inside f. An uncaught exception can stop the process."
-  [arena f argtypes rettype]
-  (doseq [t argtypes] (carrier t))
-  (carrier rettype)
-  (when (some #(= :void %) argtypes)
-    (throw (ex-info (str "babashka.ffi: :void is not an argument type: " (pr-str argtypes))
-                    {:argtypes argtypes})))
-  (when (and native-image?
-             (let [n (count argtypes)
-                   doubles (count (filter #(= :double (carrier %)) argtypes))]
-               (or (> n 6)
-                   (and (> n 4) (pos? doubles))
-                   (some #(= :float (carrier %)) argtypes)
-                   (> doubles 2)
-                   (= :float (carrier rettype)))))
-    (throw (unsupported-ex "callback" argtypes rettype
-                           "callbacks support up to 4 args with at most 2 :double, or up to 6 integer and pointer args; no :float, and a :void, integer, :pointer or :double return")))
+(defn- ffm-callback
+  "Returns an FFM upcall stub that calls f. A struct position is JVM only."
+  [^Arena arena f argtypes rettype structs?]
   (let [;; f returns arbitrary Clojure values and receives raw carriers:
         ;; coerce the result to the declared return type (a Boolean or
         ;; Integer crossing the upcall boundary uncaught would kill the VM)
         ;; and hand f the declared types, not the carriers
-        ret-c (when-not (= :void rettype) (arg-coercer rettype))
+        ret-c (cond (= :void rettype) nil
+                    (vector? rettype) (struct-return-slot (layout-of rettype))
+                    :else (arg-coercer rettype))
         in-c (mapv (fn [t]
                      (cond
+                       (vector? t) (cached-codec :decode (layout-of t))
                        (= :bool t) (fn [a] (narrow-ret :bool a))
                        (= :pointer t) (fn [a] (MemorySegment/ofAddress (long a)))
+                       ;; an unsigned narrow integer can arrive sign-extended
+                       (contains? #{:uint :uint32 :uint16 :uint8} t) (fn [a] (narrow-ret t a))
                        ;; the stub of a native image takes the carrier, so
                        ;; the sign of a narrow integer is in the low half
                        ;; and the upper half is whatever C left there
@@ -2582,19 +2579,13 @@
               (let [sorted (vec sorted)]
                 (apply f (map (fn [j] (nth sorted (nth inv j))) (range n)))))
             f)
-        ret-carrier (carrier rettype)
+        position-class (fn [t] (if (vector? t) MemorySegment (carrier-class t)))
         obj-type (MethodType/methodType Object ^"[Ljava.lang.Class;"
                                         (into-array Class (repeat n Object)))
         target-type (MethodType/methodType
-                     ^Class (case ret-carrier
-                              :void Void/TYPE :long Long/TYPE
-                              :double Double/TYPE :float Float/TYPE)
+                     ^Class (position-class rettype)
                      ^"[Ljava.lang.Class;"
-                     (into-array Class (map #(case (carrier %)
-                                               :long Long/TYPE
-                                               :double Double/TYPE
-                                               :float Float/TYPE)
-                                            argtypes)))
+                     (into-array Class (map position-class argtypes)))
         mh (-> (MethodHandles/publicLookup)
                (.findVirtual clojure.lang.IFn "invoke" obj-type)
                (.bindTo f)
@@ -2602,13 +2593,109 @@
         ;; the stub takes each type at the width C gives it, as the
         ;; descriptor says, while everything above works in carriers. A
         ;; native image keeps the carrier shape, which is what it registered.
+        desc (cond native-image? (carrier-descriptor argtypes rettype)
+                   structs? (struct-descriptor (mapv layout-of argtypes)
+                                               (when-not (= :void rettype) (layout-of rettype)))
+                   :else (descriptor argtypes rettype))
         mh (if native-image?
              mh
-             (MethodHandles/explicitCastArguments mh (signature-method-type argtypes rettype)))
-        stub (.upcallStub ^Linker @linker* mh
-                          (if native-image?
-                            (carrier-descriptor argtypes rettype)
-                            (descriptor argtypes rettype))
-                          ^Arena arena
-                          (make-array java.lang.foreign.Linker$Option 0))]
-    stub))
+             (MethodHandles/explicitCastArguments mh (.toMethodType ^FunctionDescriptor desc)))]
+    (.upcallStub ^Linker @linker* mh desc arena
+                 (make-array java.lang.foreign.Linker$Option 0))))
+
+;; sizeof(ffi_closure), with room for the trampolines of every architecture
+(def ^:private closure-bytes 256)
+
+(defn- libffi-callback
+  "Returns a libffi closure that calls f. libffi calls one handler for every
+  signature, an upcall of four pointers that every native image registers.
+  Closing arena frees the closure."
+  [^Arena arena f argtypes rettype]
+  (let [{:keys [closure-alloc prep-closure-loc closure-free]} @libffi
+        n (count argtypes)
+        alays (mapv layout-of argtypes)
+        cif (libffi-cif arena "callback" argtypes rettype alays nil)
+        ;; a :string argument reaches f as its address, as on the FFM path
+        ^objects decs (object-array (map (fn [t lay]
+                                           (if (= :string t)
+                                             (fn [seg] (get-i64 seg 0))
+                                             (cached-codec :decode lay)))
+                                         argtypes alays))
+        ^longs arg-sizes (long-array (map #(long (:size %)) alays))
+        ;; libffi widens an integer return to ffi_arg, a word
+        ret-size (if (= :void rettype) 0 (max 8 (sizeof rettype)))
+        write-ret (cond
+                    (= :void rettype) nil
+                    (vector? rettype) (let [enc (cached-codec :encode (layout-of rettype))]
+                                        (fn [seg v] (enc nil seg v)))
+                    :else (let [c (arg-coercer rettype)]
+                            (case (carrier rettype)
+                              :long (fn [seg v] (set-i64 seg 0 (c v)))
+                              :double (fn [seg v] (set-f64 seg 0 (c v)))
+                              :float (fn [seg v] (set-f32 seg 0 (c v))))))
+        handler (fn [_cif ^MemorySegment ret ^MemorySegment argv _user-data]
+                  (let [argv (.reinterpret argv (* 8 n))
+                        args (object-array n)]
+                    (dotimes [i n]
+                      (aset args i ((aget decs i)
+                                    (.reinterpret (MemorySegment/ofAddress (get-i64 argv (* 8 i)))
+                                                  (aget arg-sizes i)))))
+                    (let [r (.applyTo ^clojure.lang.IFn f (clojure.lang.ArraySeq/create args))]
+                      (when write-ret
+                        (write-ret (.reinterpret ret ret-size) r)))))
+        stub (ffm-callback arena handler [:pointer :pointer :pointer :pointer] :void false)
+        code-slot (.allocate arena 8 8)
+        closure (long (closure-alloc closure-bytes (.address code-slot)))
+        _ (when (zero? closure)
+            (throw (ex-info "babashka.ffi: ffi_closure_alloc failed" {:argtypes argtypes :rettype rettype})))
+        code (get-i64 code-slot 0)
+        status (long (prep-closure-loc closure (.address cif) (.address ^MemorySegment stub) code))]
+    (when-not (zero? status)
+      (closure-free closure)
+      (throw (ex-info "babashka.ffi: ffi_prep_closure_loc failed"
+                      {:argtypes argtypes :rettype rettype :status status})))
+    (.reinterpret (MemorySegment/ofAddress code) 0 arena
+                  (reify java.util.function.Consumer
+                    (accept [_ _] (closure-free closure))))))
+
+(defn callback
+  "Creates a C function pointer that invokes f. arena owns the pointer, which
+  is valid until the arena releases it.
+  argtypes and rettype use the cfn type keywords and struct layouts. f
+  receives :pointer arguments as zero-size pointers and :bool arguments as
+  booleans. Numeric arguments are passed as numbers. A struct argument is
+  passed as a map, and f returns a struct as a map. For a :pointer return, f
+  must return a pointer or nil for NULL.
+
+  Choose the arena for the thread that calls back:
+
+      (ffi/callback (ffi/shared-arena) f [:pointer] :void)
+
+  A shared arena allows C to invoke the callback from any thread, including a
+  thread that your code did not create. Use it for asynchronous callbacks, such
+  as event-loop notifications. A confined arena accepts a call from its own
+  thread only. Use it for synchronous callbacks, such as a comparison
+  function. A global arena never releases the pointer.
+
+  An automatic arena releases the pointer once the pointer itself becomes
+  unreachable. The garbage collector cannot see the copy that C holds. Use an
+  automatic arena only when your reference outlives every call that C can make.
+
+  CAUTION: Unregister the callback before its arena releases the pointer.
+  Catch exceptions inside f. An uncaught exception can stop the process."
+  [arena f argtypes rettype]
+  (doseq [t (cons rettype argtypes)]
+    (if (vector? t) (layout-of t) (carrier t)))
+  (when (some #(= :void %) argtypes)
+    (throw (ex-info (str "babashka.ffi: :void is not an argument type: " (pr-str argtypes))
+                    {:argtypes argtypes})))
+  (check-by-value! argtypes rettype)
+  (let [structs? (or (vector? rettype) (boolean (some vector? argtypes)))]
+    (cond
+      (not native-image?) (ffm-callback arena f argtypes rettype structs?)
+      (and (not structs?) (registered-upcall? argtypes rettype)) (ffm-callback arena f argtypes rettype false)
+      (libffi-available?) (libffi-callback arena f argtypes rettype)
+      structs? (throw (unsupported-ex "callback" argtypes rettype
+                                      "a struct by value in a callback needs libffi, and this build has none"))
+      :else (throw (unsupported-ex "callback" argtypes rettype
+                                   "without libffi, callbacks support up to 4 args with at most 2 :double, or up to 6 integer and pointer args; no :float, and a :void, integer, :pointer or :double return")))))

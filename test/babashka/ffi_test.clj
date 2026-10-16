@@ -864,12 +864,7 @@
               null-cb (ffi/callback arena (fn [_] nil) [:pointer] :pointer)
               null-call (ffi/cfn null-cb [:pointer] :pointer)]
           (is (= (ffi/address p) (ffi/address (call p))))
-          (is (ffi/null? (null-call p)))))
-      (testing "a double among more than four arguments stays refused on a native image"
-        (when (System/getProperty "org.graalvm.nativeimage.imagecode")
-          (is (thrown-with-msg? Exception #"up to 6 integer and pointer args"
-                                (ffi/callback arena (fn [_ _ _ _ _] 0)
-                                              [:long :long :long :long :double] :long))))))))
+          (is (ffi/null? (null-call p))))))))
 
 (deftest callback-argument-order-test
   (with-open [arena (ffi/confined-arena)]
@@ -901,6 +896,57 @@
             (is (= n (apply call args)) (str "arity " n))
             (is (= (mapv as-value types args) @seen)
                 (str "converted arguments at arity " n))))))))
+(deftest struct-callback-test
+  (when-not (System/getProperty "babashka.version")
+    (with-open [arena (ffi/confined-arena)]
+      (testing "a struct argument and a struct return in the shape of a QuickJS JSCFunction"
+        (let [js-value [:struct [[:u :int64] [:tag :int64]]]
+              sig [:pointer js-value :int :pointer]
+              cb (ffi/callback arena (fn [_ this argc _] {:u (+ (:u this) argc) :tag (:tag this)})
+                               sig js-value)]
+          (is (= {:u 42 :tag 7} ((ffi/cfn cb sig js-value) nil {:u 40 :tag 7} 2 nil)))))
+      (testing "a struct in memory, an HFA and a narrow integer"
+        (let [v3 [:struct [[:x :double] [:y :double] [:z :double]]]
+              big [:struct [[:a :long] [:b :long] [:c :long] [:d :long]]]
+              cb (ffi/callback arena (fn [a v b] {:a (:a b) :b (long (:z v)) :c a :d (:d b)})
+                               [:int8 v3 big] big)]
+          (is (= {:a 1 :b 5 :c -3 :d 4}
+                 ((ffi/cfn cb [:int8 v3 big] big) -3 {:x 3.0 :y 4.0 :z 5.0} {:a 1 :b 2 :c 3 :d 4})))))
+      (testing "a nested struct with an array field"
+        (let [quad [:struct [[:v [:array :int 4]]]]
+              pair [:struct [[:lo quad] [:hi quad]]]
+              cb (ffi/callback arena (fn [p] {:lo (:hi p) :hi (:lo p)}) [pair] pair)]
+          (is (= {:lo {:v [5 6 7 8]} :hi {:v [1 2 3 4]}}
+                 ((ffi/cfn cb [pair] pair) {:lo {:v [1 2 3 4]} :hi {:v [5 6 7 8]}})))))
+      (testing "a 1-byte struct, a 12-byte struct and a float HFA"
+        (doseq [[lay v w] [[[:struct [[:x :int8]]] {:x -2} {:x -1}]
+                           [[:struct [[:a :int] [:b :int] [:c :int]]] {:a 1 :b 2 :c 3} {:a 2 :b 3 :c 4}]
+                           [[:struct [[:x :float] [:y :float]]] {:x 1.5 :y 2.5} {:x 2.5 :y 3.5}]]]
+          (let [cb (ffi/callback arena (fn [s] (update-vals s inc)) [lay] lay)]
+            (is (= w ((ffi/cfn cb [lay] lay) v)) (pr-str lay)))))
+      (testing "a union and an array are refused"
+        (is (thrown-with-msg? Exception #"a union is not passed by value"
+                              (ffi/callback arena identity [[:union [[:a :int] [:b :double]]]] :void)))
+        (is (thrown-with-msg? Exception #"an array is not a C argument"
+                              (ffi/callback arena identity [[:array :int 2]] :void)))))))
+
+(deftest unsigned-callback-argument-test
+  (with-open [arena (ffi/confined-arena)]
+    (let [seen (atom nil)
+          sig [:uint :uint16 :uint8]
+          cb (ffi/callback arena (fn [a b c] (reset! seen [a b c]) 0) sig :long)]
+      ((ffi/cfn cb sig :long) 4294967295 65535 255)
+      (is (= [4294967295 65535 255] @seen)))))
+
+(deftest narrow-callback-arguments-on-the-stack-test
+  (when-not (System/getProperty "babashka.version")
+    (with-open [arena (ffi/confined-arena)]
+      (let [seen (atom nil)
+            sig (into (vec (repeat 8 :long)) [:int8 :int16])
+            cb (ffi/callback arena (fn [& xs] (reset! seen (vec (drop 8 xs))) (apply + xs)) sig :long)]
+        (is (= 29 (apply (ffi/cfn cb sig :long) (concat (range 1 9) [-3 -4]))))
+        (is (= [-3 -4] @seen))))))
+
 (deftest jvm-return-conversion-test
   (when-not (System/getProperty "babashka.version")
     (with-open [arena (ffi/confined-arena)]

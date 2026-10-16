@@ -22,3 +22,19 @@
   "Calls ffi_call and writes the return value to rvalue."
   [cif fnp rvalue avalues]
   (Libffi/call (long cif) (long fnp) (long rvalue) (long avalues)))
+
+(defn closure-alloc
+  "Calls ffi_closure_alloc and returns the writable address of the closure.
+  Writes the executable address to the pointer at code."
+  [size code]
+  (Libffi/closureAlloc (long size) (long code)))
+
+(defn prep-closure-loc
+  "Calls ffi_prep_closure_loc and returns its status code."
+  [closure cif fun codeloc]
+  (Libffi/prepClosureLoc (long closure) (long cif) (long fun) (long codeloc)))
+
+(defn closure-free
+  "Calls ffi_closure_free."
+  [closure]
+  (Libffi/closureFree (long closure)))
