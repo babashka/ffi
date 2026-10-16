@@ -157,7 +157,10 @@
           (check "16-byte struct arguments after :& and a struct return"
                  {:u 4 :tag 6}
                  ((ffi/cfn "var_val_tail" [:int :& js-value js-value] js-value)
-                  2 {:u 1 :tag 2} {:u 3 :tag 4})))
+                  2 {:u 1 :tag 2} {:u 3 :tag 4}))
+          (let [f2 [:struct [[:a :float] [:b :float]]]]
+            (check "float HFA arguments after :&"
+                   46.0 ((ffi/cfn "var_f2_tail" [:int :& f2 f2] :double) 2 {:a 1.0 :b 2.0} {:a 3.0 :b 4.0}))))
         (println "what libffi calls back: structs by value and shapes the image did not register")
         (let [js-value [:struct [[:u :int64] [:tag :int64]]]
               sig [:pointer js-value :int :pointer]

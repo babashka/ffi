@@ -862,6 +862,8 @@
         (is (= {:u 4 :tag 6}
                ((ffi/cfn "var_val_tail" [:int :& val-layout val-layout] val-layout)
                 2 {:u 1 :tag 2} {:u 3 :tag 4})))
+        (let [f2 [:struct [[:a :float] [:b :float]]]]
+          (is (= 46.0 ((ffi/cfn "var_f2_tail" [:int :& f2 f2] :double) 2 {:a 1.0 :b 2.0} {:a 3.0 :b 4.0}))))
         (is (thrown-with-msg? Exception #"cannot infer variadic tail type"
                               ((ffi/cfn "var_p2_tail" [:int :&] :long) 1 {:x 1 :y 2})))))))
 

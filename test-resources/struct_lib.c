@@ -206,3 +206,11 @@ EXPORT Val var_val_tail(int32_t n, ...) {
   va_end(ap);
   return v;
 }
+typedef struct { float a, b; } F2;  /* a float HFA */
+EXPORT double var_f2_tail(int32_t n, ...) {
+  va_list ap; double s = 0;
+  va_start(ap, n);
+  for (int32_t i = 0; i < n; i++) { F2 p = va_arg(ap, F2); s += p.a * 10 + p.b; }
+  va_end(ap);
+  return s;
+}
