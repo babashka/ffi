@@ -94,6 +94,31 @@
     (with-open [arena (ffi/confined-arena)]
       (is (= "hello" (ffi/ptr->string (ffi/string->ptr arena "hello")))))))
 
+(deftest write-string-test
+  (when-not (System/getProperty "babashka.version")
+    (with-open [arena (ffi/confined-arena)]
+      (testing "write-string writes the bytes and a NUL byte"
+        (let [p (ffi/alloc arena 16)]
+          (ffi/write p :char 120 6)
+          (ffi/write-string p "hello")
+          (is (= "hello" (ffi/ptr->string p)))
+          (is (zero? (ffi/read p :char 5)))))
+      (testing "write-string writes at a byte offset"
+        (let [p (ffi/alloc arena 16)]
+          (ffi/write-string p "abc" 8)
+          (is (= "abc" (ffi/ptr->string (ffi/slice p 8))))))
+      (testing "write-string encodes UTF-8"
+        (let [s "h\u00e9llo \u2713"
+              n (alength (.getBytes s "UTF-8"))
+              p (ffi/alloc arena (inc n))]
+          (ffi/write-string p s)
+          (is (= s (ffi/ptr->string p)))))
+      (testing "write-string rejects a write past the pointer size"
+        (is (thrown? Exception (ffi/write-string (ffi/alloc arena 5) "hello"))))
+      (testing "write-string rejects a zero-size pointer"
+        (is (thrown-with-msg? Exception #"size 0"
+                              (ffi/write-string (ffi/segment (ffi/address (ffi/alloc arena 8))) "x")))))))
+
 (def struct-access?
   "Reading a struct through a layout arrived after the first release, so the
   built-in namespace of an older babashka does not have it. The suite runs on

@@ -1766,6 +1766,20 @@
   ^MemorySegment [^Arena arena ^String s]
   (.allocateFrom arena s))
 
+(defn write-string
+  "Writes s to p as a NUL-terminated UTF-8 string at byte offset (default 0).
+  Returns nil.
+
+  The write takes the UTF-8 byte count of s plus one byte.
+  (alength (.getBytes s \"UTF-8\")) is that byte count without the NUL.
+  Checks the write against the size of p. Rejects a zero-size pointer.
+  reinterpret specifies a valid size."
+  ([p s] (write-string p s 0))
+  ([p ^String s offset]
+   (let [^MemorySegment seg (accessible p)]
+     (.setString seg (long offset) s)
+     nil)))
+
 (def null
   "The NULL pointer."
   MemorySegment/NULL)
