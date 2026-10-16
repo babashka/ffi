@@ -5,6 +5,7 @@ Clojure, babashka and Node.js.
 
 ## Unreleased
 
+- [#65](https://github.com/babashka/ffi/issues/65): `write-string` writes a NUL-terminated string into existing memory
 - [#64](https://github.com/babashka/ffi/issues/64): `cfn` accepts structs in a variadic signature, as return type and as argument
 - [#63](https://github.com/babashka/ffi/issues/63): `callback` accepts struct layouts as argument and return types
 - In a native image with libffi, `callback` accepts shapes outside the registered upcall set, such as more than 6 arguments or `:float`

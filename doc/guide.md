@@ -673,6 +673,22 @@ Use `string->ptr` to allocate a C string in an arena:
 ;;=> "hello"
 ```
 
+Use `write-string` to write a C string into memory that C allocated, such as a
+buffer that C frees with its own allocator. Allocate the UTF-8 byte count plus
+one for the NUL byte:
+
+```clojure
+(def malloc (ffi/cfn "malloc" [:size_t] :pointer))
+
+(let [s "hello"
+      n (inc (alength (.getBytes s "UTF-8")))
+      p (ffi/reinterpret (malloc n) n)]
+  (ffi/write-string p s)
+  p)
+```
+
+On Node.js, count the bytes with `(js/Buffer.byteLength s "utf8")`.
+
 `ptr->string` reads a string at the specified address. It returns `nil` for
 the NULL address. A pointer returned by C has no size, so `ptr->string` reads
 until the first NUL byte. This is the behavior of a `:string` return type:
