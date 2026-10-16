@@ -829,6 +829,35 @@
           (is (thrown-with-msg? Exception #"appears twice" (ffi/cfn "snprintf" [:string :& :int :&] :int)))
           (is (thrown-with-msg? Exception #"at least one fixed" (ffi/cfn "snprintf" [:& :int] :int))))))))
 
+(def val-layout [:struct [[:u :int64] [:tag :int64]]])
+
+(deftest variadic-struct-test
+  (cond
+    (System/getProperty "babashka.version")
+    (println "variadic structs skipped: babashka carries an older babashka.ffi")
+    (not (true? @struct-lib))
+    (println "variadic structs skipped:" (if (string? @struct-lib) @struct-lib "unknown reason"))
+    :else
+    (do
+      (testing "a variadic function returns a struct with an inferred tail"
+        (let [f (ffi/cfn "var_val" [:long :int :&] val-layout)]
+          (is (= {:u 6 :tag 3} (f 3 3 1 2 3)))
+          (is (= {:u 0 :tag 4} (f 4 0)))
+          (is (str/includes? (pr-str f) "var_val [:long :int :&]"))))
+      (testing "a variadic function returns a struct with a declared tail"
+        (is (= {:u 30 :tag 5} ((ffi/cfn "var_val" [:long :int :& :long :long] val-layout) 5 2 10 20))))
+      (testing "a :string tail reaches a variadic function with a struct return"
+        (with-open [arena (ffi/confined-arena)]
+          (let [buf (ffi/alloc arena 64)]
+            (is (= {:u 6 :tag 7}
+                   ((ffi/cfn "var_format" [:pointer :string :&] val-layout) buf "%s-%d" "abc" 42)))
+            (is (= "abc-42" (ffi/ptr->string buf 64)))
+            (is (= {:u 2 :tag 7}
+                   ((ffi/cfn "var_format" [:pointer :string :& :string] val-layout) buf "%s" "hi"))))))
+      (testing "a struct argument before :& reaches a variadic function"
+        (is (= 10 ((ffi/cfn "var_p2_sum" [p2 :int :&] :long) {:x 1 :y 2} 2 3 4)))
+        (is (= 10 ((ffi/cfn "var_p2_sum" [p2 :int :& :long] :long) {:x 1 :y 2} 1 7)))))))
+
 
 ;; -- callbacks with five and six integer arguments ----------------------------
 

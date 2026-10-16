@@ -917,9 +917,8 @@
   is resolved once here and the call infers nothing. In a native image the
   call goes through libffi with the variadic convention; on the JVM one FFM
   handle with firstVariadicArg. The arity is exact: fixed plus tail."
-  [lib sym fixed tail rettype]
-  (doseq [t fixed] (carrier t))
-  (carrier rettype)
+  [lib sym fixed tail rettype structs?]
+  (doseq [t (conj fixed rettype)] (when-not (vector? t) (carrier t)))
   (let [nf (count fixed)
         all-types (into fixed tail)
         n (count all-types)
@@ -936,8 +935,13 @@
                      (apply call args))
           {:babashka.ffi/backend :libffi} sym (into (conj fixed :&) tail) rettype))
       (let [shown (into (conj fixed :&) tail)]
-        (if (<= n max-class-arity)
+        (cond
+          structs?
+          (struct-ffm-cfn lib sym all-types rettype
+                          {:first-variadic nf :argtypes shown})
+          (<= n max-class-arity)
           (jvm-cfn lib sym all-types rettype {:first-variadic nf :argtypes shown})
+          :else
           (binding-with-meta
             (variadic-handle-cfn (delay (require-symbol lib sym)) sym all-types rettype nf)
             {:babashka.ffi/backend :ffm} sym shown rettype))))))
@@ -947,11 +951,10 @@
   native image the call goes through libffi (an FFM handle is interpreted
   there, which costs microseconds); on the JVM one FFM handle per distinct
   tail shape, cached."
-  [lib sym fixed argtypes rettype]
-  (doseq [t fixed] (carrier t))
-  (carrier rettype)
+  [lib sym fixed argtypes rettype structs?]
+  (doseq [t (conj fixed rettype)] (when-not (vector? t) (carrier t)))
   (cond
-    (not native-image?) (variadic-ffm-cfn lib sym fixed rettype)
+    (not native-image?) (variadic-ffm-cfn lib sym fixed rettype structs?)
     (libffi-available?) (variadic-libffi-cfn lib sym fixed rettype)
     :else (throw (unsupported-ex sym argtypes rettype
                                  "a variadic call in a native image goes through libffi, and this build has none"))))
@@ -974,7 +977,7 @@
 
   (defn- variadic-ffm-cfn
     "Creates a variadic JVM binding that infers tail types per call."
-    [lib sym fixed rettype]
+    [lib sym fixed rettype structs?]
     (let [nf (count fixed)
           cache (atom {})
           last-hit (volatile! nil)
@@ -985,9 +988,14 @@
           (fn [k tail]
             (or (get @cache k)
                 (let [all-types (into fixed (map tail-type) tail)
-                      f (if (<= (count all-types) max-class-arity)
+                      f (cond
+                          structs?
+                          (struct-ffm-cfn nil sym all-types rettype
+                                          {:first-variadic nf :address address :argtypes shown})
+                          (<= (count all-types) max-class-arity)
                           (jvm-cfn nil @address all-types rettype
                                    {:first-variadic nf :sym sym :argtypes shown})
+                          :else
                           (variadic-handle-cfn address sym all-types rettype nf))]
                   (swap! cache (fn [m] (assoc (if (>= (count m) 64) {} m) k f)))
                   f)))]
@@ -1081,19 +1089,16 @@
          ;; kinds exist
          structs? (or (vector? rettype) (boolean (some vector? argtypes)))]
      (cond
-       (and structs? variadic)
-       (throw (ex-info (str "babashka.ffi: a variadic signature cannot pass a struct by value: " sym)
-                       {:argtypes argtypes :rettype rettype}))
        ;; a declared tail shape is resolved once, here, like a fixed
        ;; signature; only the calling convention is variadic. See ADR 0007.
        (and variadic (seq tail))
-       (declared-variadic-cfn lib sym fixed tail rettype)
+       (declared-variadic-cfn lib sym fixed tail rettype structs?)
+       variadic (variadic-cfn lib sym fixed argtypes rettype structs?)
        ;; the FFM linker builds a struct handle at run time, so the JVM needs
        ;; no libffi for this. An image cannot, and calls libffi instead.
        structs? (if native-image?
                   (libffi-cfn lib sym argtypes rettype)
                   (struct-ffm-cfn lib sym argtypes rettype))
-       variadic (variadic-cfn lib sym fixed argtypes rettype)
        :else (fixed-cfn lib sym argtypes rettype)))))
 
 (defn- fixed-cfn
@@ -2323,8 +2328,12 @@
     "Returns an FFM binding for a signature that passes a struct by value. Each
     call takes a confined arena, which holds the struct arguments, the
     temporary C strings, and the returned struct. The return is decoded before
-    the arena closes."
-    [lib sym argtypes rettype]
+    the arena closes. opts is a map or nil.
+    :first-variadic is the number of fixed arguments of a variadic call.
+    :address is a delay of the resolved symbol.
+    :argtypes is the signature to print."
+    ([lib sym argtypes rettype] (struct-ffm-cfn lib sym argtypes rettype nil))
+    ([lib sym argtypes rettype {:keys [first-variadic address] :as opts}]
     (let [n (count argtypes)
           void? (= :void rettype)
           alays (mapv layout-of argtypes)
@@ -2341,9 +2350,13 @@
           ^booleans string-arg? (boolean-array (map #(= :string %) argtypes))
           decode (when struct-ret? (cached-codec :decode rlay))
           handle (delay (.downcallHandle ^Linker @linker*
-                                         (require-symbol lib sym)
+                                         (if address @address (require-symbol lib sym))
                                          (struct-descriptor alays rlay)
-                                         (make-array java.lang.foreign.Linker$Option 0)))
+                                         ^"[Ljava.lang.foreign.Linker$Option;"
+                                         (into-array java.lang.foreign.Linker$Option
+                                                     (when first-variadic
+                                                       [(java.lang.foreign.Linker$Option/firstVariadicArg
+                                                         first-variadic)]))))
           ;; a struct return needs somewhere to land, which the handle takes as
           ;; its first argument
           base (if struct-ret? 1 0)
@@ -2422,7 +2435,7 @@
                         (cond struct-ret? (decode raw)
                               void? nil
                               :else (narrow-ret rettype raw)))))))))
-        {:babashka.ffi/backend :ffm} sym argtypes rettype))))
+        {:babashka.ffi/backend :ffm} sym (or (:argtypes opts) argtypes) rettype)))))
 
 (defn- libffi-cif
   "Returns an ffi_cif for argtypes and rettype, allocated in arena together
