@@ -400,6 +400,14 @@
     p
     (throw (not-accessible-ex p))))
 
+(defn- accessible-n
+  "Returns p as a MemorySegment for an access of length n.
+  Accepts a zero-size pointer if n is zero."
+  ^MemorySegment [p ^long n]
+  (if (and (zero? n) (instance? MemorySegment p))
+    p
+    (accessible p)))
+
 (defn segment
   "Returns a pointer to addr. The default size is zero.
   A specified nonzero size enables bounds checks.
@@ -1619,7 +1627,7 @@
    (let [{:keys [^ValueLayout layout ctor]} (array-carrier t)
          n (int n)
          arr (ctor n)
-         ^MemorySegment seg (accessible p)]
+         ^MemorySegment seg (accessible-n p n)]
      (MemorySegment/copy seg layout (long offset) arr 0 n)
      arr)))
 
@@ -1632,13 +1640,14 @@
   byte[] for :char."
   ([p t arr] (write-array p t arr 0))
   ([p t arr offset]
-   (let [{:keys [^ValueLayout layout ^Class class]} (array-carrier t)
-         ^MemorySegment seg (accessible p)]
+   (let [{:keys [^ValueLayout layout ^Class class]} (array-carrier t)]
      (when-not (instance? class arr)
        (throw (ex-info (str "babashka.ffi: " t " needs " (.getSimpleName class)
                             ", got " (if (nil? arr) "nil" (.getSimpleName (.getClass ^Object arr))))
                        {:type t :array arr})))
-     (MemorySegment/copy arr 0 seg layout (long offset) (java.lang.reflect.Array/getLength arr))
+     (let [n (java.lang.reflect.Array/getLength arr)
+           ^MemorySegment seg (accessible-n p n)]
+       (MemorySegment/copy arr 0 seg layout (long offset) n))
      nil)))
 
 (defn copy
@@ -1656,9 +1665,10 @@
    (let [^MemorySegment s (accessible src)]
      (copy s dst (.byteSize s))))
   ([src dst n]
-   (let [^MemorySegment s (accessible src)
-         ^MemorySegment d (accessible dst)]
-     (MemorySegment/copy s 0 d 0 (long n))
+   (let [n (long n)
+         ^MemorySegment s (accessible-n src n)
+         ^MemorySegment d (accessible-n dst n)]
+     (MemorySegment/copy s 0 d 0 n)
      nil)))
 
 (defn clone
