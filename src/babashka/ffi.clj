@@ -1645,8 +1645,9 @@
        (throw (ex-info (str "babashka.ffi: " t " needs " (.getSimpleName class)
                             ", got " (if (nil? arr) "nil" (.getSimpleName (.getClass ^Object arr))))
                        {:type t :array arr})))
-     (let [n (java.lang.reflect.Array/getLength arr)]
-       (MemorySegment/copy arr 0 (accessible-n p n) layout (long offset) n))
+     (let [n (java.lang.reflect.Array/getLength arr)
+           ^MemorySegment seg (accessible-n p n)]
+       (MemorySegment/copy arr 0 seg layout (long offset) n))
      nil)))
 
 (defn copy

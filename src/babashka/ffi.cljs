@@ -1258,9 +1258,9 @@
                             ", got " (if (nil? arr) "nil" (.. arr -constructor -name)))
                        {:type t :array arr})))
      (let [p (accessible-n p (.-byteLength arr))]
-     (check-bounds p offset (.-byteLength arr))
-     (when (pos? (.-byteLength arr))
-       (.exportArrayBufferView nffi arr (+ (.-addr p) (js/BigInt offset)) (.-byteLength arr))))
+       (check-bounds p offset (.-byteLength arr))
+       (when (pos? (.-byteLength arr))
+         (.exportArrayBufferView nffi arr (+ (.-addr p) (js/BigInt offset)) (.-byteLength arr))))
      nil)))
 
 (defn copy
