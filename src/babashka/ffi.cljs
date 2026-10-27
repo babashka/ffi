@@ -117,6 +117,12 @@
                       {:pointer p})))
     p))
 
+(defn- ^Pointer accessible-n
+  "Returns p if it is a live pointer for an access of length n.
+  Accepts a zero-size pointer if n is zero."
+  [p n]
+  (if (zero? n) (as-pointer p) (accessible p)))
+
 (defn- check-bounds [^Pointer p off n]
   (when (or (neg? off) (neg? n) (> (+ off n) (.-size p)))
     (throw (ex-info (str "babashka.ffi: out of bounds: " n " bytes at offset " off
@@ -1230,7 +1236,7 @@
   ([p t n] (read-array p t n 0))
   ([p t n offset]
    (let [ctor (array-carrier t)
-         p (accessible p)
+         p (accessible-n p n)
          bytes (* n (sizes* t))]
      (check-bounds p offset bytes)
      (if (zero? n)
@@ -1246,15 +1252,15 @@
   :pointer, an Int8Array for :char."
   ([p t arr] (write-array p t arr 0))
   ([p t arr offset]
-   (let [ctor (array-carrier t)
-         p (accessible p)]
+   (let [ctor (array-carrier t)]
      (when-not (instance? ctor arr)
        (throw (ex-info (str "babashka.ffi: " t " needs " (.-name ctor)
                             ", got " (if (nil? arr) "nil" (.. arr -constructor -name)))
                        {:type t :array arr})))
+     (let [p (accessible-n p (.-byteLength arr))]
      (check-bounds p offset (.-byteLength arr))
      (when (pos? (.-byteLength arr))
-       (.exportArrayBufferView nffi arr (+ (.-addr p) (js/BigInt offset)) (.-byteLength arr)))
+       (.exportArrayBufferView nffi arr (+ (.-addr p) (js/BigInt offset)) (.-byteLength arr))))
      nil)))
 
 (defn copy
@@ -1270,8 +1276,8 @@
   Supports overlapping regions, as with memmove."
   ([src dst] (copy src dst (.-size (accessible src))))
   ([src dst n]
-   (let [s (accessible src)
-         d (accessible dst)]
+   (let [s (accessible-n src n)
+         d (accessible-n dst n)]
      (check-bounds s 0 n)
      (check-bounds d 0 n)
      (when (pos? n)

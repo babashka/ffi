@@ -409,6 +409,21 @@
         (ffi/copy dst (ffi/slice dst 4) 16)
         (is (= [1 1 2 3 4 6 7 8] (vec (ffi/read-array dst :int 8))))))))
 
+(deftest zero-length-access-test
+  (ffi/with-open [arena (ffi/confined-arena)]
+    (let [p (ffi/alloc arena 4)
+          sizeless (ffi/segment (ffi/address p))
+          end (ffi/slice p 4)]
+      (testing "read-array, write-array and copy accept a zero-size pointer for 0 elements"
+        (is (= [] (vec (ffi/read-array end :byte 0))))
+        (is (= [] (vec (ffi/read-array sizeless :int 0))))
+        (is (nil? (ffi/write-array end :byte (js/Int8Array. 0))))
+        (is (nil? (ffi/copy sizeless end 0))))
+      (testing "read-array, write-array and copy reject a zero-size pointer for 1 element"
+        (is (thrown-with-msg? js/Error #"reinterpret" (ffi/read-array end :byte 1)))
+        (is (thrown-with-msg? js/Error #"reinterpret" (ffi/write-array end :byte (js/Int8Array. 1))))
+        (is (thrown-with-msg? js/Error #"reinterpret" (ffi/copy sizeless end 1)))))))
+
 (deftest union-layout-test
   (let [data [:union [[:whatever :pointer] [:result :int]]]
         curl-msg [:struct [[:msg :int] [:easy :pointer] [:data data]]]]
