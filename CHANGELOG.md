@@ -3,7 +3,7 @@
 [babashka.ffi](https://github.com/babashka/ffi): call C libraries from
 Clojure, babashka and Node.js.
 
-## Unreleased
+## 0.1.3 (2026-11-09)
 
 - [#65](https://github.com/babashka/ffi/issues/65): `write-string` writes a NUL-terminated string into existing memory
 - [#64](https://github.com/babashka/ffi/issues/64): `cfn` accepts structs in a variadic signature, as return type and as argument
