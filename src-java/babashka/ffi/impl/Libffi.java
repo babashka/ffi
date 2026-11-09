@@ -66,9 +66,9 @@ public final class Libffi {
         return ffi_closure_alloc(size, WordFactory.pointer(code)).rawValue();
     }
 
-    public static int prepClosureLoc(long closure, long cif, long fun, long codeloc) {
+    public static int prepClosureLoc(long closure, long cif, long fun, long userData, long codeloc) {
         return ffi_prep_closure_loc(WordFactory.pointer(closure), WordFactory.pointer(cif),
-                                    WordFactory.pointer(fun), WordFactory.nullPointer(),
+                                    WordFactory.pointer(fun), WordFactory.pointer(userData),
                                     WordFactory.pointer(codeloc));
     }
 

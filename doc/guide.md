@@ -1136,7 +1136,10 @@ per iteration.
 
 ### Callbacks
 
-A native image registers these callback shapes when it is built:
+In a build with libffi, every callback goes through libffi, and an empty
+callback costs about 35 ns. In a build without libffi, a native image
+registers these callback shapes when it is built, and a callback costs about
+2 us:
 
 - Up to 4 arguments, with up to 2 `:double` arguments among them.
 - Up to 6 integer and pointer arguments. FSEvents calls back with 6 and
@@ -1145,8 +1148,8 @@ A native image registers these callback shapes when it is built:
 - A `:void`, integer, `:pointer`, or `:double` return. For `:pointer`, return
   a pointer, or `nil` for null.
 
-A callback outside these shapes, or with a struct by value, goes through
-libffi. In a build without libffi, `callback` throws for it.
+In a build without libffi, `callback` throws for a callback outside these
+shapes or with a struct by value.
 
 ## Build your own native image
 
@@ -1179,7 +1182,8 @@ The library includes call trampolines and reachability metadata.
    ```sh
    javac --release 25 -cp "$(clojure -Spath -A:native)" -d target/classes \
      path/to/ffi/src-java/babashka/ffi/impl/FfiTrampoline.java \
-     path/to/ffi/src-java/babashka/ffi/impl/FfiTrampolineOrdered.java
+     path/to/ffi/src-java/babashka/ffi/impl/FfiTrampolineOrdered.java \
+     path/to/ffi/src-java/babashka/ffi/impl/Upcall.java
    ```
 
 3. Compile your namespaces ahead of time into `target/classes`.

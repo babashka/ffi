@@ -132,6 +132,15 @@
   ;; sorted one; the rest is what only Windows calls
   (vec (remove (set upcalls) (upcalls-for true))))
 
+;; The handler of every libffi closure. A direct upcall to a static method is
+;; compiled, where an upcall registered by its shape alone runs its method
+;; handle in an interpreter, at about 2 us a call.
+(def direct-upcalls
+  [{"class" "babashka.ffi.impl.Upcall"
+    "method" "closure"
+    "returnType" "void"
+    "parameterTypes" ["void*" "void*" "void*" "void*"]}])
+
 (def reflection
   ;; callbacks call the wrapped IFn through a bound MethodHandle; they take
   ;; at most 6 arguments
@@ -155,7 +164,8 @@
 
 (spit "resources/META-INF/native-image/babashka/ffi/reachability-metadata.json"
       (json/generate-string {"foreign" {"downcalls" downcalls
-                                        "upcalls" upcalls}
+                                        "upcalls" upcalls
+                                        "directUpcalls" direct-upcalls}
                              "reflection" reflection}
                             {:pretty true}))
 

@@ -74,7 +74,8 @@
     (p/shell (graalvm-bin "javac") "--release" "25" "-cp" sdk "-d" (str classes)
              "src-java/babashka/ffi/impl/FfiTrampoline.java"
              "src-java/babashka/ffi/impl/FfiTrampolineOrdered.java"
-             "src-java/babashka/ffi/impl/Libffi.java")
+             "src-java/babashka/ffi/impl/Libffi.java"
+             "src-java/babashka/ffi/impl/Upcall.java")
 
     (step "compiling the namespaces")
     (clojure "-Scp" cp "-J--enable-native-access=ALL-UNNAMED"

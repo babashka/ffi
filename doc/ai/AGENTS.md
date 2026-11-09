@@ -28,6 +28,8 @@ API listing is API.md, and the decisions are in doc/ai/adr/.
 - test-jvm/babashka/ffi_binding_test.clj: the generated class, JVM only.
 - test-node/babashka/ffi_test.cljs: the Node.js suite. It follows
   ffi_test.clj case by case, without what node:ffi cannot call.
+- src-java/babashka/ffi/impl/Upcall.java: the handler of every libffi
+  closure, and the table of closures it calls.
 - src/babashka/ffi/impl/libffi.clj and src-java/babashka/ffi/impl/Libffi.java:
   the @CFunction bindings to a libffi linked into a native image. ffi.clj
   loads them with requiring-resolve, and only in an image built with
@@ -94,10 +96,12 @@ types. The generated class passes every argument and result as a long,
 doubles and floats as raw bits, and resolves the symbol on the first call
 through a MutableCallSite.
 
-Callbacks use FFM upcall stubs on both hosts. A native image with libffi
-makes a callback with a struct by value, or outside the registered shapes in
-doc/guide.md under Callbacks, a libffi closure whose handler is a registered
-upcall of four pointers. See ADR 0009.
+Callbacks use FFM upcall stubs on the JVM, and in a native image without
+libffi for the registered shapes in doc/guide.md under Callbacks. A native
+image with libffi makes every callback a libffi closure. Its handler is the
+static method Upcall.closure, registered as a direct upcall, which reads the
+arguments through raw pointers and finds the function by the closure's user
+data. See ADR 0009 and ADR 0011.
 
 ## Type tables
 
