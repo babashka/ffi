@@ -2237,7 +2237,10 @@
           :call @(requiring-resolve 'babashka.ffi.impl.libffi/call)
           :closure-alloc @(requiring-resolve 'babashka.ffi.impl.libffi/closure-alloc)
           :prep-closure-loc @(requiring-resolve 'babashka.ffi.impl.libffi/prep-closure-loc)
-          :closure-free @(requiring-resolve 'babashka.ffi.impl.libffi/closure-free)}
+          :closure-free @(requiring-resolve 'babashka.ffi.impl.libffi/closure-free)
+          :closure-register @(requiring-resolve 'babashka.ffi.impl.libffi/closure-register)
+          :closure-unregister @(requiring-resolve 'babashka.ffi.impl.libffi/closure-unregister)
+          :closure-handler @(requiring-resolve 'babashka.ffi.impl.libffi/closure-handler)}
          (catch Throwable _ nil))))
 
 (def ^:private libffi
@@ -2647,57 +2650,65 @@
 ;; sizeof(ffi_closure), with room for the trampolines of every architecture
 (def ^:private closure-bytes 256)
 
+(def ^:private closure-arg-codes
+  ;; the argument codes of babashka.ffi.impl.LibffiClosure
+  {:int 0 :int32 0
+   :uint 1 :uint32 1
+   :long 2 :ulong 2 :int64 2 :uint64 2 :size_t 2 :ssize_t 2
+   :pointer 3
+   :int16 4 :uint16 5 :bool 6
+   :int8 7 :byte 7 :char 7 :uint8 8
+   :double 9 :float 10
+   ;; a :string argument reaches f as its address, as on the FFM path
+   :string 11
+   ;; a struct layout, decoded by its codec
+   :struct 12})
+
+(def ^:private closure-ret-codes
+  ;; the return codes of babashka.ffi.impl.LibffiClosure
+  {:void 0 :long 1 :double 2 :float 3 :struct 4})
+
 (defn- libffi-callback
   "Returns a libffi closure that calls f. libffi calls one handler for every
-  signature, an upcall of four pointers that every native image registers.
-  Closing arena frees the closure."
+  signature, a static method that every native image registers as a direct
+  upcall, so the image compiles it. The closure's user data is the index of
+  f in the handler's table, with a type code for each argument the handler
+  reads. Closing arena frees the closure."
   [^Arena arena f argtypes rettype]
-  (let [{:keys [closure-alloc prep-closure-loc closure-free]} @libffi
-        n (count argtypes)
+  (let [{:keys [closure-alloc prep-closure-loc closure-free
+                closure-register closure-unregister closure-handler]} @libffi
         alays (mapv layout-of argtypes)
         cif (libffi-cif arena "callback" argtypes rettype alays nil)
-        ;; a :string argument reaches f as its address, as on the FFM path
-        ^objects decs (object-array (map (fn [t lay]
-                                           (if (= :string t)
-                                             (fn [seg] (get-i64 seg 0))
-                                             (cached-codec :decode lay)))
-                                         argtypes alays))
-        ^longs arg-sizes (long-array (map #(long (:size %)) alays))
-        ;; libffi widens an integer return to ffi_arg, a word
-        ret-size (if (= :void rettype) 0 (max 8 (sizeof rettype)))
-        write-ret (cond
-                    (= :void rettype) nil
-                    (vector? rettype) (let [enc (cached-codec :encode (layout-of rettype))]
-                                        (fn [seg v] (enc nil seg v)))
-                    :else (let [c (arg-coercer rettype)]
-                            (case (carrier rettype)
-                              :long (fn [seg v] (set-i64 seg 0 (c v)))
-                              :double (fn [seg v] (set-f64 seg 0 (c v)))
-                              :float (fn [seg v] (set-f32 seg 0 (c v))))))
-        handler (fn [_cif ^MemorySegment ret ^MemorySegment argv _user-data]
-                  (let [argv (.reinterpret argv (* 8 n))
-                        args (object-array n)]
-                    (dotimes [i n]
-                      (aset args i ((aget decs i)
-                                    (.reinterpret (MemorySegment/ofAddress (get-i64 argv (* 8 i)))
-                                                  (aget arg-sizes i)))))
-                    (let [r (.applyTo ^clojure.lang.IFn f (clojure.lang.ArraySeq/create args))]
-                      (when write-ret
-                        (write-ret (.reinterpret ret ret-size) r)))))
-        stub (ffm-callback arena handler [:pointer :pointer :pointer :pointer] :void false)
+        kinds (int-array (map #(closure-arg-codes (if (vector? %) :struct %)) argtypes))
+        decs (object-array (map (fn [t lay] (when (vector? t) (cached-codec :decode lay)))
+                                argtypes alays))
+        sizes (long-array (map #(long (:size %)) alays))
+        ret-kind (closure-ret-codes (cond (= :void rettype) :void
+                                          (vector? rettype) :struct
+                                          :else (carrier rettype)))
+        ret (cond (= :void rettype) nil
+                  (vector? rettype) (let [enc (cached-codec :encode (layout-of rettype))]
+                                      (fn [seg v] (enc nil seg v)))
+                  :else (arg-coercer rettype))
+        ret-size (if (= :void rettype) 0 (sizeof rettype))
+        id (long (closure-register f kinds decs sizes ret-kind ret ret-size))
         code-slot (.allocate arena 8 8)
         closure (long (closure-alloc closure-bytes (.address code-slot)))
         _ (when (zero? closure)
+            (closure-unregister id)
             (throw (ex-info "babashka.ffi: ffi_closure_alloc failed" {:argtypes argtypes :rettype rettype})))
         code (get-i64 code-slot 0)
-        status (long (prep-closure-loc closure (.address cif) (.address ^MemorySegment stub) code))]
+        status (long (prep-closure-loc closure (.address cif) (closure-handler) id code))]
     (when-not (zero? status)
       (closure-free closure)
+      (closure-unregister id)
       (throw (ex-info "babashka.ffi: ffi_prep_closure_loc failed"
                       {:argtypes argtypes :rettype rettype :status status})))
     (.reinterpret (MemorySegment/ofAddress code) 0 arena
                   (reify java.util.function.Consumer
-                    (accept [_ _] (closure-free closure))))))
+                    (accept [_ _]
+                      (closure-free closure)
+                      (closure-unregister id))))))
 
 (defn callback
   "Creates a C function pointer that invokes f. arena owns the pointer, which
@@ -2734,8 +2745,10 @@
   (let [structs? (or (vector? rettype) (boolean (some vector? argtypes)))]
     (cond
       (not native-image?) (ffm-callback arena f argtypes rettype structs?)
-      (and (not structs?) (registered-upcall? argtypes rettype)) (ffm-callback arena f argtypes rettype false)
+      ;; a closure reaches f through a compiled handler, where an FFM stub
+      ;; for a registered shape runs its method handle interpreted
       (libffi-available?) (libffi-callback arena f argtypes rettype)
+      (and (not structs?) (registered-upcall? argtypes rettype)) (ffm-callback arena f argtypes rettype false)
       structs? (throw (unsupported-ex "callback" argtypes rettype
                                       "a struct by value in a callback needs libffi, and this build has none"))
       :else (throw (unsupported-ex "callback" argtypes rettype
