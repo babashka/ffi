@@ -2238,9 +2238,9 @@
           :closure-alloc @(requiring-resolve 'babashka.ffi.impl.libffi/closure-alloc)
           :prep-closure-loc @(requiring-resolve 'babashka.ffi.impl.libffi/prep-closure-loc)
           :closure-free @(requiring-resolve 'babashka.ffi.impl.libffi/closure-free)
-          :upcall-register @(requiring-resolve 'babashka.ffi.impl.libffi/upcall-register)
-          :upcall-release @(requiring-resolve 'babashka.ffi.impl.libffi/upcall-release)
-          :upcall-stub @(requiring-resolve 'babashka.ffi.impl.libffi/upcall-stub)}
+          :closure-register @(requiring-resolve 'babashka.ffi.impl.libffi/closure-register)
+          :closure-unregister @(requiring-resolve 'babashka.ffi.impl.libffi/closure-unregister)
+          :closure-handler @(requiring-resolve 'babashka.ffi.impl.libffi/closure-handler)}
          (catch Throwable _ nil))))
 
 (def ^:private libffi
@@ -2650,8 +2650,8 @@
 ;; sizeof(ffi_closure), with room for the trampolines of every architecture
 (def ^:private closure-bytes 256)
 
-(def ^:private upcall-arg-codes
-  ;; the argument codes of babashka.ffi.impl.Upcall
+(def ^:private closure-arg-codes
+  ;; the argument codes of babashka.ffi.impl.LibffiClosure
   {:int 0 :int32 0
    :uint 1 :uint32 1
    :long 2 :ulong 2 :int64 2 :uint64 2 :size_t 2 :ssize_t 2
@@ -2670,10 +2670,10 @@
   reads. Closing arena frees the closure."
   [^Arena arena f argtypes rettype]
   (let [{:keys [closure-alloc prep-closure-loc closure-free
-                upcall-register upcall-release upcall-stub]} @libffi
+                closure-register closure-unregister closure-handler]} @libffi
         alays (mapv layout-of argtypes)
         cif (libffi-cif arena "callback" argtypes rettype alays nil)
-        kinds (int-array (map #(if (vector? %) 12 (upcall-arg-codes %)) argtypes))
+        kinds (int-array (map #(if (vector? %) 12 (closure-arg-codes %)) argtypes))
         decs (object-array (map (fn [t lay] (when (vector? t) (cached-codec :decode lay)))
                                 argtypes alays))
         sizes (long-array (map #(long (:size %)) alays))
@@ -2684,24 +2684,24 @@
                          :else [(case (carrier rettype) :long 1 :double 2 :float 3)
                                 (arg-coercer rettype)])
         ret-size (if (= :void rettype) 0 (sizeof rettype))
-        id (long (upcall-register f kinds decs sizes ret-kind ret ret-size))
+        id (long (closure-register f kinds decs sizes ret-kind ret ret-size))
         code-slot (.allocate arena 8 8)
         closure (long (closure-alloc closure-bytes (.address code-slot)))
         _ (when (zero? closure)
-            (upcall-release id)
+            (closure-unregister id)
             (throw (ex-info "babashka.ffi: ffi_closure_alloc failed" {:argtypes argtypes :rettype rettype})))
         code (get-i64 code-slot 0)
-        status (long (prep-closure-loc closure (.address cif) (upcall-stub) id code))]
+        status (long (prep-closure-loc closure (.address cif) (closure-handler) id code))]
     (when-not (zero? status)
       (closure-free closure)
-      (upcall-release id)
+      (closure-unregister id)
       (throw (ex-info "babashka.ffi: ffi_prep_closure_loc failed"
                       {:argtypes argtypes :rettype rettype :status status})))
     (.reinterpret (MemorySegment/ofAddress code) 0 arena
                   (reify java.util.function.Consumer
                     (accept [_ _]
                       (closure-free closure)
-                      (upcall-release id))))))
+                      (closure-unregister id))))))
 
 (defn callback
   "Creates a C function pointer that invokes f. arena owns the pointer, which

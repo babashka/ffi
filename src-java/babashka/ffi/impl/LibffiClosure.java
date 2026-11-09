@@ -23,8 +23,8 @@ import org.graalvm.word.WordFactory;
  * The handler reads the arguments itself, through raw pointers: a read
  * through a MemorySegment costs about 30 ns in an image, a raw read is a
  * load. The type codes are the ones babashka.ffi passes to register. */
-public final class Upcall {
-    private Upcall() {}
+public final class LibffiClosure {
+    private LibffiClosure() {}
 
     // argument codes
     static final int I32 = 0, U32 = 1, I64 = 2, PTR = 3, I16 = 4, U16 = 5, BOOL = 6,
@@ -77,7 +77,7 @@ public final class Upcall {
     }
 
     /** Clears the index i for reuse. */
-    public static synchronized void release(long i) {
+    public static synchronized void unregister(long i) {
         Entry[] t = entries;
         t[(int) i] = null;
         entries = t;
@@ -147,11 +147,11 @@ public final class Upcall {
     private static long stub = 0;
 
     /** The address of the one upcall stub that every closure calls. */
-    public static synchronized long stub() {
+    public static synchronized long handler() {
         if (stub == 0) {
             try {
                 stub = Linker.nativeLinker().upcallStub(
-                    MethodHandles.lookup().findStatic(Upcall.class, "closure",
+                    MethodHandles.lookup().findStatic(LibffiClosure.class, "closure",
                         MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class,
                                               MemorySegment.class, MemorySegment.class)),
                     FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS,

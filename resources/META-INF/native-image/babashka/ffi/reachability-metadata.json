@@ -129,7 +129,7 @@
       "parameterTypes" : [ "jlong", "jlong", "jlong", "jlong", "jlong", "jlong" ]
     } ],
     "directUpcalls" : [ {
-      "class" : "babashka.ffi.impl.Upcall",
+      "class" : "babashka.ffi.impl.LibffiClosure",
       "method" : "closure",
       "returnType" : "void",
       "parameterTypes" : [ "void*", "void*", "void*", "void*" ]

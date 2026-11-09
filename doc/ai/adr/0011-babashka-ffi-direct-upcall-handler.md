@@ -22,15 +22,16 @@ bound arguments, so the target cannot carry the function.
 
 With libffi, every callback in a native image is a libffi closure, not only
 a struct or an unregistered shape. Every closure calls one upcall stub, made
-on first use, to the static method `Upcall.closure`. The closure's user
-data is an index into a table of entries in `Upcall`, and `libffi-callback`
-registers the entry and releases it when the arena frees the closure.
+on first use, to the static method `LibffiClosure.closure`. The closure's
+user data is an index into a table of entries in `LibffiClosure`, and
+`libffi-callback` registers the entry and releases it when the arena frees
+the closure.
 
 An entry holds the function, a type code per argument, and the return code.
-`Upcall.closure` reads each scalar argument through a GraalVM `Pointer`,
-because a read through a `MemorySegment` costs about 30 ns in an image. It
-calls the function by arity up to 4 and through `applyTo` above that. A
-struct argument or return goes through the codecs, as before.
+`LibffiClosure.closure` reads each scalar argument through a GraalVM
+`Pointer`, because a read through a `MemorySegment` costs about 30 ns in an
+image. It calls the function by arity up to 4 and through `applyTo` above
+that. A struct argument or return goes through the codecs, as before.
 
 Without libffi, the registered shapes keep their FFM stubs at about 2 us.
 
@@ -47,8 +48,9 @@ Measured from C into a shared library image at -O2, 10 million calls:
 
 A SQLite function in Clojure over 100,000 rows went from 513 ms to 63 ms.
 
-`Upcall.java` uses the GraalVM SDK and Clojure, and every image compiles it,
-because the metadata names it whether or not the image links libffi. The
+`LibffiClosure.java` uses the GraalVM SDK and Clojure, and every image
+compiles it, because the metadata names it whether or not the image links
+libffi. The
 stub is made on first use because graal-build-time initializes the
 `babashka.ffi.impl` package when the image is built, and a stub made then
 does not exist at run time.

@@ -4,7 +4,7 @@
   built with BABASHKA_FEATURE_LIBFFI=true. Loading it in an image that does
   not link libffi fails at link time."
   {:no-doc true}
-  (:import [babashka.ffi.impl Libffi Upcall]))
+  (:import [babashka.ffi.impl Libffi LibffiClosure]))
 
 (set! *warn-on-reflection* true)
 
@@ -34,21 +34,22 @@
   [closure cif fun user-data codeloc]
   (Libffi/prepClosureLoc (long closure) (long cif) (long fun) (long user-data) (long codeloc)))
 
-(defn upcall-register
-  "Stores a closure for the handler in Upcall and returns the index the
-  closure passes as its user data. See Upcall/register for the arguments."
+(defn closure-register
+  "Stores a closure for the handler in LibffiClosure and returns the index
+  the closure passes as its user data. See LibffiClosure/register for the
+  arguments."
   [f kinds decs sizes ret-kind ret ret-size]
-  (Upcall/register f kinds decs sizes (int ret-kind) ret (long ret-size)))
+  (LibffiClosure/register f kinds decs sizes (int ret-kind) ret (long ret-size)))
 
-(defn upcall-release
-  "Frees the index i that upcall-register returned."
+(defn closure-unregister
+  "Frees the index i that closure-register returned."
   [i]
-  (Upcall/release (long i)))
+  (LibffiClosure/unregister (long i)))
 
-(defn upcall-stub
+(defn closure-handler
   "Returns the address of the upcall stub that every closure calls."
   []
-  (Upcall/stub))
+  (LibffiClosure/handler))
 
 (defn closure-free
   "Calls ffi_closure_free."

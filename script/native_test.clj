@@ -75,7 +75,7 @@
              "src-java/babashka/ffi/impl/FfiTrampoline.java"
              "src-java/babashka/ffi/impl/FfiTrampolineOrdered.java"
              "src-java/babashka/ffi/impl/Libffi.java"
-             "src-java/babashka/ffi/impl/Upcall.java")
+             "src-java/babashka/ffi/impl/LibffiClosure.java")
 
     (step "compiling the namespaces")
     (clojure "-Scp" cp "-J--enable-native-access=ALL-UNNAMED"

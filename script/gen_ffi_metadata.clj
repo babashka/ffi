@@ -136,7 +136,7 @@
 ;; compiled, where an upcall registered by its shape alone runs its method
 ;; handle in an interpreter, at about 2 us a call.
 (def direct-upcalls
-  [{"class" "babashka.ffi.impl.Upcall"
+  [{"class" "babashka.ffi.impl.LibffiClosure"
     "method" "closure"
     "returnType" "void"
     "parameterTypes" ["void*" "void*" "void*" "void*"]}])

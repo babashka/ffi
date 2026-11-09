@@ -1183,7 +1183,7 @@ The library includes call trampolines and reachability metadata.
    javac --release 25 -cp "$(clojure -Spath -A:native)" -d target/classes \
      path/to/ffi/src-java/babashka/ffi/impl/FfiTrampoline.java \
      path/to/ffi/src-java/babashka/ffi/impl/FfiTrampolineOrdered.java \
-     path/to/ffi/src-java/babashka/ffi/impl/Upcall.java
+     path/to/ffi/src-java/babashka/ffi/impl/LibffiClosure.java
    ```
 
 3. Compile your namespaces ahead of time into `target/classes`.
