@@ -1137,7 +1137,7 @@ per iteration.
 ### Callbacks
 
 In a build with libffi, every callback goes through libffi, and an empty
-callback costs about 35 ns. In a build without libffi, a native image
+callback costs about 30 ns. In a build without libffi, a native image
 registers these callback shapes when it is built, and a callback costs about
 2 us:
 

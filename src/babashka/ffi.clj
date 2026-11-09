@@ -2660,7 +2660,13 @@
    :int8 7 :byte 7 :char 7 :uint8 8
    :double 9 :float 10
    ;; a :string argument reaches f as its address, as on the FFM path
-   :string 11})
+   :string 11
+   ;; a struct layout, decoded by its codec
+   :struct 12})
+
+(def ^:private closure-ret-codes
+  ;; the return codes of babashka.ffi.impl.LibffiClosure, by carrier
+  {:void 0 :long 1 :double 2 :float 3 :struct 4})
 
 (defn- libffi-callback
   "Returns a libffi closure that calls f. libffi calls one handler for every
@@ -2673,16 +2679,17 @@
                 closure-register closure-unregister closure-handler]} @libffi
         alays (mapv layout-of argtypes)
         cif (libffi-cif arena "callback" argtypes rettype alays nil)
-        kinds (int-array (map #(if (vector? %) 12 (closure-arg-codes %)) argtypes))
+        kinds (int-array (map #(closure-arg-codes (if (vector? %) :struct %)) argtypes))
         decs (object-array (map (fn [t lay] (when (vector? t) (cached-codec :decode lay)))
                                 argtypes alays))
         sizes (long-array (map #(long (:size %)) alays))
-        [ret-kind ret] (cond
-                         (= :void rettype) [0 nil]
-                         (vector? rettype) (let [enc (cached-codec :encode (layout-of rettype))]
-                                             [4 (fn [seg v] (enc nil seg v))])
-                         :else [(case (carrier rettype) :long 1 :double 2 :float 3)
-                                (arg-coercer rettype)])
+        ret-kind (closure-ret-codes (cond (= :void rettype) :void
+                                          (vector? rettype) :struct
+                                          :else (carrier rettype)))
+        ret (cond (= :void rettype) nil
+                  (vector? rettype) (let [enc (cached-codec :encode (layout-of rettype))]
+                                      (fn [seg v] (enc nil seg v)))
+                  :else (arg-coercer rettype))
         ret-size (if (= :void rettype) 0 (sizeof rettype))
         id (long (closure-register f kinds decs sizes ret-kind ret ret-size))
         code-slot (.allocate arena 8 8)

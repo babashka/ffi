@@ -139,7 +139,7 @@
   [{"class" "babashka.ffi.impl.LibffiClosure"
     "method" "closure"
     "returnType" "void"
-    "parameterTypes" ["void*" "void*" "void*" "void*"]}])
+    "parameterTypes" ["jlong" "jlong" "jlong" "jlong"]}])
 
 (def reflection
   ;; callbacks call the wrapped IFn through a bound MethodHandle; they take

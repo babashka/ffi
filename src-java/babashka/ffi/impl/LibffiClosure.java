@@ -112,10 +112,11 @@ public final class LibffiClosure {
         }
     }
 
-    /** The libffi closure handler: void (*)(ffi_cif *, void *ret, void **args, void *user_data). */
-    public static void closure(MemorySegment cif, MemorySegment ret, MemorySegment args, MemorySegment userData) {
-        Entry e = entries[(int) userData.address()];
-        long a = args.address();
+    /** The libffi closure handler: void (*)(ffi_cif *, void *ret, void **args, void *user_data).
+     * The pointers arrive as longs. */
+    public static void closure(long cif, long ret, long args, long userData) {
+        Entry e = entries[(int) userData];
+        long a = args;
         IFn f = e.f;
         Object r;
         switch (e.kinds.length) {
@@ -124,13 +125,21 @@ public final class LibffiClosure {
             case 2: r = f.invoke(arg(e, a, 0), arg(e, a, 1)); break;
             case 3: r = f.invoke(arg(e, a, 0), arg(e, a, 1), arg(e, a, 2)); break;
             case 4: r = f.invoke(arg(e, a, 0), arg(e, a, 1), arg(e, a, 2), arg(e, a, 3)); break;
+            case 5: r = f.invoke(arg(e, a, 0), arg(e, a, 1), arg(e, a, 2), arg(e, a, 3),
+                                 arg(e, a, 4)); break;
+            case 6: r = f.invoke(arg(e, a, 0), arg(e, a, 1), arg(e, a, 2), arg(e, a, 3),
+                                 arg(e, a, 4), arg(e, a, 5)); break;
+            case 7: r = f.invoke(arg(e, a, 0), arg(e, a, 1), arg(e, a, 2), arg(e, a, 3),
+                                 arg(e, a, 4), arg(e, a, 5), arg(e, a, 6)); break;
+            case 8: r = f.invoke(arg(e, a, 0), arg(e, a, 1), arg(e, a, 2), arg(e, a, 3),
+                                 arg(e, a, 4), arg(e, a, 5), arg(e, a, 6), arg(e, a, 7)); break;
             default: {
                 Object[] xs = new Object[e.kinds.length];
                 for (int i = 0; i < xs.length; i++) xs[i] = arg(e, a, i);
                 r = f.applyTo(ArraySeq.create(xs));
             }
         }
-        long out = ret.address();
+        long out = ret;
         switch (e.retKind) {
             case R_VOID: break;
             // libffi widens an integer return to ffi_arg, a word
@@ -152,10 +161,9 @@ public final class LibffiClosure {
             try {
                 stub = Linker.nativeLinker().upcallStub(
                     MethodHandles.lookup().findStatic(LibffiClosure.class, "closure",
-                        MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class,
-                                              MemorySegment.class, MemorySegment.class)),
-                    FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS,
-                                              ValueLayout.ADDRESS, ValueLayout.ADDRESS),
+                        MethodType.methodType(void.class, long.class, long.class, long.class, long.class)),
+                    FunctionDescriptor.ofVoid(ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG,
+                                              ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG),
                     Arena.global()).address();
             } catch (ReflectiveOperationException e) {
                 throw new IllegalStateException(e);

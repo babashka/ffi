@@ -79,10 +79,12 @@
       (check "takes a trampoline" :trampoline (:babashka.ffi/backend (meta f)))
       (check "and both arguments arrive" 3.5 (f 1.5 2)))
     (let [cb (ffi/callback (ffi/global-arena) (fn [d l] (+ d l)) [:double :long] :double)]
-      (check "and a callback of that shape is registered"
+      (check "and a callback of that shape receives both"
              3.5 ((ffi/cfn "call_double_then_long" [:pointer] :double) cb)))
 
-    (println "a callback, which an image serves from the shapes it registered")
+    (println (if libffi?
+               "a callback, which a libffi closure serves"
+               "a callback, which an image serves from the shapes it registered"))
     (let [arena (ffi/global-arena)]
       (let [cb (ffi/callback arena (fn [a b] (+ a b)) [:int :int] :long)]
         (check "a negative narrow integer keeps its sign"
@@ -104,7 +106,35 @@
             (dotimes [i (count xs)] (ffi/write p :int (nth xs i) (* 4 i)))
             (qsort p (count xs) 4 cmp)
             (check "qsort calls back into the image"
-                   [1 2 3 5 7 9] (mapv #(ffi/read p :int (* 4 %)) (range (count xs))))))))
+                   [1 2 3 5 7 9] (mapv #(ffi/read p :int (* 4 %)) (range (count xs)))))))
+      (let [seen (atom nil)
+            sig [:uint :uint16 :uint8]
+            cb (ffi/callback arena (fn [a b c] (reset! seen [a b c]) 0) sig :int)]
+        ((ffi/cfn cb sig :int) 0xFFFFFFFF 0xFFFF 0xFF)
+        (check "unsigned arguments with the high bit set arrive unsigned"
+               [0xFFFFFFFF 0xFFFF 0xFF] @seen))
+      (let [seen (atom [])
+            cb (ffi/callback arena (fn [b] (swap! seen conj b) 0) [:bool] :int)
+            f (ffi/cfn cb [:bool] :int)]
+        (f true)
+        (f false)
+        (check "a :bool argument arrives as true and false" [true false] @seen))
+      (let [cb (ffi/callback arena
+                             (fn [a] (count (ffi/ptr->string (java.lang.foreign.MemorySegment/ofAddress a))))
+                             [:string] :long)]
+        (check "a :string argument arrives as its address"
+               5 ((ffi/cfn cb [:string] :long) "hello")))
+      (let [cb (ffi/callback arena identity [:pointer] :pointer)
+            f (ffi/cfn cb [:pointer] :pointer)
+            p (ffi/alloc arena 8)]
+        (check "a :pointer return keeps its address" (ffi/address p) (ffi/address (f p)))
+        (check "a nil :pointer return is NULL" true (ffi/null? (f nil)))))
+    (ffi/with-open [a (ffi/confined-arena)]
+      (let [cb (ffi/callback a inc [:int] :int)]
+        (check "a callback in a confined arena returns its result" 2 ((ffi/cfn cb [:int] :int) 1))))
+    (let [cb (ffi/callback (ffi/global-arena) * [:double :double] :double)]
+      (check "a new callback after a confined arena closes returns its product"
+             6.0 ((ffi/cfn cb [:double :double] :double) 2.0 3.0)))
 
     (println "the image leaves out what only the JVM calls")
     (check "the FFM struct and variadic paths are not defined"
@@ -161,7 +191,7 @@
           (let [f2 [:struct [[:a :float] [:b :float]]]]
             (check "float HFA arguments after :&"
                    46.0 ((ffi/cfn "var_f2_tail" [:int :& f2 f2] :double) 2 {:a 1.0 :b 2.0} {:a 3.0 :b 4.0}))))
-        (println "what libffi calls back: structs by value and shapes the image did not register")
+        (println "what libffi calls back beyond the registered shapes: structs by value, more arguments and :float")
         (let [js-value [:struct [[:u :int64] [:tag :int64]]]
               sig [:pointer js-value :int :pointer]
               cb (ffi/callback (ffi/global-arena)

@@ -30,8 +30,10 @@ the closure.
 An entry holds the function, a type code per argument, and the return code.
 `LibffiClosure.closure` reads each scalar argument through a GraalVM
 `Pointer`, because a read through a `MemorySegment` costs about 30 ns in an
-image. It calls the function by arity up to 4 and through `applyTo` above
-that. A struct argument or return goes through the codecs, as before.
+image. It takes the four pointers as longs, which saves about 2 ns over
+four `MemorySegment` wrappers. It calls the function by arity up to 8 and
+through `applyTo` above that. A struct argument or return goes through the
+codecs, as before.
 
 Without libffi, the registered shapes keep their FFM stubs at about 2 us.
 
@@ -43,7 +45,8 @@ Measured from C into a shared library image at -O2, 10 million calls:
 |---|---|
 | FFM stub of a registered shape | 2,400 |
 | libffi closure, handler as a regular upcall | 106 |
-| libffi closure, direct upcall handler | 34 |
+| libffi closure, direct upcall handler, segment arguments | 31 |
+| libffi closure, direct upcall handler, long arguments | 29 |
 | direct upcall to a static method, no arguments decoded | 19 |
 
 A SQLite function in Clojure over 100,000 rows went from 513 ms to 63 ms.

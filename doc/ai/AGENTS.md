@@ -114,6 +114,8 @@ Adding or changing a type keyword touches each of these. Keep them in sync.
 - ffi.clj sizes, array-carriers, signature-layout, exact-layout, ffi-type-codes
 - the case tables in read, write and place
 - the callback return coercion in ffm-callback and libffi-callback
+- ffi.clj closure-arg-codes and closure-ret-codes, and the codes in
+  LibffiClosure.java, which reads each argument by its code
 
 jvm-return-conversion-test checks narrow-ret and bits-ret-fn against each
 other through a callback that returns each type.
@@ -220,7 +222,7 @@ Test conventions:
 clj-kondo --lint src test test-jvm test-node
 ```
 
-One pre-existing info about a redundant long coercion in ffi.clj is known.
+Two pre-existing infos about a redundant long coercion in ffi.clj are known.
 
 ## Measure
 
