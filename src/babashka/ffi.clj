@@ -2665,7 +2665,7 @@
    :struct 12})
 
 (def ^:private closure-ret-codes
-  ;; the return codes of babashka.ffi.impl.LibffiClosure, by carrier
+  ;; the return codes of babashka.ffi.impl.LibffiClosure
   {:void 0 :long 1 :double 2 :float 3 :struct 4})
 
 (defn- libffi-callback

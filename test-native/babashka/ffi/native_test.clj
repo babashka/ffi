@@ -128,7 +128,10 @@
             f (ffi/cfn cb [:pointer] :pointer)
             p (ffi/alloc arena 8)]
         (check "a :pointer return keeps its address" (ffi/address p) (ffi/address (f p)))
-        (check "a nil :pointer return is NULL" true (ffi/null? (f nil)))))
+        (check "a nil :pointer return is NULL"
+               true (ffi/null? ((ffi/cfn (ffi/callback arena (fn [_] nil) [:pointer] :pointer)
+                                         [:pointer] :pointer)
+                                p)))))
     (ffi/with-open [a (ffi/confined-arena)]
       (let [cb (ffi/callback a inc [:int] :int)]
         (check "a callback in a confined arena returns its result" 2 ((ffi/cfn cb [:int] :int) 1))))

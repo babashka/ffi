@@ -116,37 +116,35 @@ public final class LibffiClosure {
      * The pointers arrive as longs. */
     public static void closure(long cif, long ret, long args, long userData) {
         Entry e = entries[(int) userData];
-        long a = args;
         IFn f = e.f;
         Object r;
         switch (e.kinds.length) {
             case 0: r = f.invoke(); break;
-            case 1: r = f.invoke(arg(e, a, 0)); break;
-            case 2: r = f.invoke(arg(e, a, 0), arg(e, a, 1)); break;
-            case 3: r = f.invoke(arg(e, a, 0), arg(e, a, 1), arg(e, a, 2)); break;
-            case 4: r = f.invoke(arg(e, a, 0), arg(e, a, 1), arg(e, a, 2), arg(e, a, 3)); break;
-            case 5: r = f.invoke(arg(e, a, 0), arg(e, a, 1), arg(e, a, 2), arg(e, a, 3),
-                                 arg(e, a, 4)); break;
-            case 6: r = f.invoke(arg(e, a, 0), arg(e, a, 1), arg(e, a, 2), arg(e, a, 3),
-                                 arg(e, a, 4), arg(e, a, 5)); break;
-            case 7: r = f.invoke(arg(e, a, 0), arg(e, a, 1), arg(e, a, 2), arg(e, a, 3),
-                                 arg(e, a, 4), arg(e, a, 5), arg(e, a, 6)); break;
-            case 8: r = f.invoke(arg(e, a, 0), arg(e, a, 1), arg(e, a, 2), arg(e, a, 3),
-                                 arg(e, a, 4), arg(e, a, 5), arg(e, a, 6), arg(e, a, 7)); break;
+            case 1: r = f.invoke(arg(e, args, 0)); break;
+            case 2: r = f.invoke(arg(e, args, 0), arg(e, args, 1)); break;
+            case 3: r = f.invoke(arg(e, args, 0), arg(e, args, 1), arg(e, args, 2)); break;
+            case 4: r = f.invoke(arg(e, args, 0), arg(e, args, 1), arg(e, args, 2), arg(e, args, 3)); break;
+            case 5: r = f.invoke(arg(e, args, 0), arg(e, args, 1), arg(e, args, 2), arg(e, args, 3),
+                                 arg(e, args, 4)); break;
+            case 6: r = f.invoke(arg(e, args, 0), arg(e, args, 1), arg(e, args, 2), arg(e, args, 3),
+                                 arg(e, args, 4), arg(e, args, 5)); break;
+            case 7: r = f.invoke(arg(e, args, 0), arg(e, args, 1), arg(e, args, 2), arg(e, args, 3),
+                                 arg(e, args, 4), arg(e, args, 5), arg(e, args, 6)); break;
+            case 8: r = f.invoke(arg(e, args, 0), arg(e, args, 1), arg(e, args, 2), arg(e, args, 3),
+                                 arg(e, args, 4), arg(e, args, 5), arg(e, args, 6), arg(e, args, 7)); break;
             default: {
                 Object[] xs = new Object[e.kinds.length];
-                for (int i = 0; i < xs.length; i++) xs[i] = arg(e, a, i);
+                for (int i = 0; i < xs.length; i++) xs[i] = arg(e, args, i);
                 r = f.applyTo(ArraySeq.create(xs));
             }
         }
-        long out = ret;
         switch (e.retKind) {
             case R_VOID: break;
             // libffi widens an integer return to ffi_arg, a word
-            case R_LONG: ptr(out).writeLong(0, ((Number) e.ret.invoke(r)).longValue()); break;
-            case R_DOUBLE: ptr(out).writeDouble(0, ((Number) e.ret.invoke(r)).doubleValue()); break;
-            case R_FLOAT: ptr(out).writeFloat(0, ((Number) e.ret.invoke(r)).floatValue()); break;
-            default: e.ret.invoke(MemorySegment.ofAddress(out).reinterpret(e.retSize), r);
+            case R_LONG: ptr(ret).writeLong(0, ((Number) e.ret.invoke(r)).longValue()); break;
+            case R_DOUBLE: ptr(ret).writeDouble(0, ((Number) e.ret.invoke(r)).doubleValue()); break;
+            case R_FLOAT: ptr(ret).writeFloat(0, ((Number) e.ret.invoke(r)).floatValue()); break;
+            default: e.ret.invoke(MemorySegment.ofAddress(ret).reinterpret(e.retSize), r);
         }
     }
 
