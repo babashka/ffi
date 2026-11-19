@@ -57,6 +57,11 @@ becomes `libz.dylib`, `libz.so`, or `z.dll`, depending on the operating system.
 
 ## Load a library
 
+Use a dynamically linked executable. A statically linked one, such as the
+`linux-amd64-static` babashka binary, cannot load a library or call a C
+function, and `load-library`, `load-system-library` and `cfn` throw an error
+that says so.
+
 Use `load-system-library` for a short library name:
 
 ```clojure
@@ -1202,6 +1207,9 @@ The library includes call trampolines and reachability metadata.
 
 Use `graal-build-time` to initialize `babashka.ffi` and the other Clojure
 namespaces at build time.
+
+Do not pass `--static`. A fully static image cannot load a library.
+`-H:+StaticExecutableWithDynamicLibC` links libc dynamically and can.
 
 See `script/native_test.clj` for a complete build example.
 

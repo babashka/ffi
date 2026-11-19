@@ -3,6 +3,10 @@
 [babashka.ffi](https://github.com/babashka/ffi): call C libraries from
 Clojure, babashka and Node.js.
 
+## Unreleased
+
+- [#74](https://github.com/babashka/ffi/issues/74): in a statically linked Linux executable, `load-library`, `load-system-library` and a call through the default lookup throw an error that names static linking as the cause
+
 ## 0.1.3 (2026-11-09)
 
 - [#65](https://github.com/babashka/ffi/issues/65): `write-string` writes a NUL-terminated string into existing memory

@@ -1127,3 +1127,36 @@
                 (is (= 0.95 (strtod "0.95" ffi/null))))
               (finally
                 (setlocale lc-numeric original)))))))))
+
+(defn- elf-file [phdr-types]
+  (let [phnum (count phdr-types)
+        buf (doto (java.nio.ByteBuffer/allocate (+ 64 (* 56 phnum)))
+              (.order java.nio.ByteOrder/LITTLE_ENDIAN)
+              (.putInt 0 0x464c457f)
+              (.put 4 (byte 2))
+              (.put 5 (byte 1))
+              (.putLong 0x20 64)
+              (.putShort 0x36 (short 56))
+              (.putShort 0x38 (short phnum)))
+        f (fs/create-temp-file {:prefix "elf"})]
+    (doseq [[i t] (map-indexed vector phdr-types)]
+      (.putInt buf (int (+ 64 (* 56 i))) (int t)))
+    (fs/write-bytes f (.array buf))
+    (str f)))
+
+(deftest static-elf-test
+  (when-not (System/getProperty "babashka.version")
+    (let [static-elf? @(resolve 'babashka.ffi/static-elf?)]
+      (testing "an ELF file with PT_LOAD and no PT_INTERP is static"
+        (is (true? (static-elf? (elf-file [1 1])))))
+      (testing "an ELF file with PT_INTERP is not static"
+        (is (false? (static-elf? (elf-file [6 3 1])))))
+      (testing "a file that is not ELF is not static"
+        (let [f (fs/create-temp-file)]
+          (fs/write-bytes f (byte-array 100))
+          (is (false? (static-elf? (str f))))))
+      (testing "a missing file is not static"
+        (is (false? (static-elf? "/nonexistent/exe"))))
+      (when (fs/exists? "/proc/self/exe")
+        (testing "the running JVM is not static"
+          (is (false? (static-elf? "/proc/self/exe"))))))))
