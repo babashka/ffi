@@ -5,7 +5,7 @@ Clojure, babashka and Node.js.
 
 ## Unreleased
 
-- [#74](https://github.com/babashka/ffi/issues/74): in a statically linked Linux executable, `load-library`, `load-system-library` and a call through the default lookup throw an error that names static linking as the cause
+- [#74](https://github.com/babashka/ffi/issues/74): a statically linked executable throws an error that names static linking when it cannot load a library
 
 ## 0.1.3 (2026-11-09)
 
