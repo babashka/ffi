@@ -174,6 +174,14 @@ signature are refused. The second links the libffi of the system with -lffi
 and checks that they are called. BABASHKA_LIBFFI can also be the path of an
 archive. CI runs both on Linux, macOS and Windows.
 
+```sh
+bb test:native --static
+```
+
+builds a fully static image with musl and checks that babashka.ffi names
+static linking when it cannot load a library. It needs a GraalVM with musl
+support, so CI runs it on Linux only.
+
 Node.js, needs Node.js 26.1 or newer on PATH. The three commands run
 test-node under nbb, ClojureScript and shadow-cljs. The last two need JDK 25
 or newer:

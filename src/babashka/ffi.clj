@@ -607,6 +607,38 @@
 
 (def ^:private last-lookup-error (volatile! nil))
 
+(declare ^:private native-image?)
+
+(defn- static-elf?
+  "Returns true if path is a 64-bit little-endian ELF file without a
+  PT_INTERP program header."
+  [^String path]
+  (try
+    (clojure.core/with-open [f (java.io.RandomAccessFile. path "r")]
+      (let [hdr (byte-array 64)
+            _ (.readFully f hdr)
+            buf (.order (java.nio.ByteBuffer/wrap hdr) java.nio.ByteOrder/LITTLE_ENDIAN)]
+        (and (= 0x464c457f (.getInt buf 0))
+             (= 2 (aget hdr 4))
+             (= 1 (aget hdr 5))
+             (let [phoff (.getLong buf 0x20)
+                   phentsize (long (.getShort buf 0x36))
+                   phnum (long (.getShort buf 0x38))]
+               (not-any? (fn [^long i]
+                           (.seek f (+ phoff (* i phentsize)))
+                           (= 3 (Integer/reverseBytes (.readInt f))))
+                         (range phnum))))))
+    (catch Exception _ false)))
+
+(def ^:private static-executable?
+  (delay (and native-image?
+              (= :linux (os-key))
+              (static-elf? "/proc/self/exe"))))
+
+(defn- static-executable-ex [data cause]
+  (ex-info "babashka.ffi: a statically linked executable cannot load shared libraries, use a dynamically linked build"
+           data cause))
+
 (defn- try-lookup ^SymbolLookup [^String path]
   (try (SymbolLookup/libraryLookup path (Arena/global))
        (catch java.lang.IllegalCallerException e
@@ -662,6 +694,8 @@
                 (vector? lib) (mapv str lib)
                 :else [(str lib)])
         m (or (some lookup-one paths)
+              (when @static-executable?
+                (throw (static-executable-ex {:library lib} @last-lookup-error)))
               (throw (ex-info (str "babashka.ffi: cannot load library: "
                                    (str/join ", " paths)
                                    " (bare names also searched in "
@@ -706,6 +740,8 @@
                              (search-dirs))]
             (swap! libraries conj (:lookup m))
             m)
+          (when @static-executable?
+            (throw (static-executable-ex {:library name} @last-lookup-error)))
           (throw (ex-info (str "babashka.ffi: cannot find library " name
                                " (tried " base " and " base ".* in "
                                (pr-str (vec (search-dirs))) ")")
@@ -731,12 +767,22 @@
                            (pr-str lib))
                       {:library lib})))))
 
+(defn- find-in ^MemorySegment [^SymbolLookup l ^String sym]
+  (.orElse (.find l sym) nil))
+
+(defn- find-default ^MemorySegment [^String sym]
+  (try (find-in (.defaultLookup ^Linker @linker*) sym)
+       (catch Throwable e
+         (if @static-executable?
+           (throw (static-executable-ex {:symbol sym} e))
+           (throw e)))))
+
 (defn- lookup-symbol ^MemorySegment [lib ^String sym]
-  (let [;; nil? and not truthiness: false is not "no library", it is a wrong one
-        lookups (if (nil? lib)
-                  (conj @libraries (.defaultLookup ^Linker @linker*))
-                  [(resolve-library lib)])]
-    (some (fn [^SymbolLookup l] (.orElse (.find l sym) nil)) lookups)))
+  ;; nil? and not truthiness: false is not "no library", it is a wrong one
+  (if (nil? lib)
+    (or (some #(find-in % sym) @libraries)
+        (find-default sym))
+    (find-in (resolve-library lib) sym)))
 
 (defn- require-symbol ^MemorySegment [lib sym]
   (if (instance? MemorySegment sym)

@@ -190,6 +190,36 @@ jobs:
       - name: Build and run the native image with libffi
         run: bb test:native
 
+  static:
+    name: Fully static native image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: graalvm
+          native-image-musl: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'bb.edn') }}
+          restore-keys: deps-${{ runner.os }}-
+
+      - uses: DeLaGuardo/setup-clojure@13.4
+        with:
+          cli: latest
+          bb: latest
+
+      - name: Build and run the static image
+        run: bb test:native --static
+
   cljs:
     name: ClojureScript and shadow-cljs
     runs-on: ubuntu-latest
