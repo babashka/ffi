@@ -14,7 +14,13 @@
   other value is the path of a libffi archive or import library.
 
       bb test:native
-      BABASHKA_LIBFFI=system bb test:native"
+      BABASHKA_LIBFFI=system bb test:native
+
+  With --static, the image is fully static, linked with musl on Linux, and
+  checks that babashka.ffi names static linking when it cannot load a
+  library. Needs a GraalVM with musl support.
+
+      bb test:native --static"
   (:require [babashka.deps :as deps]
             [babashka.fs :as fs]
             [babashka.process :as p]
@@ -58,57 +64,64 @@
   [& args]
   (-> (deps/clojure (vec args)) deref p/check))
 
-(defn -main [& _]
-  (fs/delete-tree out)
-  (fs/create-dirs classes)
+(defn -main [& args]
+  (let [static? (= "--static" (first args))
+        libffi (when-not static? libffi)]
+    (fs/delete-tree out)
+    (fs/create-dirs classes)
 
-  (step "the fixture")
-  (if (fs/windows?)
-    (p/shell "cl" "/nologo" "/LD" fixture (str "/Fe:" lib)
-             (str "/Fo:" (fs/path "target" "ffistructs.obj")))
-    (p/shell "cc" "-shared" "-fPIC" "-o" lib fixture))
+    (when-not static?
+      (step "the fixture")
+      (if (fs/windows?)
+        (p/shell "cl" "/nologo" "/LD" fixture (str "/Fe:" lib)
+                 (str "/Fo:" (fs/path "target" "ffistructs.obj")))
+        (p/shell "cc" "-shared" "-fPIC" "-o" lib fixture)))
 
-  (step "javac")
-  (let [sdk (classpath :native)
-        cp (str/join fs/path-separator [sdk "test-native" (str classes)])]
-    (p/shell (graalvm-bin "javac") "--release" "25" "-cp" sdk "-d" (str classes)
-             "src-java/babashka/ffi/impl/FfiTrampoline.java"
-             "src-java/babashka/ffi/impl/FfiTrampolineOrdered.java"
-             "src-java/babashka/ffi/impl/Libffi.java"
-             "src-java/babashka/ffi/impl/LibffiClosure.java")
+    (step "javac")
+    (let [sdk (classpath :native)
+          cp (str/join fs/path-separator [sdk "test-native" (str classes)])]
+      (p/shell (graalvm-bin "javac") "--release" "25" "-cp" sdk "-d" (str classes)
+               "src-java/babashka/ffi/impl/FfiTrampoline.java"
+               "src-java/babashka/ffi/impl/FfiTrampolineOrdered.java"
+               "src-java/babashka/ffi/impl/Libffi.java"
+               "src-java/babashka/ffi/impl/LibffiClosure.java")
 
-    (step "compiling the namespaces")
-    (clojure "-Scp" cp "-J--enable-native-access=ALL-UNNAMED"
-             "-e" (pr-str (list 'binding ['*compile-path* (str classes)]
-                                '(compile 'babashka.ffi.native-test))))
+      (step "compiling the namespaces")
+      (clojure "-Scp" cp "-J--enable-native-access=ALL-UNNAMED"
+               "-e" (pr-str (list 'binding ['*compile-path* (str classes)]
+                                  '(compile 'babashka.ffi.native-test))))
 
-    (step (str "native-image, " (if libffi (str "with libffi: " libffi) "without libffi")))
-    (apply p/shell {:extra-env {"BABASHKA_FEATURE_LIBFFI" (str (boolean libffi))}}
-           (graalvm-bin "native-image")
-           "-cp" cp
-           "--features=clj_easy.graal_build_time.InitClojureClasses"
-           "-H:+UnlockExperimentalVMOptions"
-           "-H:+ForeignAPISupport"
-           "--enable-native-access=ALL-UNNAMED"
-           "--no-fallback"
-           "-O1"
-           (concat
-            ;; Windows assigns argument registers by position, so its image
-            ;; loads the ordered trampolines, and the upcall shapes only they
-            ;; need are in a metadata file of their own
-            (when (fs/windows?)
-              ["-H:ConfigurationResourceRoots=babashka/ffi/native-image-windows"])
-            ;; babashka.ffi reads the variable when the image is built, and
-            ;; loads the libffi bindings only then
-            ["-EBABASHKA_FEATURE_LIBFFI"]
-            (when libffi
-              [(str "-H:NativeLinkerOption="
-                    (if (= "system" libffi) "-lffi" (str (fs/absolutize libffi))))])
-            ["-o" (str (fs/path out "ffi-native-test"))
-             "babashka.ffi.native_test"])))
+      (step (str "native-image, " (cond static? "fully static"
+                                        libffi (str "with libffi: " libffi)
+                                        :else "without libffi")))
+      (apply p/shell {:extra-env {"BABASHKA_FEATURE_LIBFFI" (str (boolean libffi))}}
+             (graalvm-bin "native-image")
+             "-cp" cp
+             "--features=clj_easy.graal_build_time.InitClojureClasses"
+             "-H:+UnlockExperimentalVMOptions"
+             "-H:+ForeignAPISupport"
+             "--enable-native-access=ALL-UNNAMED"
+             "--no-fallback"
+             "-O1"
+             (concat
+              ;; Windows assigns argument registers by position, so its image
+              ;; loads the ordered trampolines, and the upcall shapes only they
+              ;; need are in a metadata file of their own
+              (when (fs/windows?)
+                ["-H:ConfigurationResourceRoots=babashka/ffi/native-image-windows"])
+              ;; babashka.ffi reads the variable when the image is built, and
+              ;; loads the libffi bindings only then
+              ["-EBABASHKA_FEATURE_LIBFFI"]
+              (when static?
+                ["--static" "--libc=musl"])
+              (when libffi
+                [(str "-H:NativeLinkerOption="
+                      (if (= "system" libffi) "-lffi" (str (fs/absolutize libffi))))])
+              ["-o" (str (fs/path out "ffi-native-test"))
+               "babashka.ffi.native_test"])))
 
-  (step "running the image")
-  (p/shell (str (fs/absolutize image)) lib))
+    (step "running the image")
+    (p/shell (str (fs/absolutize image)) (if static? "--static" lib))))
 
 (when (= *file* (System/getProperty "babashka.file"))
   (apply -main *command-line-args*))

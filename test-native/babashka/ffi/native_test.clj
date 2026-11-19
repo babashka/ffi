@@ -37,7 +37,27 @@
           (println "        expected a message matching" (pr-str (str re)))
           (println "        actual:  " (pr-str msg))))))
 
+(defn- report []
+  (println)
+  (if (zero? @failures)
+    (println "native image: all checks passed")
+    (do (println "native image:" @failures "failed") (System/exit 1))))
+
+(defn- static-checks []
+  (println "a fully static image")
+  (check "static-executable? is true" true (boolean @@#'ffi/static-executable?))
+  (check-throws "load-library names static linking" #"statically linked"
+                #(ffi/load-library "libz.so.1"))
+  (check-throws "load-system-library names static linking" #"statically linked"
+                #(ffi/load-system-library "z"))
+  (check-throws "a call through the default lookup names static linking" #"statically linked"
+                #((ffi/cfn "abs" [:int] :int) -5))
+  (report))
+
 (defn -main [& args]
+  (when (= "--static" (first args))
+    (static-checks)
+    (System/exit 0))
   (let [lib (or (first args) "target/libffistructs.dylib")]
     (ffi/load-library lib)
 
@@ -256,7 +276,4 @@
     (check "a dynamically linked image is not static" false
            (boolean @@#'ffi/static-executable?))
 
-    (println)
-    (if (zero? @failures)
-      (println "native image: all checks passed")
-      (do (println "native image:" @failures "failed") (System/exit 1)))))
+    (report)))
