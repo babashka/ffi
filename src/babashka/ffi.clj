@@ -633,9 +633,7 @@
 (def ^:private static-executable?
   (delay (and native-image?
               (= :linux (os-key))
-              (some-> (.command (.info (java.lang.ProcessHandle/current)))
-                      (.orElse nil)
-                      static-elf?))))
+              (static-elf? "/proc/self/exe"))))
 
 (defn- static-executable-ex [data cause]
   (ex-info "babashka.ffi: a statically linked executable cannot load shared libraries, use a dynamically linked build"

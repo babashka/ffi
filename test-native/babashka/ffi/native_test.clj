@@ -271,8 +271,6 @@
                       #(ffi/callback (ffi/global-arena) + (vec (repeat 8 :int)) :int))))
 
     (println "static linking")
-    (check "ProcessHandle returns the path of the image" true
-           (some? (.orElse (.command (.info (java.lang.ProcessHandle/current))) nil)))
     (check "a dynamically linked image is not static" false
            (boolean @@#'ffi/static-executable?))
 
