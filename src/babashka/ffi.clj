@@ -1417,7 +1417,8 @@
     (or (get @codec-cache k)
         (let [v (case kind
                   :decode (decoder lay 0)
-                  :encode (encoder lay 0))]
+                  :encode (encoder lay 0)
+                  :init (encoder lay 0 [] true))]
           (swap! codec-cache
                  (fn [m] (if (<= codec-cache-limit (count m)) m (assoc m k v))))
           v))))
@@ -1486,13 +1487,18 @@
 
 (defn alloc
   "Allocates zeroed native memory in arena and returns its pointer.
-  n is an integer byte count, a type keyword, or a struct layout.
+  n is an integer byte count, a type keyword, or a layout.
 
   Use a confined arena for access from one thread or a shared arena for
   access from multiple threads. Closing the arena releases its memory.
 
   A type or layout uses natural alignment. An integer byte count uses
   alignment 16. Specify an alignment to override this value.
+
+  Pass init in place of the alignment to write a value of layout n to the
+  memory. A struct field missing from init stays zero.
+  An array element past the end of init stays zero.
+  A string for a :string field is copied into arena.
 
   For memory allocated by C, bind the allocator with cfn and release the
   result with the matching C deallocator.
@@ -1502,12 +1508,19 @@
   ([^Arena arena n]
    (let [[size align] (size-and-alignment n)]
      (alloc arena size align)))
-  ([^Arena arena n alignment]
-   (when-not (integer? alignment)
-     (throw (ex-info (str "babashka.ffi: alloc takes an integer alignment, got " (pr-str alignment))
-                     {:alignment alignment})))
-   ;; Arena.allocate(byteSize) guarantees only alignment 1.
-   (.allocate arena (long (first (size-and-alignment n))) (long alignment))))
+  ([^Arena arena n alignment-or-init]
+   (cond
+     (integer? alignment-or-init)
+     ;; Arena.allocate(byteSize) guarantees only alignment 1.
+     (.allocate arena (long (first (size-and-alignment n))) (long alignment-or-init))
+     (layout-vector? n)
+     (let [p (alloc arena n)]
+       ((cached-codec :init (layout-of n)) arena p alignment-or-init)
+       p)
+     :else
+     (throw (ex-info (str "babashka.ffi: alloc takes an integer alignment, or an init value with a layout, got "
+                          (pr-str alignment-or-init))
+                     {:alignment alignment-or-init})))))
 
 ;; -- scalar access sites ------------------------------------------------------
 ;;
@@ -2027,21 +2040,25 @@
   "Returns a function that writes a value to a segment. The function writes
   the value at offset, with layout lay. A struct value must contain each
   field and no other field. The arena contains temporary :string fields.
-  path names the value's place in an enclosing layout, for error messages."
-  ([lay offset] (encoder lay offset []))
-  ([lay ^long offset path]
+  path names the value's place in an enclosing layout, for error messages.
+  With init?, a struct value may omit fields and an array value may omit
+  trailing elements. The encoder leaves their bytes as they are."
+  ([lay offset] (encoder lay offset [] false))
+  ([lay offset path] (encoder lay offset path false))
+  ([lay ^long offset path init?]
   (let [t (:type lay)]
     (case t
       :struct
       (let [fields (:fields lay)
             c (count fields)
             names (mapv :name fields)
+            index (zipmap names (range))
             ^objects encs (object-array
-                           (map (fn [f] (encoder f (+ offset (long (:offset f))) (conj path (:name f))))
+                           (map (fn [f] (encoder f (+ offset (long (:offset f))) (conj path (:name f)) init?))
                                 fields))
             field-error
             (fn [v]
-              (let [missing (when (map? v) (remove #(contains? v %) names))
+              (let [missing (when (and (map? v) (not init?)) (remove #(contains? v %) names))
                     unknown (when (map? v) (remove (set names) (keys v)))]
                 (throw (ex-info (str "babashka.ffi: " (at-path path) "struct value "
                                      (cond (not (map? v)) (str "needs a map of " (pr-str names))
@@ -2050,14 +2067,23 @@
                                            :else (str "needs a map of " (pr-str names)))
                                      ", got " (pr-str v))
                                 {:value v :fields names :path path}))))]
-        (fn [arena seg v]
-          (when-not (and (map? v) (= (count v) c))
-            (field-error v))
-          (dotimes [i c]
-            (let [x (get v (nth names i) ::missing)]
-              (when (identical? ::missing x)
-                (field-error v))
-              ((aget encs i) arena seg x)))))
+        (if init?
+          (fn [arena seg v]
+            (when-not (map? v)
+              (field-error v))
+            (reduce-kv (fn [_ k x]
+                         (if-let [i (get index k)]
+                           ((aget encs (long i)) arena seg x)
+                           (field-error v)))
+                       nil v))
+          (fn [arena seg v]
+            (when-not (and (map? v) (= (count v) c))
+              (field-error v))
+            (dotimes [i c]
+              (let [x (get v (nth names i) ::missing)]
+                (when (identical? ::missing x)
+                  (field-error v))
+                ((aget encs i) arena seg x))))))
       :string (fn [arena seg v]
                 (write seg :pointer
                        (if (string? v)
@@ -2076,7 +2102,7 @@
       ;; shape, and it is the form spec's s/or conforms to. See ADR 0005.
       (let [fields (:fields lay)
             names (mapv :name fields)
-            encs (into {} (map (fn [f] [(:name f) (encoder f offset (conj path (:name f)))]) fields))
+            encs (into {} (map (fn [f] [(:name f) (encoder f offset (conj path (:name f)) init?)]) fields))
             member-error
             (fn [v]
               (throw (ex-info (str "babashka.ffi: " (at-path path) "union value "
@@ -2097,22 +2123,23 @@
             n (long (:count lay))
             sz (long (:size el))
             ^objects encs (object-array
-                           (map (fn [i] (encoder el (+ offset (* (long i) sz)) (conj path i))) (range n)))
+                           (map (fn [i] (encoder el (+ offset (* (long i) sz)) (conj path i) init?)) (range n)))
             ;; the element count is part of the layout, so a value of another
             ;; length is an error, as a struct value with another field set is
             length-error
             (fn [v]
-              (throw (ex-info (str "babashka.ffi: " (at-path path) "array value needs " n " elements, got "
+              (throw (ex-info (str "babashka.ffi: " (at-path path) "array value needs "
+                                   (when init? "at most ") n " elements, got "
                                    (if (or (sequential? v) (some-> v class .isArray))
                                      (count v)
                                      (pr-str v)))
                               {:value v :count n :path path})))]
         (fn [arena seg v]
           (when-not (and (or (sequential? v) (some-> v class .isArray))
-                         (= n (count v)))
+                         (if init? (<= (count v) n) (= n (count v))))
             (length-error v))
           (if (or (vector? v) (some-> v class .isArray))
-            (dotimes [i n] ((aget encs i) arena seg (nth v i)))
+            (dotimes [i (count v)] ((aget encs i) arena seg (nth v i)))
             (loop [i 0 s (seq v)]
               (when s
                 ((aget encs i) arena seg (first s))

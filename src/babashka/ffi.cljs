@@ -781,12 +781,38 @@
         :else (throw (ex-info (str "babashka.ffi: alloc takes an integer byte count, a type keyword or a layout, got " (pr-str n))
                               {:n n}))))
 
+(defn- alloc-aligned [^Arena arena n alignment]
+  (when-not (arena? arena)
+    (throw (ex-info (str "babashka.ffi: alloc takes an arena first, got " (pr-str arena))
+                    {:arena arena})))
+  (when (.-closed arena)
+    (throw (ex-info "babashka.ffi: the arena is closed" {:arena arena})))
+  (when-not (and (integer? alignment) (pos? alignment)
+                 (zero? (bit-and alignment (dec alignment))))
+    (throw (ex-info (str "babashka.ffi: alloc takes a power of two as alignment, or an init value with a layout, got " (pr-str alignment))
+                    {:alignment alignment})))
+  (let [size (first (size-and-alignment n))
+        buf (js/Buffer.alloc (+ (max 1 size) alignment))
+        base (.getRawPointer nffi buf)
+        low (js/Number (js/BigInt.asUintN 30 base))
+        pad (bit-and (- alignment (bit-and low (dec alignment))) (dec alignment))]
+    (when-not (= "auto" (.-kind arena))
+      (.push (.-bufs arena) buf))
+    (Pointer. (+ base (js/BigInt pad)) size arena buf)))
+
+(declare cached-codec layout-of)
+
 (defn alloc
   "Allocates zeroed native memory in arena and returns its pointer.
-  n is an integer byte count, a type keyword, or a struct layout.
+  n is an integer byte count, a type keyword, or a layout.
 
   A type or layout uses natural alignment. An integer byte count uses
   alignment 16. Specify an alignment, a power of two, to override this value.
+
+  Pass init in place of the alignment to write a value of layout n to the
+  memory. A struct field missing from init stays zero.
+  An array element past the end of init stays zero.
+  A string for a :string field is copied into arena.
 
   There is no unscoped form. If C allocates the memory, bind its allocator with
   cfn. Release the result with the matching C deallocator.
@@ -794,25 +820,13 @@
   CAUTION: Do not close the arena while C uses its memory."
   ([arena n]
    (let [[size align] (size-and-alignment n)]
-     (alloc arena size align)))
-  ([^Arena arena n alignment]
-   (when-not (arena? arena)
-     (throw (ex-info (str "babashka.ffi: alloc takes an arena first, got " (pr-str arena))
-                     {:arena arena})))
-   (when (.-closed arena)
-     (throw (ex-info "babashka.ffi: the arena is closed" {:arena arena})))
-   (when-not (and (integer? alignment) (pos? alignment)
-                  (zero? (bit-and alignment (dec alignment))))
-     (throw (ex-info (str "babashka.ffi: alloc takes a power of two as alignment, got " (pr-str alignment))
-                     {:alignment alignment})))
-   (let [size (first (size-and-alignment n))
-         buf (js/Buffer.alloc (+ (max 1 size) alignment))
-         base (.getRawPointer nffi buf)
-         low (js/Number (js/BigInt.asUintN 30 base))
-         pad (bit-and (- alignment (bit-and low (dec alignment))) (dec alignment))]
-     (when-not (= "auto" (.-kind arena))
-       (.push (.-bufs arena) buf))
-     (Pointer. (+ base (js/BigInt pad)) size arena buf))))
+     (alloc-aligned arena size align)))
+  ([arena n alignment-or-init]
+   (if (or (integer? alignment-or-init) (not (layout-vector? n)))
+     (alloc-aligned arena n alignment-or-init)
+     (let [^Pointer p (alloc arena n)]
+       ((cached-codec :init n (layout-of n)) arena (.-addr p) alignment-or-init)
+       p))))
 
 (defn string->ptr
   "Copies s into arena as a NUL-terminated UTF-8 string and returns its
@@ -890,8 +904,6 @@
 
 (def ^:private layout-cache (atom {}))
 (def ^:private cache-limit 256)
-
-(declare layout-of)
 
 (defn- layout-of* [t]
   (cond
@@ -1009,18 +1021,20 @@
   (if (seq path) (str "at " (pr-str path) ", ") ""))
 
 (defn- encoder
-  ([lay offset] (encoder lay offset []))
-  ([lay offset path]
+  ([lay offset] (encoder lay offset [] false))
+  ([lay offset path] (encoder lay offset path false))
+  ([lay offset path init?]
    (let [t (:type lay)]
      (case t
        :struct
        (let [fields (:fields lay)
              c (count fields)
              names (mapv :name fields)
-             encs (mapv (fn [f] (encoder f (+ offset (:offset f)) (conj path (:name f)))) fields)
+             index (zipmap names (range))
+             encs (mapv (fn [f] (encoder f (+ offset (:offset f)) (conj path (:name f)) init?)) fields)
              field-error
              (fn [v]
-               (let [missing (when (map? v) (remove #(contains? v %) names))
+               (let [missing (when (and (map? v) (not init?)) (remove #(contains? v %) names))
                      unknown (when (map? v) (remove (set names) (keys v)))]
                  (throw (ex-info (str "babashka.ffi: " (at-path path) "struct value "
                                       (cond (not (map? v)) (str "needs a map of " (pr-str names))
@@ -1029,30 +1043,42 @@
                                             :else (str "needs a map of " (pr-str names)))
                                       ", got " (pr-str v))
                                  {:value v :fields names :path path}))))]
-         (fn [base v]
-           (when-not (and (map? v) (= (count v) c))
-             (field-error v))
-           (dotimes [i c]
-             (let [x (get v (nth names i) ::missing)]
-               (when (= ::missing x)
-                 (field-error v))
-               ((nth encs i) base x)))))
+         (if init?
+           (fn [arena base v]
+             (when-not (map? v)
+               (field-error v))
+             (doseq [[k x] v]
+               (if-let [i (get index k)]
+                 ((nth encs i) arena base x)
+                 (field-error v))))
+           (fn [arena base v]
+             (when-not (and (map? v) (= (count v) c))
+               (field-error v))
+             (dotimes [i c]
+               (let [x (get v (nth names i) ::missing)]
+                 (when (= ::missing x)
+                   (field-error v))
+                 ((nth encs i) arena base x))))))
 
        :string
-       (fn [base v]
-         (when (string? v)
-           ;; write takes no arena, so it cannot own the C string
-           (throw (ex-info (str "babashka.ffi: " (at-path path) "a :string field holds a pointer to bytes"
-                                " that outlive this write, so their lifetime is yours"
-                                " to choose: (string->ptr arena " (pr-str v) ")")
-                           {:value v :path path})))
-         (.setUint64 nffi base offset (pointer-address v)))
+       (fn [arena base v]
+         (.setUint64 nffi base offset
+                     (pointer-address
+                      (if (string? v)
+                        (do (when-not arena
+                              ;; write takes no arena, so it cannot own the C string
+                              (throw (ex-info (str "babashka.ffi: " (at-path path) "a :string field holds a pointer to bytes"
+                                                   " that outlive this write, so their lifetime is yours"
+                                                   " to choose: (string->ptr arena " (pr-str v) ")")
+                                              {:value v :path path})))
+                            (string->ptr arena v))
+                        v))))
 
        :union
        ;; a union value is a tagged pair, [member value]. See ADR 0005.
        (let [fields (:fields lay)
              names (mapv :name fields)
-             encs (into {} (map (fn [f] [(:name f) (encoder f offset (conj path (:name f)))]) fields))
+             encs (into {} (map (fn [f] [(:name f) (encoder f offset (conj path (:name f)) init?)]) fields))
              member-error
              (fn [v]
                (throw (ex-info (str "babashka.ffi: " (at-path path) "union value "
@@ -1061,35 +1087,36 @@
                                       (str "names unknown member " (pr-str (nth v 0)) "; give one of " (pr-str names)))
                                     ", got " (pr-str v))
                                {:value v :members names :path path})))]
-         (fn [base v]
+         (fn [arena base v]
            (when-not (and (vector? v) (= 2 (count v)))
              (member-error v))
            (let [enc (get encs (nth v 0))]
              (when-not enc (member-error v))
-             (enc base (nth v 1)))))
+             (enc arena base (nth v 1)))))
 
        :array
        (let [el (:elem lay)
              n (:count lay)
              sz (:size el)
-             encs (mapv (fn [i] (encoder el (+ offset (* i sz)) (conj path i))) (range n))
+             encs (mapv (fn [i] (encoder el (+ offset (* i sz)) (conj path i) init?)) (range n))
              countable? (fn [v] (or (sequential? v) (array? v) (js/ArrayBuffer.isView v)))
              length-error
              (fn [v]
-               (throw (ex-info (str "babashka.ffi: " (at-path path) "array value needs " n " elements, got "
+               (throw (ex-info (str "babashka.ffi: " (at-path path) "array value needs "
+                                    (when init? "at most ") n " elements, got "
                                     (if (countable? v) (count (seq v)) (pr-str v)))
                                {:value v :count n :path path})))]
-         (fn [base v]
+         (fn [arena base v]
            (let [xs (when (countable? v) (vec v))]
-             (when-not (= n (count xs))
+             (when-not (and xs (if init? (<= (count xs) n) (= n (count xs))))
                (length-error v))
-             (dotimes [i n] ((nth encs i) base (nth xs i))))))
+             (dotimes [i (count xs)] ((nth encs i) arena base (nth xs i))))))
 
        ;; a scalar: a value it cannot take gets the place and the type
        (let [coerce (or (arg-coercer* t)
                         (throw (ex-info (str "babashka.ffi: cannot write type " t) {:type t})))
              set-fn (scalar-set* t)]
-         (fn [base v]
+         (fn [_ base v]
            (let [x (try (when (and (not= :bool t) (not= :pointer t)
                                    (not (or (number? v) (bigint? v) (nil? v) (instance? Pointer v))))
                           (throw (ex-info "not a number" {})))
@@ -1137,7 +1164,8 @@
     (or (get @codec-cache k)
         (let [v (case kind
                   :decode (decoder lay 0)
-                  :encode (encoder lay 0))]
+                  :encode (encoder lay 0)
+                  :init (encoder lay 0 [] true))]
           (swap! codec-cache
                  (fn [m] (if (<= cache-limit (count m)) m (assoc m k v))))
           v))))
@@ -1189,11 +1217,11 @@
        (cond
          (instance? Place t)
          (do (check-bounds p offset (.-extent t))
-             ((.-encode t) (+ (.-addr p) (js/BigInt offset)) v))
+             ((.-encode t) nil (+ (.-addr p) (js/BigInt offset)) v))
          (layout-vector? t)
          (let [lay (layout-of t)]
            (check-bounds p offset (:size lay))
-           ((cached-codec :encode t lay) (+ (.-addr p) (js/BigInt offset)) v))
+           ((cached-codec :encode t lay) nil (+ (.-addr p) (js/BigInt offset)) v))
          :else
          (throw (ex-info (str "babashka.ffi: cannot write type " t) {:type t}))))
      nil)))

@@ -26,6 +26,7 @@ Without either setting, the JDK warns about native access.
   - [Read and write a struct](#read-and-write-a-struct)
   - [Fixed arrays](#fixed-arrays)
   - [Unions](#unions)
+  - [Initialize a struct](#initialize-a-struct)
   - [Out parameters](#out-parameters)
 - [Create a callback](#create-a-callback)
 - [Set the C locale](#set-the-c-locale)
@@ -892,6 +893,30 @@ To write one member directly, use its type. Every member starts at offset 0:
 
 A union is not passed by value in a signature, alone or inside a struct.
 Declare `:pointer` and read it from memory.
+
+### Initialize a struct
+
+Pass a value after the layout to write it to the memory `alloc` returns.
+A struct field the value omits stays zero, and so does an array element past
+the end of the value:
+
+```clojure
+(def box [:struct [[:width :int] [:height :int] [:pad :float] [:gap :float]]])
+
+(ffi/read (ffi/alloc arena box {:pad 32.0}) box)
+;;=> {:width 0, :height 0, :pad 32.0, :gap 0.0}
+```
+
+Use it where C code writes a designated initializer such as
+`&(box){ .pad = 32 }`.
+
+Pass a string for a `:string` field. `alloc` copies it into the arena:
+
+```clojure
+(ffi/alloc arena app-desc {:title "Hello" :width 420 :height 300})
+```
+
+An unknown field is an error, as in `write`. `write` takes every field.
 
 ### Out parameters
 
