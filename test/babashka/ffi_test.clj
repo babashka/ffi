@@ -174,9 +174,14 @@
                Exception #"misses field :y"
                (ffi/write (ffi/alloc arena point) point {:x 1}))))))))
 
+(def alloc-from?
+  (delay (boolean (resolve 'babashka.ffi/alloc-from))))
+
 (deftest alloc-from-test
-  (when-not (System/getProperty "babashka.version")
-    (let [opts [:struct [[:id :int]
+  (if-not @alloc-from?
+    (println "alloc-from skipped: this babashka predates alloc-from")
+    (let [alloc-from (resolve 'babashka.ffi/alloc-from)
+          opts [:struct [[:id :int]
                          [:size point]
                          [:pad :float]
                          [:v [:array :int 4]]
@@ -186,33 +191,33 @@
           read-opts #(dissoc (ffi/read % opts) :u)]
       (with-open [arena (ffi/confined-arena)]
         (testing "an init map writes its fields and leaves the others zero"
-          (is (= (assoc zero :pad 32.0) (read-opts (ffi/alloc-from arena opts {:pad 32.0})))))
+          (is (= (assoc zero :pad 32.0) (read-opts (alloc-from arena opts {:pad 32.0})))))
         (testing "a nested init map leaves its missing fields zero"
           (is (= (assoc zero :size {:x 0 :y 5})
-                 (read-opts (ffi/alloc-from arena opts {:size {:y 5}})))))
+                 (read-opts (alloc-from arena opts {:size {:y 5}})))))
         (testing "a short init vector leaves the trailing elements zero"
-          (is (= [1 2 0 0] (ffi/read (ffi/alloc-from arena [:array :int 4] [1 2]) [:array :int 4]))))
+          (is (= [1 2 0 0] (ffi/read (alloc-from arena [:array :int 4] [1 2]) [:array :int 4]))))
         (testing "an init vector longer than the array is rejected"
           (is (thrown-with-msg? Exception #"array value needs at most 4 elements, got 5"
-                                (ffi/alloc-from arena [:array :int 4] [1 2 3 4 5]))))
+                                (alloc-from arena [:array :int 4] [1 2 3 4 5]))))
         (testing "an init map with an unknown field is rejected"
           (is (thrown-with-msg? Exception #"unknown field :nope"
-                                (ffi/alloc-from arena opts {:nope 1}))))
+                                (alloc-from arena opts {:nope 1}))))
         (testing "a union init pair writes the named member"
-          (is (= 2.5 (ffi/read (ffi/alloc-from arena opts {:u [:d 2.5]}) (ffi/place opts [:u :d])))))
+          (is (= 2.5 (ffi/read (alloc-from arena opts {:u [:d 2.5]}) (ffi/place opts [:u :d])))))
         (testing "a string for a :string field is copied into the arena"
-          (is (= "box" (:name (read-opts (ffi/alloc-from arena opts {:name "box"}))))))
+          (is (= "box" (:name (read-opts (alloc-from arena opts {:name "box"}))))))
         (testing "a type keyword :int takes a scalar init value"
-          (is (= 42 (ffi/read (ffi/alloc-from arena :int 42) :int))))
+          (is (= 42 (ffi/read (alloc-from arena :int 42) :int))))
         (testing "a type keyword :pointer takes a pointer"
           (let [p (ffi/alloc arena :int)]
             (is (= (ffi/address p)
-                   (ffi/address (ffi/read (ffi/alloc-from arena :pointer p) :pointer))))))
+                   (ffi/address (ffi/read (alloc-from arena :pointer p) :pointer))))))
         (testing "a type keyword :string copies the string into the arena"
-          (is (= "hi" (ffi/ptr->string (ffi/read (ffi/alloc-from arena :string "hi") :pointer)))))
+          (is (= "hi" (ffi/ptr->string (ffi/read (alloc-from arena :string "hi") :pointer)))))
         (testing "an integer byte count is rejected"
           (is (thrown-with-msg? Exception #"alloc-from takes a type keyword or a layout, got 16"
-                                (ffi/alloc-from arena 16 1))))
+                                (alloc-from arena 16 1))))
         (testing "alloc rejects an init map in place of the alignment"
           (is (thrown-with-msg? Exception #"alloc takes an integer alignment, got"
                                 #_{:clj-kondo/ignore [:type-mismatch]} (ffi/alloc arena opts {:pad 32.0}))))
