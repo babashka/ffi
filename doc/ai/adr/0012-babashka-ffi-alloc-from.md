@@ -40,7 +40,8 @@ memory.
 The name follows FFM's `SegmentAllocator.allocateFrom(layout, value)`. It
 differs from FFM in two ways. FFM's varargs `allocateFrom(JAVA_INT, 1, 2, 3)`
 takes its size from the values, and alloc-from takes it from the layout and
-pads a short value with zeros. A struct or array init value is a babashka.ffi addition.
+pads a short value with zeros. A struct init value is a babashka.ffi
+addition.
 
 The encoder takes an `init?` flag and the init codec is cached per layout,
 next to the encode and decode codecs.
