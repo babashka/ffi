@@ -814,7 +814,7 @@
        (.push (.-bufs arena) buf))
      (Pointer. (+ base (js/BigInt pad)) size arena buf))))
 
-(declare cached-codec layout-of)
+(declare cached-codec layout-of write string->ptr)
 
 (defn alloc-from
   "Allocates zeroed native memory of type t in arena, writes init to it and
@@ -831,7 +831,10 @@
     (throw (ex-info (str "babashka.ffi: alloc-from takes a type keyword or a layout, got " (pr-str t))
                     {:type t})))
   (let [^Pointer p (alloc arena t)]
-    ((cached-codec :init t (layout-of t)) arena (.-addr p) init)
+    (cond
+      (= :string t) (write p :pointer (if (string? init) (string->ptr arena init) init))
+      (keyword? t) (write p t init)
+      :else ((cached-codec :init t (layout-of t)) arena (.-addr p) init))
     p))
 
 (defn string->ptr
@@ -1036,8 +1039,8 @@
        (let [fields (:fields lay)
              c (count fields)
              names (mapv :name fields)
-             index (zipmap names (range))
              encs (mapv (fn [f] (encoder f (+ offset (:offset f)) (conj path (:name f)) init?)) fields)
+             by-name (zipmap names encs)
              field-error
              (fn [v]
                (let [missing (when (and (map? v) (not init?)) (remove #(contains? v %) names))
@@ -1054,8 +1057,8 @@
              (when-not (map? v)
                (field-error v))
              (doseq [[k x] v]
-               (if-let [i (get index k)]
-                 ((nth encs i) arena base x)
+               (if-let [enc (get by-name k)]
+                 (enc arena base x)
                  (field-error v))))
            (fn [arena base v]
              (when-not (and (map? v) (= (count v) c))

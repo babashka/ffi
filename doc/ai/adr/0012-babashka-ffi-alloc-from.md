@@ -69,3 +69,17 @@ catching a typo in a full value.
 
 ffi.cljs encoder functions take `(arena base v)`, as in ffi.clj, so a
 `:string` field can be copied into the init arena on Node.js too.
+
+On the JVM, alloc-from keeps the size, alignment and init encoder of a layout
+in a ConcurrentHashMap keyed on the layout vector, and allocates from the
+arena directly. A type keyword goes to write. Mean times with criterium on an
+auto arena, for `cui_box`, in ns:
+
+| call | before | after |
+|---|---|---|
+| alloc-from, 2 fields | 376 | 89 |
+| alloc-from :int 42 | 205 | 58 |
+| alloc only | 229 | 221 |
+
+alloc of a layout spends most of its time in sizeof and alignof, which each
+look up the layout. That is a separate change.

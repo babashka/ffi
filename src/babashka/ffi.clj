@@ -1417,8 +1417,7 @@
     (or (get @codec-cache k)
         (let [v (case kind
                   :decode (decoder lay 0)
-                  :encode (encoder lay 0)
-                  :init (encoder lay 0 [] true))]
+                  :encode (encoder lay 0))]
           (swap! codec-cache
                  (fn [m] (if (<= codec-cache-limit (count m)) m (assoc m k v))))
           v))))
@@ -1510,6 +1509,20 @@
    ;; Arena.allocate(byteSize) guarantees only alignment 1.
    (.allocate arena (long (first (size-and-alignment n))) (long alignment))))
 
+(declare write string->ptr)
+
+;; Size, alignment and init encoder per layout vector, whose hashCode is cached.
+(def ^:private ^java.util.concurrent.ConcurrentHashMap init-cache
+  (java.util.concurrent.ConcurrentHashMap.))
+
+(defn- init-entry ^objects [t]
+  (or (.get init-cache t)
+      (let [lay (layout-of t)
+            e (object-array [(:size lay) (:align lay) (encoder lay 0 [] true)])]
+        (when (< (.size init-cache) (long codec-cache-limit))
+          (.put init-cache t e))
+        e)))
+
 (defn alloc-from
   "Allocates zeroed native memory of type t in arena, writes init to it and
   returns its pointer.
@@ -1525,9 +1538,16 @@
   (when-not (or (keyword? t) (layout-vector? t))
     (throw (ex-info (str "babashka.ffi: alloc-from takes a type keyword or a layout, got " (pr-str t))
                     {:type t})))
-  (let [p (alloc arena t)]
-    ((cached-codec :init (layout-of t)) arena p init)
-    p))
+  (if (keyword? t)
+    (let [p (alloc arena t)]
+      (if (= :string t)
+        (write p :pointer (if (string? init) (string->ptr arena init) init))
+        (write p t init))
+      p)
+    (let [e (init-entry t)
+          p (.allocate arena (long (aget e 0)) (long (aget e 1)))]
+      ((aget e 2) arena p init)
+      p)))
 
 ;; -- scalar access sites ------------------------------------------------------
 ;;
@@ -2059,10 +2079,10 @@
       (let [fields (:fields lay)
             c (count fields)
             names (mapv :name fields)
-            index (zipmap names (range))
             ^objects encs (object-array
                            (map (fn [f] (encoder f (+ offset (long (:offset f))) (conj path (:name f)) init?))
                                 fields))
+            by-name (zipmap names encs)
             field-error
             (fn [v]
               (let [missing (when (and (map? v) (not init?)) (remove #(contains? v %) names))
@@ -2079,8 +2099,8 @@
             (when-not (map? v)
               (field-error v))
             (reduce-kv (fn [_ k x]
-                         (if-let [i (get index k)]
-                           ((aget encs (long i)) arena seg x)
+                         (if-let [enc (get by-name k)]
+                           (enc arena seg x)
                            (field-error v)))
                        nil v))
           (fn [arena seg v]
