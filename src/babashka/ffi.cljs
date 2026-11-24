@@ -781,38 +781,12 @@
         :else (throw (ex-info (str "babashka.ffi: alloc takes an integer byte count, a type keyword or a layout, got " (pr-str n))
                               {:n n}))))
 
-(defn- alloc-aligned [^Arena arena n alignment]
-  (when-not (arena? arena)
-    (throw (ex-info (str "babashka.ffi: alloc takes an arena first, got " (pr-str arena))
-                    {:arena arena})))
-  (when (.-closed arena)
-    (throw (ex-info "babashka.ffi: the arena is closed" {:arena arena})))
-  (when-not (and (integer? alignment) (pos? alignment)
-                 (zero? (bit-and alignment (dec alignment))))
-    (throw (ex-info (str "babashka.ffi: alloc takes a power of two as alignment, or an init value with a layout, got " (pr-str alignment))
-                    {:alignment alignment})))
-  (let [size (first (size-and-alignment n))
-        buf (js/Buffer.alloc (+ (max 1 size) alignment))
-        base (.getRawPointer nffi buf)
-        low (js/Number (js/BigInt.asUintN 30 base))
-        pad (bit-and (- alignment (bit-and low (dec alignment))) (dec alignment))]
-    (when-not (= "auto" (.-kind arena))
-      (.push (.-bufs arena) buf))
-    (Pointer. (+ base (js/BigInt pad)) size arena buf)))
-
-(declare cached-codec layout-of)
-
 (defn alloc
   "Allocates zeroed native memory in arena and returns its pointer.
-  n is an integer byte count, a type keyword, or a layout.
+  n is an integer byte count, a type keyword, or a struct layout.
 
   A type or layout uses natural alignment. An integer byte count uses
   alignment 16. Specify an alignment, a power of two, to override this value.
-
-  Pass init in place of the alignment to write a value of layout n to the
-  memory. A struct field missing from init stays zero.
-  An array element past the end of init stays zero.
-  A string for a :string field is copied into arena.
 
   There is no unscoped form. If C allocates the memory, bind its allocator with
   cfn. Release the result with the matching C deallocator.
@@ -820,13 +794,45 @@
   CAUTION: Do not close the arena while C uses its memory."
   ([arena n]
    (let [[size align] (size-and-alignment n)]
-     (alloc-aligned arena size align)))
-  ([arena n alignment-or-init]
-   (if (or (integer? alignment-or-init) (not (layout-vector? n)))
-     (alloc-aligned arena n alignment-or-init)
-     (let [^Pointer p (alloc arena n)]
-       ((cached-codec :init n (layout-of n)) arena (.-addr p) alignment-or-init)
-       p))))
+     (alloc arena size align)))
+  ([^Arena arena n alignment]
+   (when-not (arena? arena)
+     (throw (ex-info (str "babashka.ffi: alloc takes an arena first, got " (pr-str arena))
+                     {:arena arena})))
+   (when (.-closed arena)
+     (throw (ex-info "babashka.ffi: the arena is closed" {:arena arena})))
+   (when-not (and (integer? alignment) (pos? alignment)
+                  (zero? (bit-and alignment (dec alignment))))
+     (throw (ex-info (str "babashka.ffi: alloc takes a power of two as alignment, got " (pr-str alignment))
+                     {:alignment alignment})))
+   (let [size (first (size-and-alignment n))
+         buf (js/Buffer.alloc (+ (max 1 size) alignment))
+         base (.getRawPointer nffi buf)
+         low (js/Number (js/BigInt.asUintN 30 base))
+         pad (bit-and (- alignment (bit-and low (dec alignment))) (dec alignment))]
+     (when-not (= "auto" (.-kind arena))
+       (.push (.-bufs arena) buf))
+     (Pointer. (+ base (js/BigInt pad)) size arena buf))))
+
+(declare cached-codec layout-of)
+
+(defn alloc-from
+  "Allocates zeroed native memory of type t in arena, writes init to it and
+  returns its pointer.
+  t is a type keyword or a layout. The memory uses natural alignment.
+
+  A struct field missing from init stays zero.
+  An array element past the end of init stays zero.
+  A string for a :string field, or for t :string, is copied into arena.
+
+  CAUTION: Do not close the arena while C uses its memory."
+  [arena t init]
+  (when-not (or (keyword? t) (layout-vector? t))
+    (throw (ex-info (str "babashka.ffi: alloc-from takes a type keyword or a layout, got " (pr-str t))
+                    {:type t})))
+  (let [^Pointer p (alloc arena t)]
+    ((cached-codec :init t (layout-of t)) arena (.-addr p) init)
+    p))
 
 (defn string->ptr
   "Copies s into arena as a NUL-terminated UTF-8 string and returns its

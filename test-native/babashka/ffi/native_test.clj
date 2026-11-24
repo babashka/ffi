@@ -176,7 +176,7 @@
                "hello" (ffi/ptr->string (ffi/string->ptr arena "hello")))
         (let [named [:struct [[:id :int] [:name :string]]]]
           (check "an init value fills the named fields and leaves the rest zero"
-                 {:id 0 :name "seven"} (ffi/read (ffi/alloc arena named {:name "seven"}) named)))))
+                 {:id 0 :name "seven"} (ffi/read (ffi/alloc-from arena named {:name "seven"}) named)))))
 
     (if libffi?
       (let [p2 [:struct [[:x :int] [:y :int]]]

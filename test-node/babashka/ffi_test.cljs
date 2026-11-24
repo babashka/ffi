@@ -211,7 +211,7 @@
             (is (zero? ((ffi/cfn "gettimeofday" [:pointer :pointer] :int) p nil)))
             (is (< 1700000000 (:sec (ffi/read p tv))))))))))
 
-(deftest alloc-init-test
+(deftest alloc-from-test
   (let [opts [:struct [[:id :int]
                        [:size point]
                        [:pad :float]
@@ -222,27 +222,38 @@
         read-opts #(dissoc (ffi/read % opts) :u)]
     (ffi/with-open [arena (ffi/confined-arena)]
       (testing "an init map writes its fields and leaves the others zero"
-        (is (= (assoc zero :pad 32) (read-opts (ffi/alloc arena opts {:pad 32.0})))))
+        (is (= (assoc zero :pad 32) (read-opts (ffi/alloc-from arena opts {:pad 32.0})))))
       (testing "a nested init map leaves its missing fields zero"
         (is (= (assoc zero :size {:x 0 :y 5})
-               (read-opts (ffi/alloc arena opts {:size {:y 5}})))))
+               (read-opts (ffi/alloc-from arena opts {:size {:y 5}})))))
       (testing "a short init vector leaves the trailing elements zero"
-        (is (= (assoc zero :v [1 2 0 0]) (read-opts (ffi/alloc arena opts {:v [1 2]})))))
-      (testing "a union init pair writes the named member"
-        (is (= 2.5 (ffi/read (ffi/alloc arena opts {:u [:d 2.5]}) (ffi/place opts [:u :d])))))
-      (testing "a string for a :string field is copied into the arena"
-        (is (= "box" (:name (read-opts (ffi/alloc arena opts {:name "box"}))))))
-      (testing "an init map with an unknown field is rejected"
-        (is (thrown-with-msg? js/Error #"unknown field [:\"]?nope\"?"
-                              (ffi/alloc arena opts {:nope 1}))))
+        (is (= [1 2 0 0] (ffi/read (ffi/alloc-from arena [:array :int 4] [1 2]) [:array :int 4]))))
       (testing "an init vector longer than the array is rejected"
         (is (thrown-with-msg? js/Error #"array value needs at most 4 elements, got 5"
-                              (ffi/alloc arena opts {:v [1 2 3 4 5]}))))
-      (testing "an integer third argument is an alignment"
-        (is (zero? (mod (ffi/address (ffi/alloc arena opts 64)) 64))))
-      (testing "an init value with a type keyword is rejected"
-        (is (thrown-with-msg? js/Error #"init value with a layout"
-                              (ffi/alloc arena :int {:x 1})))))))
+                              (ffi/alloc-from arena [:array :int 4] [1 2 3 4 5]))))
+      (testing "an init map with an unknown field is rejected, and squint prints the keyword :nope as a string"
+        (is (thrown-with-msg? js/Error #"unknown field (:nope|\"nope\")"
+                              (ffi/alloc-from arena opts {:nope 1}))))
+      (testing "a union init pair writes the named member"
+        (is (= 2.5 (ffi/read (ffi/alloc-from arena opts {:u [:d 2.5]}) (ffi/place opts [:u :d])))))
+      (testing "a string for a :string field is copied into the arena"
+        (is (= "box" (:name (read-opts (ffi/alloc-from arena opts {:name "box"}))))))
+      (testing "a type keyword :int takes a scalar init value"
+        (is (= 42 (ffi/read (ffi/alloc-from arena :int 42) :int))))
+      (testing "a type keyword :pointer takes a pointer"
+        (let [p (ffi/alloc arena :int)]
+          (is (= (ffi/address p)
+                 (ffi/address (ffi/read (ffi/alloc-from arena :pointer p) :pointer))))))
+      (testing "a type keyword :string copies the string into the arena"
+        (is (= "hi" (ffi/ptr->string (ffi/read (ffi/alloc-from arena :string "hi") :pointer)))))
+      (testing "an integer byte count is rejected"
+        (is (thrown-with-msg? js/Error #"alloc-from takes a type keyword or a layout, got 16"
+                              (ffi/alloc-from arena 16 1))))
+      (testing "alloc rejects an init map in place of the alignment"
+        (is (thrown-with-msg? js/Error #"alloc takes a power of two as alignment, got"
+                              #_{:clj-kondo/ignore [:type-mismatch]} (ffi/alloc arena opts {:pad 32.0}))))
+      (testing "alloc takes an integer alignment for an array layout"
+        (is (zero? (mod (ffi/address (ffi/alloc arena [:array :int 4] 8)) 8)))))))
 
 (defn- sizeless [arena s]
   (ffi/segment (ffi/address (ffi/string->ptr arena s))))

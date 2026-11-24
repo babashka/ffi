@@ -1487,18 +1487,13 @@
 
 (defn alloc
   "Allocates zeroed native memory in arena and returns its pointer.
-  n is an integer byte count, a type keyword, or a layout.
+  n is an integer byte count, a type keyword, or a struct layout.
 
   Use a confined arena for access from one thread or a shared arena for
   access from multiple threads. Closing the arena releases its memory.
 
   A type or layout uses natural alignment. An integer byte count uses
   alignment 16. Specify an alignment to override this value.
-
-  Pass init in place of the alignment to write a value of layout n to the
-  memory. A struct field missing from init stays zero.
-  An array element past the end of init stays zero.
-  A string for a :string field is copied into arena.
 
   For memory allocated by C, bind the allocator with cfn and release the
   result with the matching C deallocator.
@@ -1508,19 +1503,31 @@
   ([^Arena arena n]
    (let [[size align] (size-and-alignment n)]
      (alloc arena size align)))
-  ([^Arena arena n alignment-or-init]
-   (cond
-     (integer? alignment-or-init)
-     ;; Arena.allocate(byteSize) guarantees only alignment 1.
-     (.allocate arena (long (first (size-and-alignment n))) (long alignment-or-init))
-     (layout-vector? n)
-     (let [p (alloc arena n)]
-       ((cached-codec :init (layout-of n)) arena p alignment-or-init)
-       p)
-     :else
-     (throw (ex-info (str "babashka.ffi: alloc takes an integer alignment, or an init value with a layout, got "
-                          (pr-str alignment-or-init))
-                     {:alignment alignment-or-init})))))
+  ([^Arena arena n alignment]
+   (when-not (integer? alignment)
+     (throw (ex-info (str "babashka.ffi: alloc takes an integer alignment, got " (pr-str alignment))
+                     {:alignment alignment})))
+   ;; Arena.allocate(byteSize) guarantees only alignment 1.
+   (.allocate arena (long (first (size-and-alignment n))) (long alignment))))
+
+(defn alloc-from
+  "Allocates zeroed native memory of type t in arena, writes init to it and
+  returns its pointer.
+  t is a type keyword or a layout. The memory uses natural alignment.
+
+  A struct field missing from init stays zero.
+  An array element past the end of init stays zero.
+  A string for a :string field, or for t :string, is copied into arena.
+
+  CAUTION: Do not close the arena while C uses its memory.
+  C can access released memory."
+  [^Arena arena t init]
+  (when-not (or (keyword? t) (layout-vector? t))
+    (throw (ex-info (str "babashka.ffi: alloc-from takes a type keyword or a layout, got " (pr-str t))
+                    {:type t})))
+  (let [p (alloc arena t)]
+    ((cached-codec :init (layout-of t)) arena p init)
+    p))
 
 ;; -- scalar access sites ------------------------------------------------------
 ;;

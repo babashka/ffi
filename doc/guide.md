@@ -896,24 +896,24 @@ Declare `:pointer` and read it from memory.
 
 ### Initialize a struct
 
-Pass a value after the layout to write it to the memory `alloc` returns.
-A struct field the value omits stays zero, and so does an array element past
-the end of the value:
+Use `alloc-from` to allocate memory and write a value to it. A struct field
+the value omits stays zero, and so does an array element past the end of the
+value:
 
 ```clojure
-(def box [:struct [[:width :int] [:height :int] [:pad :float] [:gap :float]]])
+(def box [:struct [[:width :int] [:height :int] [:pad :float] [:title :string]]])
 
-(ffi/read (ffi/alloc arena box {:pad 32.0}) box)
-;;=> {:width 0, :height 0, :pad 32.0, :gap 0.0}
+(ffi/read (ffi/alloc-from arena box {:pad 32.0}) box)
+;;=> {:width 0, :height 0, :pad 32.0, :title nil}
 ```
 
 Use it where C code writes a designated initializer such as
 `&(box){ .pad = 32 }`.
 
-Pass a string for a `:string` field. `alloc` copies it into the arena:
+Pass a string for a `:string` field. `alloc-from` copies it into the arena:
 
 ```clojure
-(ffi/alloc arena app-desc {:title "Hello" :width 420 :height 300})
+(ffi/alloc-from arena box {:title "Hello" :width 420 :height 300})
 ```
 
 An unknown field is an error, as in `write`. `write` takes every field.
@@ -940,6 +940,12 @@ function and call it when you finish with the database:
 (defcfn sqlite3-close "sqlite3_close" [:pointer] :int)
 (sqlite3-close database)
 ;;=> 0
+```
+
+For an in-out parameter, pass the start value to `alloc-from`:
+
+```clojure
+(def size (ffi/alloc-from arena :size_t 256))
 ```
 
 ## Create a callback

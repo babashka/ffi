@@ -6,7 +6,7 @@ Clojure, babashka and Node.js.
 ## Unreleased
 
 - [#74](https://github.com/babashka/ffi/issues/74): a statically linked executable throws an error that names static linking when it cannot load a library
-- `alloc` takes an init value after a layout, and leaves the struct fields and array elements it omits zero
+- `alloc-from` allocates memory and writes an init value to it. Omitted struct fields and array elements stay zero
 
 ## 0.1.3 (2026-11-09)
 
