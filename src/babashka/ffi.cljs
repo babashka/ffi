@@ -774,10 +774,12 @@
 (defn- arena? [x]
   (instance? Arena x))
 
+(declare cached-codec layout-of write string->ptr)
+
 (defn- size-and-alignment [n]
   (cond (integer? n) [n 16]
         (keyword? n) (let [size (sizeof n)] [size (max 1 (min 8 size))])
-        (layout-vector? n) [(sizeof n) (alignof n)]
+        (layout-vector? n) (let [lay (layout-of n)] [(:size lay) (:align lay)])
         :else (throw (ex-info (str "babashka.ffi: alloc takes an integer byte count, a type keyword or a layout, got " (pr-str n))
                               {:n n}))))
 
@@ -814,8 +816,6 @@
        (.push (.-bufs arena) buf))
      (Pointer. (+ base (js/BigInt pad)) size arena buf))))
 
-(declare cached-codec layout-of write string->ptr)
-
 (defn alloc-from
   "Allocates zeroed native memory of type t in arena, writes init to it and
   returns its pointer.
@@ -830,12 +830,16 @@
   (when-not (or (keyword? t) (layout-vector? t))
     (throw (ex-info (str "babashka.ffi: alloc-from takes a type keyword or a layout, got " (pr-str t))
                     {:type t})))
-  (let [^Pointer p (alloc arena t)]
-    (cond
-      (= :string t) (write p :pointer (if (string? init) (string->ptr arena init) init))
-      (keyword? t) (write p t init)
-      :else ((cached-codec :init t (layout-of t)) arena (.-addr p) init))
-    p))
+  (if (keyword? t)
+    (let [p (alloc arena t)]
+      (if (= :string t)
+        (write p :pointer (if (string? init) (string->ptr arena init) init))
+        (write p t init))
+      p)
+    (let [lay (layout-of t)
+          ^Pointer p (alloc arena (:size lay) (:align lay))]
+      ((cached-codec :init t lay) arena (.-addr p) init)
+      p)))
 
 (defn string->ptr
   "Copies s into arena as a NUL-terminated UTF-8 string and returns its

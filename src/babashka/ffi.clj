@@ -1417,7 +1417,8 @@
     (or (get @codec-cache k)
         (let [v (case kind
                   :decode (decoder lay 0)
-                  :encode (encoder lay 0))]
+                  :encode (encoder lay 0)
+                  :init (encoder lay 0 [] true))]
           (swap! codec-cache
                  (fn [m] (if (<= codec-cache-limit (count m)) m (assoc m k v))))
           v))))
@@ -1480,7 +1481,7 @@
   [n]
   (cond (integer? n) [(long n) 16]
         (keyword? n) (let [size (long (sizeof n))] [size (max 1 (min 8 size))])
-        (layout-vector? n) [(sizeof n) (alignof n)]
+        (layout-vector? n) (let [lay (layout-of n)] [(:size lay) (:align lay)])
         :else (throw (ex-info (str "babashka.ffi: alloc takes an integer byte count, a type keyword or a layout, got " (pr-str n))
                               {:n n}))))
 
@@ -1511,18 +1512,6 @@
 
 (declare write string->ptr)
 
-;; Size, alignment and init encoder per layout vector, whose hashCode is cached.
-(def ^:private ^java.util.concurrent.ConcurrentHashMap init-cache
-  (java.util.concurrent.ConcurrentHashMap.))
-
-(defn- init-entry ^objects [t]
-  (or (.get init-cache t)
-      (let [lay (layout-of t)
-            e (object-array [(:size lay) (:align lay) (encoder lay 0 [] true)])]
-        (when (< (.size init-cache) (long codec-cache-limit))
-          (.put init-cache t e))
-        e)))
-
 (defn alloc-from
   "Allocates zeroed native memory of type t in arena, writes init to it and
   returns its pointer.
@@ -1544,9 +1533,9 @@
         (write p :pointer (if (string? init) (string->ptr arena init) init))
         (write p t init))
       p)
-    (let [e (init-entry t)
-          p (.allocate arena (long (aget e 0)) (long (aget e 1)))]
-      ((aget e 2) arena p init)
+    (let [lay (layout-of t)
+          p (.allocate arena (long (:size lay)) (long (:align lay)))]
+      ((cached-codec :init lay) arena p init)
       p)))
 
 ;; -- scalar access sites ------------------------------------------------------

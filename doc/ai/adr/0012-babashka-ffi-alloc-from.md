@@ -70,16 +70,18 @@ catching a typo in a full value.
 ffi.cljs encoder functions take `(arena base v)`, as in ffi.clj, so a
 `:string` field can be copied into the init arena on Node.js too.
 
-On the JVM, alloc-from keeps the size, alignment and init encoder of a layout
-in a ConcurrentHashMap keyed on the layout vector, and allocates from the
-arena directly. A type keyword goes to write. Mean times with criterium on an
-auto arena, for `cui_box`, in ns:
+Mean times on the JVM with criterium, for `cui_box`, in ns. The arena
+returns the same 4 KB block on each allocation, which takes 3.5 ns, so the
+times show the work babashka.ffi does around it:
 
-| call | before | after |
-|---|---|---|
-| alloc-from, 2 fields | 376 | 89 |
-| alloc-from :int 42 | 205 | 58 |
-| alloc only | 229 | 221 |
+| change | call | before | after |
+|---|---|---|---|
+| size-and-alignment resolves the layout once | alloc of a layout | 114 | 75 |
+| a type keyword goes to write | alloc-from :int 42 | 109 | 51 |
+| alloc-from resolves the layout once | alloc-from, 2 fields | 218 | 99 |
 
-alloc of a layout spends most of its time in sizeof and alignof, which each
-look up the layout. That is a separate change.
+A cache from the layout vector to its size, alignment and init encoder
+brought alloc-from with 2 fields to 52 ns. It was dropped because it is a
+third cache on the same key as the layout and codec caches. Most of the
+difference is the layout-of lookup, 38 ns for this layout, which a faster
+layout cache would remove for every caller.
