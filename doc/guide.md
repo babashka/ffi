@@ -22,6 +22,7 @@ Without either setting, the JDK warns about native access.
 - [Call a variadic function](#call-a-variadic-function)
 - [Use native memory](#use-native-memory)
   - [Memory allocated by C](#memory-allocated-by-c)
+  - [NULL-terminated arrays](#null-terminated-arrays)
   - [Arenas](#arenas)
   - [Read and write a struct](#read-and-write-a-struct)
   - [Fixed arrays](#fixed-arrays)
@@ -547,6 +548,23 @@ deallocator of its own, bind `free`:
 
 > **_NOTE_** After the deallocator runs, do not use the pointer. This can
 > corrupt memory or stop the process.
+
+### NULL-terminated arrays
+
+A C function can return an array of pointers that ends with NULL, such as a
+`char **` list of names. Reinterpret the pointer to one more slot at each step
+and stop at NULL:
+
+```clojure
+(defn null-terminated-strings [p]
+  (loop [i 0 acc []]
+    (let [s (ffi/read (ffi/reinterpret p (* (inc i) 8)) :pointer (* i 8))]
+      (if (ffi/null? s)
+        acc
+        (recur (inc i) (conj acc (ffi/ptr->string s)))))))
+```
+
+> **_NOTE_** If the array does not end with NULL, the loop reads past it.
 
 ### Arenas
 
