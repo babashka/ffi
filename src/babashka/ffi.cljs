@@ -1385,6 +1385,9 @@
   it once the pointer itself becomes unreachable. The garbage collector
   cannot see the copy that C holds.
 
+  Creating a callback takes microseconds. Create it once and reuse it across
+  C calls.
+
   CAUTION: Unregister the callback before its arena releases the pointer."
   [^Arena arena f argtypes rettype]
   (when (or (vector? rettype) (some vector? argtypes))
