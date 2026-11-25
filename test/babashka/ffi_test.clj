@@ -215,25 +215,6 @@
                    (ffi/address (ffi/read (alloc-from arena :pointer p) :pointer))))))
         (testing "a type keyword :string copies the string into the arena"
           (is (= "hi" (ffi/ptr->string (ffi/read (alloc-from arena :string "hi") :pointer)))))
-        (testing "a byte[] init with :byte copies the array"
-          (let [p (alloc-from arena :byte (byte-array [1 2 -3]))]
-            (is (= 3 (ffi/size p)))
-            (is (= [1 2 -3] (vec (ffi/read-array p :byte 3))))))
-        (testing "a double[] init with :double copies the array at alignment 8"
-          (let [p (alloc-from arena :double (double-array [1.5 2.5]))]
-            (is (= 16 (ffi/size p)))
-            (is (zero? (mod (ffi/address p) 8)))
-            (is (= [1.5 2.5] (vec (ffi/read-array p :double 2))))))
-        (testing "a long[] init with :pointer copies the addresses"
-          (let [q (ffi/alloc arena :int)
-                p (alloc-from arena :pointer (long-array [(ffi/address q) 0]))]
-            (is (= (ffi/address q) (ffi/address (ffi/read p :pointer))))
-            (is (ffi/null? (ffi/read p :pointer 8)))))
-        (testing "an empty byte[] init returns a pointer of size 0"
-          (is (zero? (ffi/size (alloc-from arena :byte (byte-array 0))))))
-        (testing "an int[] init with :double is rejected"
-          (is (thrown-with-msg? Exception #":double needs double\[\], got int\[\]"
-                                (alloc-from arena :double (int-array [1])))))
         (testing "an integer byte count is rejected"
           (is (thrown-with-msg? Exception #"alloc-from takes a type keyword or a layout, got 16"
                                 (alloc-from arena 16 1))))

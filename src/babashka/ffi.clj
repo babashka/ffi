@@ -1510,7 +1510,7 @@
    ;; Arena.allocate(byteSize) guarantees only alignment 1.
    (.allocate arena (long (first (size-and-alignment n))) (long alignment))))
 
-(declare write write-array string->ptr)
+(declare write string->ptr)
 
 (defn alloc-from
   "Allocates zeroed native memory of type t in arena, writes init to it and
@@ -1521,27 +1521,18 @@
   An array element past the end of init stays zero.
   A string for a :string field, or for t :string, is copied into arena.
 
-  If init is a Java array, allocates one element of type t per array element
-  and copies the array as write-array does.
-
   CAUTION: Do not close the arena while C uses its memory.
   C can access released memory."
   [^Arena arena t init]
   (when-not (or (keyword? t) (layout-vector? t))
     (throw (ex-info (str "babashka.ffi: alloc-from takes a type keyword or a layout, got " (pr-str t))
                     {:type t})))
-  (cond
-    (and (keyword? t) (some-> init class .isArray))
-    (let [p (alloc arena (* (java.lang.reflect.Array/getLength init) (sizeof t)) (alignof t))]
-      (write-array p t init)
-      p)
-    (keyword? t)
+  (if (keyword? t)
     (let [p (alloc arena t)]
       (if (= :string t)
         (write p :pointer (if (string? init) (string->ptr arena init) init))
         (write p t init))
       p)
-    :else
     (let [lay (layout-of t)
           p (.allocate arena (long (:size lay)) (long (:align lay)))]
       ((cached-codec :init lay) arena p init)

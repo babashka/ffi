@@ -633,15 +633,6 @@ The type gives the element width and nothing else. `:int`, `:uint` and
 elements decoded the way `read` decodes them, or for an array of structs, use
 `read` with an `[:array t n]` layout.
 
-Use `alloc-from` with a Java primitive array to allocate memory of the same
-length and copy the array into it:
-
-```clojure
-(def buf (ffi/alloc-from arena :byte (.getBytes "hello" "UTF-8")))
-(ffi/size buf)
-;;=> 5
-```
-
 Use `copy` to copy bytes between two pointers, and `clone` to allocate a copy
 in an arena. Without a count, `copy` copies the byte size of the source, and
 the destination must be at least that large. To copy into the middle of a
@@ -1134,8 +1125,8 @@ JVM:
 - A 64-bit integer returns as a number when it is a safe integer, otherwise
   as a bigint. Arguments accept either.
 - An unsigned 64-bit value reads as unsigned.
-- `read-array` returns a typed array. `write-array` and `alloc-from` take
-  one. The eight-byte types use a `BigInt64Array`.
+- `read-array` returns a typed array and `write-array` takes one. The
+  eight-byte types use a `BigInt64Array`.
 - `byte-buffer` returns a `Buffer` view.
 - C must call a callback on the JavaScript thread. The function must not
   throw and must not return a promise.

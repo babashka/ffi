@@ -774,7 +774,7 @@
 (defn- arena? [x]
   (instance? Arena x))
 
-(declare cached-codec layout-of write write-array string->ptr)
+(declare cached-codec layout-of write string->ptr)
 
 (defn- size-and-alignment [n]
   (cond (integer? n) [n 16]
@@ -825,26 +825,17 @@
   An array element past the end of init stays zero.
   A string for a :string field, or for t :string, is copied into arena.
 
-  If init is a typed array, allocates one element of type t per array element
-  and copies the array as write-array does.
-
   CAUTION: Do not close the arena while C uses its memory."
   [arena t init]
   (when-not (or (keyword? t) (layout-vector? t))
     (throw (ex-info (str "babashka.ffi: alloc-from takes a type keyword or a layout, got " (pr-str t))
                     {:type t})))
-  (cond
-    (and (keyword? t) (js/ArrayBuffer.isView init))
-    (let [p (alloc arena (.-byteLength init) (alignof t))]
-      (write-array p t init)
-      p)
-    (keyword? t)
+  (if (keyword? t)
     (let [p (alloc arena t)]
       (if (= :string t)
         (write p :pointer (if (string? init) (string->ptr arena init) init))
         (write p t init))
       p)
-    :else
     (let [lay (layout-of t)
           ^Pointer p (alloc arena (:size lay) (:align lay))]
       ((cached-codec :init t lay) arena (.-addr p) init)

@@ -246,20 +246,6 @@
                  (ffi/address (ffi/read (ffi/alloc-from arena :pointer p) :pointer))))))
       (testing "a type keyword :string copies the string into the arena"
         (is (= "hi" (ffi/ptr->string (ffi/read (ffi/alloc-from arena :string "hi") :pointer)))))
-      (testing "an Int8Array init with :byte copies the array"
-        (let [p (ffi/alloc-from arena :byte (js/Int8Array.of 1 2 -3))]
-          (is (= 3 (ffi/size p)))
-          (is (= [1 2 -3] (vec (ffi/read-array p :byte 3))))))
-      (testing "a Float64Array init with :double copies the array at alignment 8"
-        (let [p (ffi/alloc-from arena :double (js/Float64Array.of 1.5 2.5))]
-          (is (= 16 (ffi/size p)))
-          (is (zero? (mod (ffi/address p) 8)))
-          (is (= [1.5 2.5] (vec (ffi/read-array p :double 2))))))
-      (testing "an empty Int8Array init returns a pointer of size 0"
-        (is (zero? (ffi/size (ffi/alloc-from arena :byte (js/Int8Array. 0))))))
-      (testing "an Int32Array init with :double is rejected"
-        (is (thrown-with-msg? js/Error #":?double needs Float64Array, got Int32Array"
-                              (ffi/alloc-from arena :double (js/Int32Array.of 1)))))
       (testing "an integer byte count is rejected"
         (is (thrown-with-msg? js/Error #"alloc-from takes a type keyword or a layout, got 16"
                               (ffi/alloc-from arena 16 1))))
