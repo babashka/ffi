@@ -2779,8 +2779,8 @@
   unreachable. The garbage collector cannot see the copy that C holds. Use an
   automatic arena only when your reference outlives every call that C can make.
 
-  Creating a callback takes microseconds. Create it once and reuse it across
-  C calls.
+  Creating a callback takes microseconds. For a callback that C calls on each
+  of many calls, and that needs no per-call state, create it once and reuse it.
 
   CAUTION: Unregister the callback before its arena releases the pointer.
   Catch exceptions inside f. An uncaught exception can stop the process."

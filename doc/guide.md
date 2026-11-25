@@ -1155,8 +1155,8 @@ per iteration.
 ### Callbacks
 
 Creating a callback costs about 8 us on the JVM, 2 to 4 us in a babashka
-build with libffi and 2 us on Node.js. For a callback that you pass to C on each of many calls,
-create it once and reuse it:
+build with libffi and 2 us on Node.js. For a callback that C calls on each of
+many calls, and that needs no per-call state, create it once and reuse it:
 
 ```clojure
 (def int-comparator
@@ -1169,7 +1169,29 @@ create it once and reuse it:
 (qsort values 5 4 int-comparator)
 ```
 
-A reused callback must not close over the state of one call.
+If the C function takes a `user_data` pointer, pass per-call state through it.
+
+If C calls back on your thread before the call returns, bind a dynamic var
+around the call:
+
+```clojure
+(def ^:dynamic *calls* nil)
+
+(def counting-comparator
+  (ffi/callback (ffi/global-arena)
+                (fn [l r]
+                  (vswap! *calls* inc)
+                  (compare (ffi/read (ffi/reinterpret l 4) :int)
+                           (ffi/read (ffi/reinterpret r 4) :int)))
+                [:pointer :pointer] :int))
+
+(binding [*calls* (volatile! 0)]
+  (qsort values 5 4 counting-comparator)
+  @*calls*)
+;;=> 9
+```
+
+Otherwise, create a callback for each object that C calls back for.
 
 In a build with libffi, every callback goes through libffi, and an empty
 callback costs about 30 ns. In a build without libffi, a native image
