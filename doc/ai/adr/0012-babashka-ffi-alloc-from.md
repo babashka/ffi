@@ -43,6 +43,12 @@ takes its size from the values, and alloc-from takes it from the layout and
 pads a short value with zeros. A struct init value is a babashka.ffi
 addition.
 
+A Java primitive array init with a type keyword takes its size from the
+array, as FFM's `allocateFrom(JAVA_BYTE, byte[])` does, and copies it as
+`write-array` does. On Node.js the init is a typed array. ol.vips writes
+`alloc` followed by `write-array` in four places to pass a byte[] or a
+double[] to C.
+
 The encoder takes an `init?` flag and the init codec is cached per layout,
 next to the encode and decode codecs.
 
