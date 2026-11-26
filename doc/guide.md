@@ -1154,9 +1154,10 @@ per iteration.
 
 ### Callbacks
 
-Creating a callback costs about 8 us on the JVM, 2 to 4 us in a babashka
-build with libffi and 2 us on Node.js. For a callback that C calls on each of
-many calls, and that needs no per-call state, create it once and reuse it:
+Creating a callback is not free in terms of performance, it takes about 8 us
+on the JVM, 2 to 4 us in babashka and 2 us on Node.js. In performance
+sensitive code, when possible, re-use a callback rather than creating it for
+every invocation:
 
 ```clojure
 (def int-comparator
@@ -1168,30 +1169,6 @@ many calls, and that needs no per-call state, create it once and reuse it:
 
 (qsort values 5 4 int-comparator)
 ```
-
-If the C function takes a `user_data` pointer, pass per-call state through it.
-
-If C calls back on your thread before the call returns, bind a dynamic var
-around the call:
-
-```clojure
-(def ^:dynamic *calls* nil)
-
-(def counting-comparator
-  (ffi/callback (ffi/global-arena)
-                (fn [l r]
-                  (vswap! *calls* inc)
-                  (compare (ffi/read (ffi/reinterpret l 4) :int)
-                           (ffi/read (ffi/reinterpret r 4) :int)))
-                [:pointer :pointer] :int))
-
-(binding [*calls* (volatile! 0)]
-  (qsort values 5 4 counting-comparator)
-  @*calls*)
-;;=> 9
-```
-
-Otherwise, create a callback for each object that C calls back for.
 
 In a build with libffi, every callback goes through libffi, and an empty
 callback costs about 30 ns. In a build without libffi, a native image
@@ -1228,7 +1205,7 @@ The library includes call trampolines and reachability metadata.
    For a git dependency, use the sources in the library checkout under `~/.gitlibs`.
    For a Maven dependency, first extract the sources from the jar:
 
-   ```sh
+```sh
    unzip -o "$(clojure -Spath -A:native | tr ':' '\n' | grep 'ffi-.*\.jar')" \
      'babashka/ffi/impl/*.java' -d src-java
    ```
