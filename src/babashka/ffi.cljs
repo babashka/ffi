@@ -1385,6 +1385,10 @@
   it once the pointer itself becomes unreachable. The garbage collector
   cannot see the copy that C holds.
 
+  Creating a callback is not free in terms of performance, it takes about 2 us
+  on Node.js. In performance sensitive code, when possible, re-use a callback
+  rather than creating it for every invocation.
+
   CAUTION: Unregister the callback before its arena releases the pointer."
   [^Arena arena f argtypes rettype]
   (when (or (vector? rettype) (some vector? argtypes))

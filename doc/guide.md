@@ -1154,6 +1154,22 @@ per iteration.
 
 ### Callbacks
 
+Creating a callback is not free in terms of performance, it takes about 8 us
+on the JVM, 2 to 4 us in babashka and 2 us on Node.js. In performance
+sensitive code, when possible, re-use a callback rather than creating it for
+every invocation:
+
+```clojure
+(def int-comparator
+  (ffi/callback (ffi/global-arena)
+                (fn [l r]
+                  (compare (ffi/read (ffi/reinterpret l 4) :int)
+                           (ffi/read (ffi/reinterpret r 4) :int)))
+                [:pointer :pointer] :int))
+
+(qsort values 5 4 int-comparator)
+```
+
 In a build with libffi, every callback goes through libffi, and an empty
 callback costs about 30 ns. In a build without libffi, a native image
 registers these callback shapes when it is built, and a callback costs about
@@ -1189,7 +1205,7 @@ The library includes call trampolines and reachability metadata.
    For a git dependency, use the sources in the library checkout under `~/.gitlibs`.
    For a Maven dependency, first extract the sources from the jar:
 
-   ```sh
+```sh
    unzip -o "$(clojure -Spath -A:native | tr ':' '\n' | grep 'ffi-.*\.jar')" \
      'babashka/ffi/impl/*.java' -d src-java
    ```

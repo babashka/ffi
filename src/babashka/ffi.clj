@@ -2779,6 +2779,10 @@
   unreachable. The garbage collector cannot see the copy that C holds. Use an
   automatic arena only when your reference outlives every call that C can make.
 
+  Creating a callback is not free in terms of performance, it takes about 8 us
+  on the JVM and 2 to 4 us in babashka. In performance sensitive code, when
+  possible, re-use a callback rather than creating it for every invocation.
+
   CAUTION: Unregister the callback before its arena releases the pointer.
   Catch exceptions inside f. An uncaught exception can stop the process."
   [arena f argtypes rettype]
